@@ -1,4 +1,6 @@
-from typing import List, Dict
+from typing import List, Dict, Tuple
+import cv2
+import numpy as np
 from PIL import Image
 from ml.models import ml
 
@@ -9,15 +11,106 @@ def manga_sort_key(box: Dict[str, float]) -> tuple:
     1. Сверху вниз по вертикальным ярусам (кадрам).
     2. Внутри одного яруса — строго СПРАВА НАЛЕВО (по убыванию координаты X).
     """
-    row_height = 0.18  # Высота одного условного яруса кадров (~18% высоты страницы)
+    row_height = 0.18
     row_idx = int(box["y"] / row_height)
-
-    # row_idx — возрастает (сверху вниз)
-    # -box["x"] — убывает (справа налево: чем больше x, тем первее бабл)
     return (row_idx, -box["x"])
 
 
-def detect_and_filter_bubbles(image: Image.Image, padding: int = 6) -> List[Dict[str, float]]:
+def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> Tuple[int, int, int, int]:
+    """
+    Деликатное лучевое расширение:
+    Мягко раздвигает бокс в стороны до черных стенок бабла,
+    не допуская вылезания за пределы контура.
+    """
+    try:
+        img_h, img_w = gray_img.shape[:2]
+
+        bw = x2 - x1
+        bh = y2 - y1
+
+        if bw <= 0 or bh <= 0:
+            return x1, y1, x2, y2
+
+        # Проверяем среднюю яркость внутри бокса
+        roi = gray_img[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)]
+        if roi.size == 0 or np.mean(roi > 200) < 0.40:
+            # Тёмный фон или сложный арт — не трогаем границы
+            return x1, y1, x2, y2
+
+        # Жесткие максимальные лимиты расширения (не более 45px по ширине и 18px по высоте)
+        max_expand_x = min(45, max(15, int(bw * 0.55)))
+        max_expand_y = min(20, max(8, int(bh * 0.18)))
+
+        # Внутренний срез по высоте (чтобы не задевать верх/низ при сканировании влево/вправо)
+        y_slice_start = int(y1 + bh * 0.2)
+        y_slice_end = int(y2 - bh * 0.2)
+        if y_slice_end <= y_slice_start:
+            y_slice_start, y_slice_end = y1, y2
+
+        # Внутренний срез по ширине (для сканирования вверх/вниз)
+        x_slice_start = int(x1 + bw * 0.2)
+        x_slice_end = int(x2 - bw * 0.2)
+        if x_slice_end <= x_slice_start:
+            x_slice_start, x_slice_end = x1, x2
+
+        # 1. ЛУЧ ВЛЕВО
+        left_expand = 0
+        for dx in range(1, max_expand_x + 1):
+            cur_x = x1 - dx
+            if cur_x < 2:
+                break
+            col = gray_img[y_slice_start:y_slice_end, cur_x]
+            # Если встретили черную линию контура бабла (< 160) или границу
+            if np.min(col) < 160 or np.mean(col) < 205:
+                break
+            left_expand = dx
+
+        # 2. ЛУЧ ВПРАВО
+        right_expand = 0
+        for dx in range(1, max_expand_x + 1):
+            cur_x = x2 + dx
+            if cur_x >= img_w - 2:
+                break
+            col = gray_img[y_slice_start:y_slice_end, cur_x]
+            if np.min(col) < 160 or np.mean(col) < 205:
+                break
+            right_expand = dx
+
+        # 3. ЛУЧ ВВЕРХ
+        top_expand = 0
+        for dy in range(1, max_expand_y + 1):
+            cur_y = y1 - dy
+            if cur_y < 2:
+                break
+            row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
+            if np.min(row_pix) < 160 or np.mean(row_pix) < 205:
+                break
+            top_expand = dy
+
+        # 4. ЛУЧ ВНИЗ
+        bottom_expand = 0
+        for dy in range(1, max_expand_y + 1):
+            cur_y = y2 + dy
+            if cur_y >= img_h - 2:
+                break
+            row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
+            if np.min(row_pix) < 160 or np.mean(row_pix) < 205:
+                break
+            bottom_expand = dy
+
+        # Безопасный отступ на 2px назад от найденной стенки контура
+        pad_in = 2
+        final_x1 = max(0, x1 - max(0, left_expand - pad_in))
+        final_x2 = min(img_w, x2 + max(0, right_expand - pad_in))
+        final_y1 = max(0, y1 - max(0, top_expand - pad_in))
+        final_y2 = min(img_h, y2 + max(0, bottom_expand - pad_in))
+
+        return final_x1, final_y1, final_x2, final_y2
+    except Exception:
+        return x1, y1, x2, y2
+
+
+def detect_and_filter_bubbles(image: Image.Image, padding: int = 2) -> List[Dict[str, float]]:
     if ml.yolo_model is None:
         raise RuntimeError("Модель YOLO не загружена")
 
@@ -45,13 +138,24 @@ def detect_and_filter_bubbles(image: Image.Image, padding: int = 6) -> List[Dict
         if not is_outer:
             filtered_boxes.append(box_a)
 
-    # Приведение к относительным координатам
+    # Подготавливаем изображение для деликатной подгонки рамок к стенкам бабла
+    np_img = np.array(image.convert("RGB"))
+    gray_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
+
     boxes = []
     for x1, y1, x2, y2 in filtered_boxes:
-        px1 = max(0, x1 - padding) / img_width
-        py1 = max(0, y1 - padding) / img_height
-        px2 = min(img_width, x2 + padding) / img_width
-        py2 = min(img_height, y2 + padding) / img_height
+        ix1 = int(max(0, x1))
+        iy1 = int(max(0, y1))
+        ix2 = int(min(img_width, x2))
+        iy2 = int(min(img_height, y2))
+
+        # АККУРАТНОЕ ЛУЧЕВОЕ РАСШИРЕНИЕ ДО СТЕНОК БАБЛА
+        ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2)
+
+        px1 = max(0, ex1 - padding) / img_width
+        py1 = max(0, ey1 - padding) / img_height
+        px2 = min(img_width, ex2 + padding) / img_width
+        py2 = min(img_height, ey2 + padding) / img_height
 
         boxes.append({
             "x": px1,
@@ -63,7 +167,6 @@ def detect_and_filter_bubbles(image: Image.Image, padding: int = 6) -> List[Dict
     # Сортируем баблы в правильном японском порядке чтения
     boxes.sort(key=manga_sort_key)
 
-    # Проставляем order_index (от 1 до N)
     for idx, b in enumerate(boxes):
         b["order_index"] = idx + 1
 

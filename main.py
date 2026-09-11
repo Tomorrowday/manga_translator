@@ -4,18 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import database
 from ml.models import load_ml_models
-from routers import ai, projects, pages
+from routers import ai, projects, pages, chapters
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Управление жизненным циклом приложения при старте и остановке."""
-    # 1. Инициализация структуры таблиц БД
     database.init_db()
-
-    # 2. Загрузка весов нейросетей в видеопамять (GPU)
     load_ml_models()
-
     print("🚀 Manga Translator BFF готов к обработке запросов!")
     yield
 
@@ -27,7 +22,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Настройка CORS для работы с Next.js
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,13 +30,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Подключение роутеров
 app.include_router(ai.router)
 app.include_router(projects.router)
 app.include_router(pages.router)
+app.include_router(chapters.router)
 
 
 @app.get("/")
 def health_check():
-    """Проверка доступности сервера."""
     return {"status": "ok", "service": "Manga Translator BFF"}

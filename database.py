@@ -4,16 +4,14 @@ from config import DB_PATH
 
 
 def get_db():
-    """Создаёт подключение к БД SQLite с поддержкой обращения по именам колонок."""
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")  # Включаем каскадное удаление
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
     return conn
 
 
 @contextmanager
 def db_session():
-    """Контекстный менеджер для безопасных транзакций с автокоммитом и откатом при ошибке."""
     conn = get_db()
     cursor = conn.cursor()
     try:
@@ -27,13 +25,13 @@ def db_session():
 
 
 def init_db():
-    """Инициализация БД и автоматическая миграция новых колонок."""
     with db_session() as cursor:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS titles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 folder_path TEXT NOT NULL,
+                description TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -56,7 +54,7 @@ def init_db():
                 page_number INTEGER,
                 file_path TEXT NOT NULL,
                 clean_path TEXT,
-                status TEXT DEFAULT 'new',
+                status TEXT DEFAULT 'raw',
                 FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
             )
         ''')
@@ -66,25 +64,63 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 page_id INTEGER,
                 x REAL, y REAL, width REAL, height REAL,
+                rotation REAL DEFAULT 0.0,
                 jap_text TEXT DEFAULT '',
                 rus_text TEXT DEFAULT '',
                 speaker TEXT DEFAULT '',
                 order_index INTEGER DEFAULT 0,
+                font_size INTEGER,
+                font_family TEXT DEFAULT 'v_CCFaceFront',
+                is_bold INTEGER DEFAULT 0,
+                is_italic INTEGER DEFAULT 0,
+                is_uppercase INTEGER DEFAULT 0,
+                has_stroke INTEGER DEFAULT 0,
+                shape TEXT DEFAULT 'rect',
+                padding_mode TEXT DEFAULT 'safe',
                 status TEXT DEFAULT 'new',
                 FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
             )
         ''')
 
-        # Безопасная миграция: проверяем наличие новых колонок в старой БД
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS glossary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title_id INTEGER NOT NULL,
+                jap_word TEXT NOT NULL,
+                rus_word TEXT NOT NULL,
+                context TEXT DEFAULT '',
+                FOREIGN KEY (title_id) REFERENCES titles(id) ON DELETE CASCADE
+            )
+        ''')
+
+        # Проверка и миграция описания в titles
+        cursor.execute("PRAGMA table_info(titles)")
+        title_cols = [row["name"] for row in cursor.fetchall()]
+        if "description" not in title_cols:
+            cursor.execute("ALTER TABLE titles ADD COLUMN description TEXT DEFAULT ''")
+            print("Миграция: добавлена колонка 'description' в titles")
+
+        # Проверка миграций text_blocks
         cursor.execute("PRAGMA table_info(text_blocks)")
         columns = [row["name"] for row in cursor.fetchall()]
 
-        if "speaker" not in columns:
-            cursor.execute("ALTER TABLE text_blocks ADD COLUMN speaker TEXT DEFAULT ''")
-            print("Миграция: добавлена колонка 'speaker' в text_blocks")
+        migrations = {
+            "speaker": "TEXT DEFAULT ''",
+            "order_index": "INTEGER DEFAULT 0",
+            "font_size": "INTEGER",
+            "font_family": "TEXT DEFAULT 'v_CCFaceFront'",
+            "is_bold": "INTEGER DEFAULT 0",
+            "is_italic": "INTEGER DEFAULT 0",
+            "is_uppercase": "INTEGER DEFAULT 0",
+            "has_stroke": "INTEGER DEFAULT 0",
+            "shape": "TEXT DEFAULT 'rect'",
+            "padding_mode": "TEXT DEFAULT 'safe'",
+            "rotation": "REAL DEFAULT 0.0"
+        }
 
-        if "order_index" not in columns:
-            cursor.execute("ALTER TABLE text_blocks ADD COLUMN order_index INTEGER DEFAULT 0")
-            print("Миграция: добавлена колонка 'order_index' в text_blocks")
+        for col, col_type in migrations.items():
+            if col not in columns:
+                cursor.execute(f"ALTER TABLE text_blocks ADD COLUMN {col} {col_type}")
+                print(f"Миграция: добавлена колонка '{col}' в text_blocks")
 
     print("База данных проверена и готова к работе.")

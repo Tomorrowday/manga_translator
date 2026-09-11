@@ -1,263 +1,163 @@
 "use client"
 
 import { useState, useCallback, useEffect, useRef } from "react"
-import { BookText, Layers, Sparkles, Wand2, Loader2, Save, Eye, EyeOff, PlayCircle, Eraser, Zap, Download, FolderOpen, Check } from "lucide-react"
-import type { TextBlock, PageItem } from "@/lib/types"
+import { BookText, Layers } from "lucide-react"
+import type { TextBlock, PageItem, PageStatus } from "@/lib/types"
 import { ImageViewer } from "@/components/image-viewer"
 import { TextBlockCard } from "@/components/text-block-card"
 import { Sidebar } from "@/components/sidebar"
 import { BatchChapterActions } from "@/components/batch-chapter-actions"
-import { runAutoDetect, runPageAutoDetect, getPageImageUrl, getPageBlocks, savePageBlocks, runBatchTranslate, runOcr, runCleanPage, getPageCleanImageUrl, saveTranslatedPage, openTranslatedFolder } from "@/lib/api"
+import { TranslatorHeader } from "@/components/translator-header"
+import { TranslationToolbar } from "@/components/translation-toolbar"
+import { cropRegion, bakePageBlob, loadImage, mapDbBlockToTextBlock } from "@/lib/typeset"
+import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
+import {
+  getPageDetails,
+  getPageSpeakers,
+  runPageAutoDetect,
+  getPageImageUrl,
+  getPageCleanImageUrl,
+  getPageBlocks,
+  savePageBlocks,
+  runBatchTranslate,
+  runOcr,
+  runCleanPage,
+  revertCleanPage,
+  runSpotClean,
+  saveTranslatedPage,
+  openTranslatedFolder,
+} from "@/lib/api"
 
 interface DrawRect {
   x: number
   y: number
   width: number
   height: number
+  rotation?: number
 }
 
-function cropRegion(img: HTMLImageElement, rect: DrawRect): Promise<{ dataUrl: string; blob: Blob | null }> {
-  // Защита: если картинка не загрузилась или повреждена, возвращаем пустой результат без ошибки
-  if (!img || !img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) {
-    return Promise.resolve({ dataUrl: "", blob: null })
-  }
-
-  const nw = img.naturalWidth
-  const nh = img.naturalHeight
-  const canvas = document.createElement("canvas")
-  canvas.width = Math.max(1, Math.round(rect.width * nw))
-  canvas.height = Math.max(1, Math.round(rect.height * nh))
-  const ctx = canvas.getContext("2d")
-
-  if (ctx) {
-    try {
-      ctx.drawImage(
-        img,
-        rect.x * nw,
-        rect.y * nh,
-        rect.width * nw,
-        rect.height * nh,
-        0,
-        0,
-        canvas.width,
-        canvas.height
-      )
-    } catch (err) {
-      console.warn("Пропуск нарезки миниатюры (картинка не готова):", err)
-      return Promise.resolve({ dataUrl: "", blob: null })
-    }
-  }
-
-  try {
-    const dataUrl = canvas.toDataURL("image/png")
-    return new Promise((resolve) => {
-      canvas.toBlob((blob) => resolve({ dataUrl, blob }), "image/png")
-    })
-  } catch {
-    return Promise.resolve({ dataUrl: "", blob: null })
-  }
+function getMangaScore(b: { x: number; y: number }): number {
+  const rowIdx = Math.floor(b.y / 0.18)
+  return rowIdx * 1000 + (1 - b.x) * 100
 }
 
 export function MangaTranslator() {
   const [currentPage, setCurrentPage] = useState<PageItem | null>(null)
   const [chapterPages, setChapterPages] = useState<PageItem[]>([])
-  const [imageSrc, setImageSrc] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<"original" | "clean">("original")
+  const [cleanCacheBuster, setCleanCacheBuster] = useState<number>(Date.now())
   const [textBlocks, setTextBlocks] = useState<TextBlock[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
   const [isDetecting, setIsDetecting] = useState(false)
+  const [isOcrRunning, setIsOcrRunning] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [showTypeset, setShowTypeset] = useState(false) // переключатель режима просмотра перевода
-  const [isBatchTranslating, setIsBatchTranslating] = useState(false) // индикатор автоперевода
+  const [showTypeset, setShowTypeset] = useState(false)
+  const [isBatchTranslating, setIsBatchTranslating] = useState(false)
   const [isCleaning, setIsCleaning] = useState(false)
+  const [isRevertingClean, setIsRevertingClean] = useState(false)
   const [isFullAuto, setIsFullAuto] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [isExportSuccess, setIsExportSuccess] = useState(false)
 
-  // Реф для доступа к актуальным блокам внутри колбеков
+  const [knownSpeakers, setKnownSpeakers] = useState<string[]>([])
+
+  const [activePageUpdate, setActivePageUpdate] = useState<{ id: number; status: PageStatus; clean_path?: string } | null>(null)
+  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
+
   const textBlocksRef = useRef<TextBlock[]>([])
   textBlocksRef.current = textBlocks
   const currentPageRef = useRef<PageItem | null>(null)
   currentPageRef.current = currentPage
+  const chapterPagesRef = useRef<PageItem[]>([])
+  chapterPagesRef.current = chapterPages
 
-  // Функция сохранения в БД
-  const handleSaveBlocks = useCallback(async () => {
-    if (!currentPageRef.current) return
-    setIsSaving(true)
+  const refreshSpeakersList = useCallback(async (pageId: number) => {
     try {
-      const payload = textBlocksRef.current.map((b) => ({
-        id: b.id,
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
-        jap_text: b.japText,
-        rus_text: b.rusText,
-        status: b.status,
-      }))
-      await savePageBlocks(currentPageRef.current.id, payload)
+      const speakers = await getPageSpeakers(pageId)
+      if (speakers && speakers.length > 0) {
+        setKnownSpeakers(speakers)
+      }
     } catch (e) {
-      console.error("Ошибка сохранения блоков:", e)
-    } finally {
-      setIsSaving(false)
+      console.error("Ошибка загрузки подсказок спикеров:", e)
     }
   }, [])
 
-  // Хоткей Ctrl + S для сохранения
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault()
-        handleSaveBlocks()
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [handleSaveBlocks])
+  const handlePageStatusUpdate = useCallback((pageId: number, status: PageStatus, cleanPath?: string) => {
+    setActivePageUpdate({ id: pageId, status, clean_path: cleanPath })
 
-  // Переключение страницы из сайдбара
-  const handleSelectPage = async (page: PageItem) => {
-    // Автосохранение предыдущей страницы
-    if (currentPageRef.current && textBlocksRef.current.length > 0) {
-      await handleSaveBlocks()
-    }
-
-    setCurrentPage(page)
-    setSelectedId(null)
-
-    // Загружаем картинку
-    const url = getPageImageUrl(page.id)
-    setImageSrc(url)
-
-    // Загружаем сохраненные блоки из БД
-    try {
-      const dbBlocks = await getPageBlocks(page.id)
-
-      // Надежная предзагрузка картинки перед нарезкой баблов
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.src = url
-
-      // Ждем полного декодирования картинки в память
-      await new Promise((resolve) => {
-        if (img.complete && img.naturalWidth > 0) {
-          resolve(true)
-        } else {
-          img.onload = () => resolve(true)
-          img.onerror = () => resolve(false)
+    if (currentPageRef.current && currentPageRef.current.id === pageId) {
+      setCurrentPage((prev) => {
+        if (!prev) return null
+        return {
+          ...prev,
+          status,
+          clean_path: cleanPath !== undefined ? cleanPath : prev.clean_path,
         }
       })
+      if (cleanPath) {
+        setCleanCacheBuster(Date.now())
+        setViewMode("clean")
+      }
+    }
+  }, [])
 
-      const loadedBlocks: TextBlock[] = []
-      for (const b of dbBlocks) {
-        let cropDataUrl = ""
-        let cropBlob: Blob | null = null
-
-        if (img.naturalWidth > 0) {
-          const cropped = await cropRegion(img, b)
-          cropDataUrl = cropped.dataUrl
-          cropBlob = cropped.blob
-        }
-
-        loadedBlocks.push({
+  const handleSaveBlocks = useCallback(
+    async (refreshSpeakers = true) => {
+      if (!currentPageRef.current) return
+      setIsSaving(true)
+      try {
+        const payload = textBlocksRef.current.map((b) => ({
           id: b.id,
           x: b.x,
           y: b.y,
           width: b.width,
           height: b.height,
-          japText: b.jap_text || "",
-          rusText: b.rus_text || "",
-          status: b.status as TextBlock["status"],
-          imageCrop: cropDataUrl,
-          cropBlob: cropBlob,
-        })
-      }
+          rotation: b.rotation || 0,
+          jap_text: b.japText,
+          rus_text: b.rusText,
+          speaker: b.speaker || "",
+          order_index: b.orderIndex || 0,
+          font_size: b.fontSize,
+          font_family: b.fontFamily,
+          is_bold: b.isBold,
+          is_italic: b.isItalic,
+          is_uppercase: b.isUppercase,
+          has_stroke: b.hasStroke,
+          shape: b.shape || "rect",
+          padding_mode: b.paddingMode || "safe",
+          status: b.status,
+        }))
 
-      setTextBlocks(loadedBlocks)
-      // Если страница уже размечалась ранее — показываем сохранённые блоки
-      if (loadedBlocks.length > 0) {
-        setTextBlocks(loadedBlocks)
-        setSelectedId(loadedBlocks[0].id)
-      } else {
-        // Если страница новая и пустая — АВТОМАТИЧЕСКИ запускаем поиск баблов!
-        const autoBoxes = await runPageAutoDetect(page.id)
-        if (autoBoxes && autoBoxes.length > 0) {
-          const freshBlocks: TextBlock[] = []
-          for (const box of autoBoxes) {
-            const cropped = await cropRegion(img, box)
-            freshBlocks.push({
-              id: crypto.randomUUID(),
-              x: box.x,
-              y: box.y,
-              width: box.width,
-              height: box.height,
-              imageCrop: cropped.dataUrl,
-              cropBlob: cropped.blob,
-              japText: "",
-              rusText: "",
-              status: "new",
-            })
-          }
-          setTextBlocks(freshBlocks)
-          if (freshBlocks.length > 0) setSelectedId(freshBlocks[0].id)
-        } else {
-          setTextBlocks([])
+        const res = await savePageBlocks(currentPageRef.current.id, payload)
+        if (res.page_status) {
+          handlePageStatusUpdate(currentPageRef.current.id, res.page_status)
         }
+
+        if (refreshSpeakers && currentPageRef.current) {
+          refreshSpeakersList(currentPageRef.current.id)
+        }
+      } catch (e) {
+        console.error("Ошибка сохранения блоков:", e)
+      } finally {
+        setIsSaving(false)
       }
-    } catch (e) {
-      console.error("Не удалось загрузить блоки страницы:", e)
-      setTextBlocks([])
-    }
-  }
-
-  // Ручная загрузка через кнопку "Upload image"
-  const handleImageLoad = useCallback((src: string) => {
-    setCurrentPage(null)
-    setImageSrc(src)
-    setTextBlocks([])
-    setSelectedId(null)
-  }, [])
-
-  const handleDrawComplete = useCallback(async (rect: DrawRect, img: HTMLImageElement, existingId?: string) => {
-    const { dataUrl, blob } = await cropRegion(img, rect)
-
-    if (existingId) {
-      setTextBlocks((prev) =>
-        prev.map((b) =>
-          b.id === existingId
-            ? { ...b, x: rect.x, y: rect.y, width: rect.width, height: rect.height, imageCrop: dataUrl, cropBlob: blob, status: "new" }
-            : b
-        )
-      )
-      return
-    }
-
-    const id = crypto.randomUUID()
-    const block: TextBlock = {
-      id,
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-      imageCrop: dataUrl,
-      cropBlob: blob,
-      japText: "",
-      rusText: "",
-      status: "new",
-    }
-    setTextBlocks((prev) => [...prev, block])
-    setSelectedId(id)
-  }, [])
+    },
+    [handlePageStatusUpdate, refreshSpeakersList]
+  )
 
   const updateBlock = useCallback((id: string, patch: Partial<TextBlock>) => {
     setTextBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)))
   }, [])
 
   const deleteBlock = useCallback((id: string) => {
-    setTextBlocks((prev) => prev.filter((b) => b.id !== id))
+    setTextBlocks((prev) => {
+      const filtered = prev.filter((b) => b.id !== id)
+      return filtered.map((b, idx) => ({ ...b, orderIndex: idx + 1 }))
+    })
     setSelectedId((cur) => (cur === id ? null : cur))
   }, [])
 
-  // Ручная смена порядка реплик: меняем местами блоки и переприсваиваем orderIndex
   const moveBlock = useCallback((id: string, direction: "up" | "down") => {
     setTextBlocks((prev) => {
       const idx = prev.findIndex((b) => b.id === id)
@@ -270,48 +170,346 @@ export function MangaTranslator() {
     })
   }, [])
 
-  // Удаление по кнопке Delete
+  const handleSpotCleanBlock = useCallback(
+    async (block: TextBlock, method: "auto" | "lama" | "white" = "auto", deleteAfter = false) => {
+      if (!currentPageRef.current) return
+      try {
+        const res = await runSpotClean(
+          currentPageRef.current.id,
+          { x: block.x, y: block.y, width: block.width, height: block.height },
+          method
+        )
+        if (res.success) {
+          setCleanCacheBuster(Date.now())
+          setViewMode("clean")
+          handlePageStatusUpdate(currentPageRef.current.id, res.page_status || "cleaned", res.clean_path)
+
+          if (deleteAfter) {
+            deleteBlock(block.id)
+          }
+        } else {
+          alert("Ошибка точечного клина: " + (res.error || "Неизвестная ошибка"))
+        }
+      } catch (e) {
+        alert("Ошибка точечного клина: " + String(e))
+      }
+    },
+    [handlePageStatusUpdate, deleteBlock]
+  )
+
+  const handleSelectPage = async (page: PageItem, skipSave = false) => {
+    if (!skipSave && currentPageRef.current && textBlocksRef.current.length > 0) {
+      await handleSaveBlocks(false)
+    }
+
+    const freshPage = (await getPageDetails(page.id)) || page
+    setCurrentPage(freshPage)
+    setSelectedId(null)
+    setViewMode(freshPage.clean_path ? "clean" : "original")
+    setCleanCacheBuster(Date.now())
+
+    refreshSpeakersList(freshPage.id)
+
+    const rawUrl = getPageImageUrl(page.id)
+
+    try {
+      const dbBlocks = await getPageBlocks(page.id)
+
+      const img = new Image()
+      img.crossOrigin = "anonymous"
+      img.src = rawUrl
+
+      await new Promise((resolve) => {
+        if (img.complete && img.naturalWidth > 0) resolve(true)
+        else {
+          img.onload = () => resolve(true)
+          img.onerror = () => resolve(false)
+        }
+      })
+
+      const loadedBlocks: TextBlock[] = []
+      for (const b of dbBlocks) {
+        let cropDataUrl = ""
+        if (img.naturalWidth > 0) {
+          const cropped = await cropRegion(img, { ...b, rotation: b.rotation || 0 })
+          cropDataUrl = cropped.dataUrl
+        }
+        loadedBlocks.push(mapDbBlockToTextBlock(b, cropDataUrl))
+      }
+
+      if (loadedBlocks.length > 0) {
+        setTextBlocks(loadedBlocks)
+        setSelectedId(loadedBlocks[0].id)
+      } else {
+        const detectRes = await runPageAutoDetect(page.id)
+        if (detectRes && detectRes.boxes && detectRes.boxes.length > 0) {
+          const freshBlocks: TextBlock[] = []
+          for (const box of detectRes.boxes) {
+            const cropped = await cropRegion(img, { ...box, rotation: 0 })
+            freshBlocks.push({
+              id: box.id || crypto.randomUUID(),
+              x: box.x,
+              y: box.y,
+              width: box.width,
+              height: box.height,
+              rotation: 0,
+              imageCrop: cropped.dataUrl,
+              japText: box.jap_text || "",
+              rusText: "",
+              orderIndex: box.order_index,
+              shape: "rect",
+              paddingMode: "safe",
+              status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
+            })
+          }
+          setTextBlocks(freshBlocks)
+          if (freshBlocks.length > 0) setSelectedId(freshBlocks[0].id)
+          handlePageStatusUpdate(page.id, "detected")
+        } else {
+          setTextBlocks([])
+        }
+      }
+    } catch (e) {
+      console.error("Не удалось загрузить блоки страницы:", e)
+      setTextBlocks([])
+    }
+  }
+
+  const currentPageIdx = chapterPages.findIndex((p) => p.id === currentPage?.id)
+
+  const handlePrevPage = useCallback(async () => {
+    if (currentPageIdx > 0) {
+      const prev = chapterPagesRef.current[currentPageIdx - 1]
+      if (prev) await handleSelectPage(prev, false)
+    }
+  }, [currentPageIdx])
+
+  const handleNextPage = useCallback(async () => {
+    if (currentPageIdx >= 0 && currentPageIdx < chapterPagesRef.current.length - 1) {
+      const next = chapterPagesRef.current[currentPageIdx + 1]
+      if (next) await handleSelectPage(next, false)
+    }
+  }, [currentPageIdx])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
-      if (e.key === "Delete" && selectedId) {
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
+        return
+      }
+
+      const code = e.code
+      const key = e.key
+
+      if (code === "PageUp" || (e.altKey && code === "ArrowLeft")) {
+        e.preventDefault()
+        handlePrevPage()
+        return
+      }
+      if (code === "PageDown" || (e.altKey && code === "ArrowRight")) {
+        e.preventDefault()
+        handleNextPage()
+        return
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (code === "KeyS" || key.toLowerCase() === "s" || key.toLowerCase() === "ы")) {
+        e.preventDefault()
+        handleSaveBlocks(true)
+        return
+      }
+
+      if (!selectedId) return
+      const activeBlock = textBlocksRef.current.find((b) => b.id === selectedId)
+      if (!activeBlock) return
+
+      if (code === "Delete" || code === "Backspace" || key === "Delete" || key === "Backspace") {
+        e.preventDefault()
         deleteBlock(selectedId)
+        return
+      }
+
+      if (code === BUBBLE_HOTKEYS.moveOrderUp.code || (e.altKey && code === "ArrowUp")) {
+        e.preventDefault()
+        moveBlock(selectedId, "up")
+        return
+      }
+      if (code === BUBBLE_HOTKEYS.moveOrderDown.code || (e.altKey && code === "ArrowDown")) {
+        e.preventDefault()
+        moveBlock(selectedId, "down")
+        return
+      }
+
+      if (key === "-" || key === "_" || code === "NumpadSubtract") {
+        e.preventDefault()
+        const curFont = activeBlock.fontSize || Math.max(11, Math.min(16, Math.round(11 + (activeBlock.height || 0.1) * 22)))
+        updateBlock(selectedId, { fontSize: Math.max(8, curFont - 1) })
+        return
+      }
+      if (key === "+" || key === "=" || code === "NumpadAdd") {
+        e.preventDefault()
+        const curFont = activeBlock.fontSize || Math.max(11, Math.min(16, Math.round(11 + (activeBlock.height || 0.1) * 22)))
+        updateBlock(selectedId, { fontSize: Math.min(36, curFont + 1) })
+        return
+      }
+
+      if (code === BUBBLE_HOTKEYS.toggleShape.code) {
+        e.preventDefault()
+        updateBlock(selectedId, { shape: activeBlock.shape === "ellipse" ? "rect" : "ellipse" })
+        return
+      }
+
+      if (code === BUBBLE_HOTKEYS.toggleStroke.code && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        updateBlock(selectedId, { hasStroke: !activeBlock.hasStroke })
+        return
+      }
+
+      if (code === BUBBLE_HOTKEYS.togglePadding.code) {
+        e.preventDefault()
+        updateBlock(selectedId, { paddingMode: activeBlock.paddingMode === "fit" ? "safe" : "fit" })
+        return
+      }
+
+      if (code === BUBBLE_HOTKEYS.toggleBold.code && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        updateBlock(selectedId, { isBold: !activeBlock.isBold })
+        return
+      }
+
+      if (code === BUBBLE_HOTKEYS.toggleItalic.code && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        updateBlock(selectedId, { isItalic: !activeBlock.isItalic })
+        return
+      }
+
+      if (code === BUBBLE_HOTKEYS.toggleUppercase.code) {
+        e.preventDefault()
+        updateBlock(selectedId, { isUppercase: !activeBlock.isUppercase })
+        return
       }
     }
+
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selectedId, deleteBlock])
-  // Массовый OCR и связный перевод всех баблов страницы
+  }, [selectedId, deleteBlock, updateBlock, moveBlock, handleSaveBlocks, handlePrevPage, handleNextPage])
+
+  const handleDrawComplete = useCallback(
+    async (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => {
+      const rot = rotation !== undefined ? rotation : rect.rotation || 0
+      const { dataUrl } = await cropRegion(img, { ...rect, rotation: rot })
+
+      // При ресайзе/вращении существующего бабла сохраняем статус перевода и текст
+      if (existingId) {
+        setTextBlocks((prev) =>
+          prev.map((b) =>
+            b.id === existingId
+              ? {
+                  ...b,
+                  x: rect.x,
+                  y: rect.y,
+                  width: rect.width,
+                  height: rect.height,
+                  rotation: rot,
+                  imageCrop: dataUrl,
+                }
+              : b
+          )
+        )
+        return
+      }
+
+      const id = crypto.randomUUID()
+      const newBlock: TextBlock = {
+        id,
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        rotation: rot,
+        imageCrop: dataUrl,
+        japText: "",
+        rusText: "",
+        shape: "rect",
+        paddingMode: "safe",
+        status: "new",
+      }
+
+      setTextBlocks((prev) => {
+        if (prev.length === 0) {
+          return [{ ...newBlock, orderIndex: 1 }]
+        }
+
+        const newScore = getMangaScore(newBlock)
+        let insertIdx = prev.length
+
+        for (let i = 0; i < prev.length; i++) {
+          if (getMangaScore(prev[i]) > newScore) {
+            insertIdx = i
+            break
+          }
+        }
+
+        const next = [...prev]
+        next.splice(insertIdx, 0, newBlock)
+        return next.map((b, idx) => ({ ...b, orderIndex: idx + 1 }))
+      })
+
+      setSelectedId(id)
+    },
+    []
+  )
+
+  const handleOcrAllBlocks = async () => {
+    if (!currentPage || textBlocks.length === 0) return
+    setIsOcrRunning(true)
+
+    try {
+      const updated = [...textBlocks]
+      for (let i = 0; i < updated.length; i++) {
+        const b = updated[i]
+        const text = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
+        updated[i] = {
+          ...b,
+          japText: text,
+          status: b.status === "translated" ? "translated" : "ocr-done",
+        }
+      }
+      setTextBlocks(updated)
+      textBlocksRef.current = updated
+      await handleSaveBlocks(true)
+    } catch (e) {
+      console.error("Ошибка распознавания всех рамок:", e)
+      alert("Ошибка OCR")
+    } finally {
+      setIsOcrRunning(false)
+    }
+  }
+
   const handleTranslateAll = async () => {
-    if (textBlocks.length === 0) return
+    if (!currentPage || textBlocks.length === 0) return
     setIsBatchTranslating(true)
 
     try {
-      // 1. Для всех блоков, где ещё нет японского текста, запускаем MangaOCR
       const currentBlocks = [...textBlocks]
       for (let i = 0; i < currentBlocks.length; i++) {
         const b = currentBlocks[i]
-        if (!b.japText && b.cropBlob) {
-          const ocrText = await runOcr(b.cropBlob)
+        if (!b.japText) {
+          const ocrText = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
           currentBlocks[i] = { ...b, japText: ocrText, status: "ocr-done" }
         }
       }
       setTextBlocks([...currentBlocks])
 
-      // 2. Отбираем блоки для перевода (где есть японский текст)
       const toTranslate = currentBlocks
         .filter((b) => b.japText.trim().length > 0)
-        .map((b) => ({ id: b.id, text: b.japText }))
+        .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker, order_index: b.orderIndex }))
 
       if (toTranslate.length === 0) {
         setIsBatchTranslating(false)
         return
       }
 
-      // 3. Отправляем в Gemini одним пакетом
-      const translations = await runBatchTranslate(toTranslate)
+      const translations = await runBatchTranslate(toTranslate, currentPage.id)
 
-      // 4. Записываем русский перевод в карточки
       const updated = currentBlocks.map((b) => {
         if (translations[b.id]) {
           return { ...b, rusText: translations[b.id], status: "translated" as const }
@@ -320,7 +518,11 @@ export function MangaTranslator() {
       })
 
       setTextBlocks(updated)
-      setShowTypeset(true) // сразу включаем режим предпросмотра результата
+      textBlocksRef.current = updated
+      await handleSaveBlocks(true)
+
+      setShowTypeset(true)
+      handlePageStatusUpdate(currentPage.id, "translated")
     } catch (e) {
       console.error(e)
       alert("Ошибка при массовом переводе")
@@ -329,142 +531,155 @@ export function MangaTranslator() {
     }
   }
 
-  // Запекает русский текст на чистый скан в 100% оригинальном разрешении и сохраняет на диск
-  const handleExportPage = async (overrideImgSrc?: string, overrideBlocks?: TextBlock[]) => {
-    const targetSrc = overrideImgSrc || imageSrc
-    // Используем переданные свежие блоки или актуальный стейт
-    const blocksToExport = overrideBlocks || textBlocksRef.current || textBlocks
-
-    if (!currentPage || !targetSrc) return
+  const handleExportPage = async () => {
+    if (!currentPage) return
     setIsExporting(true)
 
     try {
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.src = targetSrc
+      await handleSaveBlocks(true)
 
-      await new Promise((res) => {
-        if (img.complete && img.naturalWidth > 0) res(true)
-        else {
-          img.onload = () => res(true)
-          img.onerror = () => res(false)
+      let cleanPath = currentPage.clean_path
+      if (!cleanPath) {
+        const cleanRes = await runCleanPage(currentPage.id)
+        if (cleanRes.success && cleanRes.clean_path) {
+          cleanPath = cleanRes.clean_path
+          handlePageStatusUpdate(currentPage.id, "cleaned", cleanPath)
         }
-      })
-
-      const canvas = document.createElement("canvas")
-      canvas.width = img.naturalWidth
-      canvas.height = img.naturalHeight
-      const ctx = canvas.getContext("2d")
-      if (!ctx) throw new Error("Не удалось создать контекст холста")
-
-      // 1. Рисуем очищенную страницу
-      ctx.drawImage(img, 0, 0)
-
-      // 2. Рисуем баблы из актуального списка
-      for (const box of blocksToExport) {
-        if (!box.rusText.trim()) continue
-
-        const bx = box.x * canvas.width
-        const by = box.y * canvas.height
-        const bw = box.width * canvas.width
-        const bh = box.height * canvas.height
-
-        const displayText = box.isUppercase ? box.rusText.toUpperCase() : box.rusText
-        const fontName = box.fontFamily || "v_CCFaceFront"
-        const isBold = box.isBold ? "bold " : ""
-        const isItalic = box.isItalic ? "italic " : ""
-
-        // Точная формула масштаба: 1 в 1 как на экране
-        const baseSize = box.fontSize || Math.max(11, Math.min(15, Math.round(11 + box.height * 22)))
-        const calculatedSize = Math.round(baseSize * (canvas.height / 1200))
-
-        ctx.font = `${isItalic}${isBold}${calculatedSize}px '${fontName}', sans-serif`
-        ctx.textAlign = "center"
-        ctx.textBaseline = "middle"
-
-        // Безопасный перенос: слова длиннее ширины бабла аккуратно делятся
-        const maxWidth = bw * 0.88
-        const words = displayText.split(/\s+/)
-        const lines: string[] = []
-        let currentLine = ""
-
-        for (const w of words) {
-          // Если само слово длиннее бабла — делим его на части
-          if (ctx.measureText(w).width > maxWidth) {
-            if (currentLine) {
-              lines.push(currentLine)
-              currentLine = ""
-            }
-            let part = ""
-            for (const char of w) {
-              if (ctx.measureText(part + char).width > maxWidth) {
-                lines.push(part)
-                part = char
-              } else {
-                part += char
-              }
-            }
-            currentLine = part
-            continue
-          }
-
-          const testLine = currentLine ? `${currentLine} ${w}` : w
-          if (ctx.measureText(testLine).width > maxWidth && currentLine) {
-            lines.push(currentLine)
-            currentLine = w
-          } else {
-            currentLine = testLine
-          }
-        }
-        if (currentLine) lines.push(currentLine)
-
-        const lineHeight = calculatedSize * 1.16
-        const startY = by + bh / 2 - ((lines.length - 1) * lineHeight) / 2
-        const centerX = bx + bw / 2
-
-        lines.forEach((line, idx) => {
-          const ly = startY + idx * lineHeight
-
-          // Белая обводка (Stroke)
-          if (box.hasStroke) {
-            ctx.strokeStyle = "#FFFFFF"
-            ctx.lineWidth = Math.max(4, calculatedSize * 0.22)
-            ctx.lineJoin = "round"
-            ctx.strokeText(line, centerX, ly)
-          }
-
-          // Черный текст строго по центру
-          ctx.fillStyle = "#000000"
-          ctx.fillText(line, centerX, ly)
-        })
       }
 
-      // 3. Отправляем в translated/
-      await new Promise<void>((resolve) => {
-        canvas.toBlob(async (blob) => {
-          if (blob) {
-            await saveTranslatedPage(currentPage.id, blob)
-            setIsExportSuccess(true)
-            setTimeout(() => setIsExportSuccess(false), 2500)
-          }
-          resolve()
-        }, "image/png")
-      })
+      const baseImgUrl = cleanPath
+        ? `${getPageCleanImageUrl(currentPage.id)}?t=${cleanCacheBuster}`
+        : getPageImageUrl(currentPage.id)
 
+      const baseImg = await loadImage(baseImgUrl)
+      const blob = await bakePageBlob(baseImg, textBlocksRef.current)
+
+      if (!blob) {
+        throw new Error("Не удалось создать Blob изображения в Canvas")
+      }
+
+      const res = await saveTranslatedPage(currentPage.id, blob)
+      if (res.success) {
+        setIsExportSuccess(true)
+        handlePageStatusUpdate(currentPage.id, "done")
+        setTimeout(() => setIsExportSuccess(false), 2500)
+      } else {
+        alert("Ошибка запекания: " + (res.error || "Неизвестная ошибка"))
+      }
     } catch (e) {
       console.error("Ошибка экспорта:", e)
+      alert("Ошибка экспорта: " + String(e))
     } finally {
       setIsExporting(false)
     }
   }
 
-  // Мастер-кнопка: запускает весь цикл (Детект -> Перевод -> Клин -> Тайпсет) в 1 клик
+  const handleCleanPage = async () => {
+    if (!currentPage) return
+    if (textBlocks.length === 0) {
+      alert("Сначала запустите Auto-Detect, чтобы найти баблы.")
+      return
+    }
+
+    setIsCleaning(true)
+    try {
+      await handleSaveBlocks(true)
+      const res = await runCleanPage(currentPage.id)
+      if (res.success) {
+        setCleanCacheBuster(Date.now())
+        setViewMode("clean")
+        setShowTypeset(true)
+        handlePageStatusUpdate(currentPage.id, "cleaned", res.clean_path)
+      } else {
+        alert("Ошибка клина: " + res.error)
+      }
+    } catch (e) {
+      console.error(e)
+      alert("Не удалось очистить страницу")
+    } finally {
+      setIsCleaning(false)
+    }
+  }
+
+  const handleRevertClean = async () => {
+    if (!currentPage || !currentPage.clean_path) return
+    if (!confirm("Откатить клин этой страницы и вернуться к исходному скану? Все баблы и переводы сохранятся.")) return
+
+    setIsRevertingClean(true)
+    try {
+      const res = await revertCleanPage(currentPage.id)
+      if (res.success) {
+        setCurrentPage((prev) => (prev ? { ...prev, clean_path: undefined, status: res.page_status } : null))
+        setViewMode("original")
+        setCleanCacheBuster(Date.now())
+        handlePageStatusUpdate(currentPage.id, res.page_status, "")
+      } else {
+        alert("Ошибка отката клина: " + (res.error || res.detail))
+      }
+    } catch (e) {
+      alert("Ошибка при откате клина: " + String(e))
+    } finally {
+      setIsRevertingClean(false)
+    }
+  }
+
+  const handleAutoDetect = async () => {
+    if (!currentPage) return
+    setIsDetecting(true)
+
+    try {
+      const detectRes = await runPageAutoDetect(currentPage.id)
+      const boxes = detectRes.boxes || []
+      if (!boxes || boxes.length === 0) {
+        alert("Баблы не найдены!")
+        setIsDetecting(false)
+        return
+      }
+
+      const img = new Image()
+      img.crossOrigin = "anonymous"
+      img.src = getPageImageUrl(currentPage.id)
+      await new Promise((resolve) => {
+        img.onload = resolve
+        img.onerror = resolve
+      })
+
+      const newBlocks: TextBlock[] = []
+      for (const box of boxes) {
+        const { dataUrl } = await cropRegion(img, { ...box, rotation: 0 })
+        newBlocks.push({
+          id: box.id || crypto.randomUUID(),
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          rotation: 0,
+          imageCrop: dataUrl,
+          japText: box.jap_text || "",
+          rusText: "",
+          orderIndex: box.order_index,
+          shape: "rect",
+          paddingMode: "safe",
+          status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
+        })
+      }
+
+      setTextBlocks(newBlocks)
+      if (newBlocks.length > 0) setSelectedId(newBlocks[0].id)
+      handlePageStatusUpdate(currentPage.id, "detected")
+    } catch (e) {
+      console.error(e)
+      alert("Ошибка при авто-детекции")
+    } finally {
+      setIsDetecting(false)
+    }
+  }
+
   const handleFullAuto = async () => {
-    if (!currentPage && !imageSrc) return
+    if (!currentPage) return
     setIsFullAuto(true)
 
     try {
-      // 1. Если баблов еще нет — сначала детектим
       let currentBlocks = [...textBlocks]
       if (currentBlocks.length === 0) {
         await handleAutoDetect()
@@ -477,22 +692,20 @@ export function MangaTranslator() {
         return
       }
 
-      // 2. Распознаем японский (OCR) для всех баблов
       for (let i = 0; i < currentBlocks.length; i++) {
         const b = currentBlocks[i]
-        if (!b.japText && b.cropBlob) {
-          const ocrText = await runOcr(b.cropBlob)
+        if (!b.japText) {
+          const ocrText = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
           currentBlocks[i] = { ...b, japText: ocrText, status: "ocr-done" }
         }
       }
 
-      // 3. Переводим через Gemini
       const toTranslate = currentBlocks
         .filter((b) => b.japText.trim().length > 0)
-        .map((b) => ({ id: b.id, text: b.japText }))
+        .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker, order_index: b.orderIndex }))
 
       if (toTranslate.length > 0) {
-        const translations = await runBatchTranslate(toTranslate)
+        const translations = await runBatchTranslate(toTranslate, currentPage.id)
         currentBlocks = currentBlocks.map((b) => {
           if (translations[b.id]) {
             return { ...b, rusText: translations[b.id], status: "translated" as const }
@@ -503,334 +716,139 @@ export function MangaTranslator() {
       setTextBlocks([...currentBlocks])
       textBlocksRef.current = currentBlocks
 
-      // 4. Очищаем баблы через OpenCV (Клин)
-      if (currentPage) {
-        const payload = currentBlocks.map((b) => ({
-          id: b.id,
-          x: b.x,
-          y: b.y,
-          width: b.width,
-          height: b.height,
-          jap_text: b.japText,
-          rus_text: b.rusText,
-          status: b.status,
-        }))
-        await savePageBlocks(currentPage.id, payload)
+      await handleSaveBlocks(true)
 
-        const cleanRes = await runCleanPage(currentPage.id)
-        if (cleanRes.success) {
-          const cleanUrl = `${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`
-          setImageSrc(cleanUrl)
-          setShowTypeset(true)
-
-          // 5. Сразу запекаем чистую картинку ВМЕСТЕ с переведенным русским текстом
-          await handleExportPage(cleanUrl, currentBlocks)
-        } else {
-          setShowTypeset(true)
-        }
-      } else {
+      const cleanRes = await runCleanPage(currentPage.id)
+      if (cleanRes.success) {
+        setCleanCacheBuster(Date.now())
+        setViewMode("clean")
         setShowTypeset(true)
+
+        const cleanImgUrl = `${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`
+        const cleanImg = await loadImage(cleanImgUrl)
+        const blob = await bakePageBlob(cleanImg, textBlocksRef.current)
+
+        if (blob) {
+          await saveTranslatedPage(currentPage.id, blob)
+          setIsExportSuccess(true)
+          handlePageStatusUpdate(currentPage.id, "done", cleanRes.clean_path)
+          setTimeout(() => setIsExportSuccess(false), 2500)
+        }
       }
     } catch (e) {
       console.error(e)
-      alert("Ошибка при автоматической обработке")
+      alert("Ошибка при автоматической обработке: " + String(e))
     } finally {
       setIsFullAuto(false)
     }
   }
 
-  // Очистка всех баблов на странице от японского текста (Клин)
-  const handleCleanPage = async () => {
-    if (!currentPage) {
-      alert("Клин доступен для страниц из открытого проекта.")
-      return
-    }
-    if (textBlocks.length === 0) {
-      alert("Сначала запустите Auto-Detect, чтобы найти баблы.")
-      return
-    }
-
-    setIsCleaning(true)
-    try {
-      // 1. Сначала сохраняем координаты баблов в БД
-      await handleSaveBlocks()
-
-      // 2. Запускаем серверный клин (OpenCV стирает иероглифы)
-      const res = await runCleanPage(currentPage.id)
-      if (res.success) {
-        // 3. Подменяем картинку в просмотрщике на очищенную (с таймштампом для сброса кеша)
-        setImageSrc(`${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`)
-        setShowTypeset(true) // Включаем режим показа перевода
-      } else {
-        alert("Ошибка клина: " + res.error)
-      }
-    } catch (e) {
-      console.error(e)
-      alert("Не удалось очистить страницу")
-    } finally {
-      setIsCleaning(false)
-    }
-  }
-
-  const handleAutoDetect = async () => {
-    if (!imageSrc) return
-    setIsDetecting(true)
-
-    try {
-      let boxes: Array<{ x: number; y: number; width: number; height: number }> = []
-
-      // 1. Если выбрана страница из БД — сервер читает её напрямую с диска (мгновенно!)
-      if (currentPage) {
-        boxes = await runPageAutoDetect(currentPage.id)
-      } else {
-        // 2. Иначе (одиночный загруженный файл) — шлём как Blob
-        const response = await fetch(imageSrc)
-        const pageBlob = await response.blob()
-        boxes = await runAutoDetect(pageBlob)
-      }
-
-      if (!boxes || boxes.length === 0) {
-        alert("Баблы не найдены!")
-        setIsDetecting(false)
-        return
-      }
-
-      // Создаем объект Image с CORS для нарезки миниатюр
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.src = imageSrc
-      await new Promise((resolve) => {
-        img.onload = resolve
-        img.onerror = resolve
-      })
-
-      const newBlocks: TextBlock[] = []
-      for (const box of boxes) {
-        const { dataUrl, blob } = await cropRegion(img, box)
-        newBlocks.push({
-          id: crypto.randomUUID(),
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-          imageCrop: dataUrl,
-          cropBlob: blob,
-          japText: "",
-          rusText: "",
-          status: "new",
-        })
-      }
-
-      setTextBlocks(newBlocks)
-      if (newBlocks.length > 0) setSelectedId(newBlocks[0].id)
-    } catch (e) {
-      console.error(e)
-      alert("Ошибка при авто-детекции")
-    } finally {
-      setIsDetecting(false)
-    }
-  }
-
   const translatedCount = textBlocks.filter((b) => b.status === "translated").length
 
-  // Автодополнение имён персонажей из уже заполненных реплик страницы
-  const speakerSuggestions = Array.from(
-    new Set(textBlocks.map((b) => b.speaker?.trim()).filter((s): s is string => !!s)),
-  )
+  const currentBlocksSpeakers = textBlocks
+    .map((b) => b.speaker?.trim())
+    .filter((s): s is string => !!s)
+
+  const allSpeakerSuggestions = Array.from(new Set([...knownSpeakers, ...currentBlocksSpeakers])).sort()
+
+  const activeImageSrc = currentPage
+    ? viewMode === "clean" && currentPage.clean_path
+      ? `${getPageCleanImageUrl(currentPage.id)}?t=${cleanCacheBuster}`
+      : getPageImageUrl(currentPage.id)
+    : null
 
   return (
     <div className="flex h-screen flex-col bg-slate-900 text-slate-100">
-      {/* Список известных персонажей для быстрого выбора говорящего */}
       <datalist id="manga-speakers">
-        {speakerSuggestions.map((name) => (
+        {allSpeakerSuggestions.map((name) => (
           <option key={name} value={name} />
         ))}
       </datalist>
-      {/* Шапка */}
-      <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950/60 px-6 py-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500">
-            <BookText className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-sm font-semibold leading-tight text-white">Manga Translator</h1>
-            <p className="text-xs text-slate-500">
-              {currentPage ? `Page ${currentPage.page_number}` : "Standalone Mode"}
-            </p>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-3 text-xs text-slate-400">
-          {currentPage && (
-            <>
-              {/* Кнопка 1: Открыть готовую папку в проводнике Windows */}
-              <button
-                onClick={() => openTranslatedFolder(currentPage.id)}
-                className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white"
-                title="Открыть папку с готовыми страницами в Проводнике"
-              >
-                <FolderOpen className="h-3.5 w-3.5 text-amber-400" />
-                Folder
-              </button>
+      <TranslatorHeader
+        currentPage={currentPage}
+        currentIndex={currentPageIdx}
+        totalPages={chapterPages.length}
+        totalBlocks={textBlocks.length}
+        translatedCount={translatedCount}
+        isSaving={isSaving}
+        isExporting={isExporting}
+        isExportSuccess={isExportSuccess}
+        onOpenFolder={() => currentPage && openTranslatedFolder(currentPage.id)}
+        onExportPage={handleExportPage}
+        onSaveBlocks={() => handleSaveBlocks(true)}
+        onPrevPage={handlePrevPage}
+        onNextPage={handleNextPage}
+      />
 
-              {/* Кнопка 2: Запечь и сохранить готовую страницу */}
-              <button
-                onClick={() => handleExportPage()}
-                disabled={isExporting || textBlocks.length === 0}
-                className={[
-                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-white transition-all shadow-sm",
-                  isExportSuccess
-                    ? "bg-emerald-500 ring-2 ring-emerald-300"
-                    : "bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
-                ].join(" ")}
-                title="Запечь перевод в исходном качестве и сохранить в папку 'translated'"
-              >
-                {isExporting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : isExportSuccess ? (
-                  <Check className="h-3.5 w-3.5" />
-                ) : (
-                  <Download className="h-3.5 w-3.5" />
-                )}
-                {isExportSuccess ? "Saved to folder!" : "Export Page"}
-              </button>
-
-              {/* Кнопка 3: Сохранить проект в БД */}
-              <button
-                onClick={handleSaveBlocks}
-                disabled={isSaving}
-                className="flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
-                title="Save to database (Ctrl+S)"
-              >
-                {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                Save
-              </button>
-            </>
-          )}
-
-          <span className="flex items-center gap-1.5">
-            <Layers className="h-4 w-4 text-slate-500" />
-            {textBlocks.length} blocks
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Sparkles className="h-4 w-4 text-emerald-400" />
-            {translatedCount} translated
-          </span>
-        </div>
-      </header>
-
-      {/* Панель пакетных действий для всей главы */}
       <BatchChapterActions
         pages={chapterPages}
         currentPageId={currentPage?.id ?? null}
+        onPageStatusUpdate={handlePageStatusUpdate}
+        onCompleteBatch={() => setSidebarRefreshTrigger((prev) => prev + 1)}
         onRefreshCurrent={() => {
-          if (currentPageRef.current) handleSelectPage(currentPageRef.current)
+          if (currentPageRef.current) handleSelectPage(currentPageRef.current, true)
         }}
       />
 
-      {/* Основная рабочая область: Сайдбар + Просмотрщик + Панель перевода */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Левый сайдбар проекта */}
         <Sidebar
           currentPageId={currentPage?.id || null}
-          onSelectPage={handleSelectPage}
+          activePageUpdate={activePageUpdate}
+          refreshTrigger={sidebarRefreshTrigger}
+          onSelectPage={(page) => handleSelectPage(page, false)}
           onActiveChapterChange={setChapterPages}
         />
 
-        {/* Просмотрщик страницы */}
         <ImageViewer
-          imageSrc={imageSrc}
+          imageSrc={activeImageSrc}
           textBlocks={textBlocks}
           selectedId={selectedId}
           showTypeset={showTypeset}
+          pageNumber={currentPage?.page_number}
+          hasCleanScan={Boolean(currentPage?.clean_path)}
+          viewMode={viewMode}
+          onToggleViewMode={() => setViewMode((prev) => (prev === "original" ? "clean" : "original"))}
           onSelect={setSelectedId}
-          onImageLoad={handleImageLoad}
           onDrawComplete={handleDrawComplete}
         />
 
-        {/* Правая панель с карточками */}
         <section className="flex min-h-0 w-full flex-col border-t border-slate-800 lg:w-2/5 lg:border-l lg:border-t-0">
-          <header className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-100">Translation Panel</h2>
-              <p className="text-xs text-slate-500">Detected text blocks</p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Кнопка 0: ВСЁ В 1 КЛИК (FULL AUTO PIPELINE) */}
-              <button
-                onClick={handleFullAuto}
-                disabled={isFullAuto || isDetecting || isBatchTranslating || isCleaning}
-                className="flex items-center gap-1.5 rounded-md bg-gradient-to-r from-amber-500 to-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white shadow-md transition-all hover:brightness-110 disabled:opacity-50"
-                title="Выполнить весь цикл: Детект -> Перевод -> Клин -> Тайпсет"
-              >
-                {isFullAuto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 fill-current" />}
-                Full Auto
-              </button>
-
-              <div className="h-4 w-[1px] bg-slate-800" />
-
-              {/* Кнопка 1: ДЕТЕКТ БАБЛОВ */}
-              <button
-                onClick={handleAutoDetect}
-                disabled={!imageSrc || isDetecting || isFullAuto}
-                className="flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
-                title="Шаг 1: Найти речевые баблы (YOLO)"
-              >
-                {isDetecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5 text-indigo-400" />}
-                1. Detect
-              </button>
-
-              {/* Кнопка 2: ПЕРЕВОД (OCR + GEMINI) */}
-              <button
-                onClick={handleTranslateAll}
-                disabled={textBlocks.length === 0 || isBatchTranslating || isFullAuto}
-                className="flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
-                title="Шаг 2: Распознать японский и перевести всю страницу"
-              >
-                {isBatchTranslating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5 text-emerald-400" />}
-                2. Translate
-              </button>
-
-              {/* Кнопка 3: КЛИН (ОЧИСТКА БАБЛОВ) */}
-              <button
-                onClick={handleCleanPage}
-                disabled={!currentPage || textBlocks.length === 0 || isCleaning || isFullAuto}
-                className="flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
-                title="Шаг 3: Стереть японский текст внутри баблов (OpenCV)"
-              >
-                {isCleaning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eraser className="h-3.5 w-3.5 text-sky-400" />}
-                3. Clean
-              </button>
-
-              {/* Кнопка 4: РЕЖИМ ТАЙПСЕТА */}
-              <button
-                onClick={() => setShowTypeset((prev) => !prev)}
-                className={[
-                  "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors border",
-                  showTypeset
-                    ? "bg-indigo-600/30 border-indigo-500/60 text-indigo-300"
-                    : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200",
-                ].join(" ")}
-                title="Шаг 4: Переключить режим отображения перевода"
-              >
-                {showTypeset ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                {showTypeset ? "Typeset ON" : "Typeset OFF"}
-              </button>
-
-              <span className="rounded-full bg-slate-800 px-2 py-1 text-xs font-medium text-slate-400">
-                {textBlocks.length}
-              </span>
-            </div>
-          </header>
+          <TranslationToolbar
+            hasCurrentPage={Boolean(currentPage)}
+            hasBlocks={textBlocks.length > 0}
+            hasCleanScan={Boolean(currentPage?.clean_path)}
+            isFullAuto={isFullAuto}
+            isDetecting={isDetecting}
+            isOcrRunning={isOcrRunning}
+            isBatchTranslating={isBatchTranslating}
+            isCleaning={isCleaning}
+            isRevertingClean={isRevertingClean}
+            showTypeset={showTypeset}
+            onFullAuto={handleFullAuto}
+            onAutoDetect={handleAutoDetect}
+            onOcrAllBlocks={handleOcrAllBlocks}
+            onTranslateAll={handleTranslateAll}
+            onCleanPage={handleCleanPage}
+            onRevertClean={handleRevertClean}
+            onToggleTypeset={() => setShowTypeset((prev) => !prev)}
+          />
 
           <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
-            {textBlocks.length === 0 ? (
+            {!currentPage ? (
+              <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center text-slate-600">
+                <BookText className="h-8 w-8" />
+                <p className="text-sm font-medium text-slate-500">No page selected</p>
+                <p className="max-w-[220px] text-xs">
+                  Choose a chapter page from the explorer to see text blocks.
+                </p>
+              </div>
+            ) : textBlocks.length === 0 ? (
               <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center text-slate-600">
                 <Layers className="h-8 w-8" />
                 <p className="text-sm font-medium text-slate-500">No text blocks yet</p>
                 <p className="max-w-[220px] text-xs">
-                  Select a page from explorer or drag a rectangle over a speech bubble.
+                  Click &ldquo;1. Detect & OCR&rdquo; or drag a rectangle over a speech bubble.
                 </p>
               </div>
             ) : (
@@ -839,6 +857,7 @@ export function MangaTranslator() {
                   key={block.id}
                   block={block}
                   index={index}
+                  pageId={currentPage.id}
                   isSelected={block.id === selectedId}
                   onSelect={() => setSelectedId(block.id)}
                   onChange={(patch) => updateBlock(block.id, patch)}
@@ -847,6 +866,7 @@ export function MangaTranslator() {
                   onMoveDown={() => moveBlock(block.id, "down")}
                   canMoveUp={index > 0}
                   canMoveDown={index < textBlocks.length - 1}
+                  onSpotClean={(method, deleteAfter) => handleSpotCleanBlock(block, method, deleteAfter)}
                 />
               ))
             )}

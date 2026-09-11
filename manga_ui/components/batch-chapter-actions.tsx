@@ -1,28 +1,31 @@
 "use client"
 
-import { useState } from "react"
-import { Wand2, Languages, Eraser, Download, Loader2, Layers3, Check } from "lucide-react"
-import type { PageItem } from "@/lib/types"
+import { useState, useRef } from "react"
+import { Wand2, Languages, Sparkles, Download, Loader2, Layers3, Check, FileDown, FileUp } from "lucide-react"
+import type { PageItem, PageStatus, TextBlock } from "@/lib/types"
 import {
   runPageAutoDetect,
-  getPageBlocks,
-  savePageBlocks,
-  runOcr,
-  runBatchTranslate,
   runCleanPage,
-  getPageImageUrl,
-  getPageCleanImageUrl,
   saveTranslatedPage,
+  runTranslateChapter,
+  getPageDetails,
+  getPageCleanImageUrl,
+  getPageImageUrl,
+  getPageBlocks,
+  downloadChapterScript,
+  uploadChapterScript,
 } from "@/lib/api"
-import { loadImage, cropRegion, bakePageBlob } from "@/lib/typeset"
+import { loadImage, bakePageBlob, mapDbBlockToTextBlock } from "@/lib/typeset"
 
 interface BatchChapterActionsProps {
   pages: PageItem[]
   currentPageId: number | null
+  onPageStatusUpdate?: (pageId: number, status: PageStatus, cleanPath?: string) => void
   onRefreshCurrent: () => void
+  onCompleteBatch?: () => void
 }
 
-type BatchAction = "detect" | "translate" | "clean" | "export"
+type BatchAction = "detect" | "translate" | "clean" | "export" | "script-export" | "script-import"
 
 interface Progress {
   action: BatchAction
@@ -32,20 +35,29 @@ interface Progress {
 }
 
 const ACTION_LABELS: Record<BatchAction, string> = {
-  detect: "Detecting bubbles",
-  translate: "Translating chapter",
-  clean: "Cleaning pages",
+  detect: "Detecting & OCR",
+  translate: "Translating chapter with Gemini",
+  clean: "Smart Cleaning & Retouching (AI)",
   export: "Exporting pages",
+  "script-export": "Exporting JSON script...",
+  "script-import": "Importing JSON script...",
 }
 
-export function BatchChapterActions({ pages, currentPageId, onRefreshCurrent }: BatchChapterActionsProps) {
+export function BatchChapterActions({
+  pages,
+  currentPageId,
+  onPageStatusUpdate,
+  onRefreshCurrent,
+  onCompleteBatch,
+}: BatchChapterActionsProps) {
   const [progress, setProgress] = useState<Progress | null>(null)
   const [justFinished, setJustFinished] = useState<BatchAction | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const isRunning = progress !== null
   const percent = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
+  const chapterId = pages[0]?.chapter_id
 
-  // Оборачивает пакетный цикл: показывает прогресс, обновляет открытую страницу в конце
   const runBatch = async (action: BatchAction, worker: (page: PageItem, index: number) => Promise<void>) => {
     if (pages.length === 0 || isRunning) return
     setJustFinished(null)
@@ -66,107 +78,134 @@ export function BatchChapterActions({ pages, currentPageId, onRefreshCurrent }: 
       setTimeout(() => setJustFinished(null), 2500)
     } finally {
       setProgress(null)
-      // Перечитываем открытую страницу, чтобы показать свежие блоки/картинку
-      if (currentPageId != null) onRefreshCurrent()
+      onCompleteBatch?.()
+      onRefreshCurrent()
     }
   }
 
-  // 1. Детект баблов на всех страницах главы (YOLO на сервере) + запись в БД
   const detectAll = () =>
     runBatch("detect", async (page) => {
-      const boxes = await runPageAutoDetect(page.id)
-      if (!boxes || boxes.length === 0) return
-      const payload = boxes.map((b) => ({
-        id: crypto.randomUUID(),
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
-        jap_text: "",
-        rus_text: "",
-        status: "new",
-      }))
-      await savePageBlocks(page.id, payload)
+      const res = await runPageAutoDetect(page.id)
+      if (res.success && res.boxes && res.boxes.length > 0) {
+        onPageStatusUpdate?.(page.id, "detected")
+      }
     })
 
-  // 2. OCR недостающего японского + связный перевод всей главы через Gemini
-  const translateChapter = () =>
-    runBatch("translate", async (page) => {
-      const dbBlocks = await getPageBlocks(page.id)
-      if (!dbBlocks || dbBlocks.length === 0) return
+  const translateChapter = async () => {
+    if (!chapterId || isRunning) return
 
-      const img = await loadImage(getPageImageUrl(page.id))
+    setJustFinished(null)
+    setProgress({
+      action: "translate",
+      done: 0,
+      total: 1,
+      label: "Translating entire chapter via Gemini...",
+    })
 
-      // OCR для блоков без японского текста
-      const withJap: Array<{ b: (typeof dbBlocks)[number]; jap: string }> = []
-      for (const b of dbBlocks) {
-        let jap = b.jap_text || ""
-        if (!jap.trim()) {
-          const { blob } = await cropRegion(img, b)
-          if (blob) jap = await runOcr(blob)
-        }
-        withJap.push({ b, jap })
-      }
-
-      // Пакетный перевод japText -> rusText
-      const items = withJap.filter((it) => it.jap.trim().length > 0).map((it) => ({ id: it.b.id, text: it.jap }))
-      const translations = items.length > 0 ? await runBatchTranslate(items) : {}
-
-      const updated = withJap.map(({ b, jap }) => {
-        const rus = translations[b.id] || b.rus_text || ""
-        return {
-          id: b.id,
-          x: b.x,
-          y: b.y,
-          width: b.width,
-          height: b.height,
-          jap_text: jap,
-          rus_text: rus,
-          status: rus.trim() ? "translated" : jap.trim() ? "ocr-done" : "new",
+    try {
+      await runTranslateChapter(chapterId)
+      pages.forEach((p) => {
+        if (p.status !== "done" && p.status !== "cleaned") {
+          onPageStatusUpdate?.(p.id, "translated")
         }
       })
-      await savePageBlocks(page.id, updated)
-    })
+      setProgress({
+        action: "translate",
+        done: 1,
+        total: 1,
+        label: "Chapter translated!",
+      })
+      setJustFinished("translate")
+      setTimeout(() => setJustFinished(null), 2500)
+    } catch (e) {
+      console.error("Ошибка перевода главы:", e)
+      alert("Ошибка перевода главы: " + String(e))
+    } finally {
+      setProgress(null)
+      onCompleteBatch?.()
+      onRefreshCurrent()
+    }
+  }
 
-  // 3. Очистка (клин) баблов на всех страницах главы через OpenCV
   const cleanChapter = () =>
     runBatch("clean", async (page) => {
-      await runCleanPage(page.id)
+      const res = await runCleanPage(page.id)
+      if (res.success) {
+        onPageStatusUpdate?.(page.id, res.page_status || "cleaned", res.clean_path)
+      }
     })
 
-  // 4. Запекание русского текста и сохранение готовых страниц в папку translated/
   const exportAll = () =>
     runBatch("export", async (page) => {
+      const fresh = (await getPageDetails(page.id)) || page
+      const baseImgUrl = fresh.clean_path
+        ? `${getPageCleanImageUrl(page.id)}?t=${Date.now()}`
+        : getPageImageUrl(page.id)
+
       const dbBlocks = await getPageBlocks(page.id)
-      if (!dbBlocks || dbBlocks.length === 0) return
+      const blocks: TextBlock[] = dbBlocks.map((b: any) => mapDbBlockToTextBlock(b))
 
-      // Предпочитаем очищенную картинку, при её отсутствии берём оригинал
-      let img: HTMLImageElement
-      try {
-        img = await loadImage(`${getPageCleanImageUrl(page.id)}?t=${Date.now()}`)
-      } catch {
-        img = await loadImage(getPageImageUrl(page.id))
+      const baseImg = await loadImage(baseImgUrl)
+      const blob = await bakePageBlob(baseImg, blocks)
+
+      if (blob) {
+        const res = await saveTranslatedPage(page.id, blob)
+        if (res.success) {
+          onPageStatusUpdate?.(page.id, "done")
+        }
       }
-
-      const blocks = dbBlocks.map((b) => ({
-        id: b.id,
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
-        japText: b.jap_text || "",
-        rusText: b.rus_text || "",
-        status: (b.status as PageItem["status"]) || "new",
-      })) as any
-
-      const blob = await bakePageBlob(img, blocks)
-      if (blob) await saveTranslatedPage(page.id, blob)
     })
 
+  // Экспорт диалогов в JSON файл с готовым AI-промптом
+  const handleExportScript = async () => {
+    if (!chapterId) return
+    try {
+      await downloadChapterScript(chapterId)
+      setJustFinished("script-export")
+      setTimeout(() => setJustFinished(null), 2000)
+    } catch (e) {
+      alert("Ошибка экспорта: " + String(e))
+    }
+  }
+
+  // Импорт переведённого JSON файла с распознанными спикерами
+  const handleImportScriptFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !chapterId) return
+
+    setProgress({ action: "script-import", done: 0, total: 1, label: "Importing translations & speakers..." })
+    try {
+      const res = await uploadChapterScript(chapterId, file)
+      pages.forEach((p) => {
+        if (p.status !== "done" && p.status !== "cleaned") {
+          onPageStatusUpdate?.(p.id, "translated")
+        }
+      })
+
+      const msg = [
+        `Успешно импортировано реплик: ${res.updated_count}`,
+        res.updated_speakers_count ? `Распознано спикеров: ${res.updated_speakers_count}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n")
+
+      alert(msg)
+      setJustFinished("script-import")
+      setTimeout(() => setJustFinished(null), 2000)
+    } catch (err) {
+      alert("Ошибка импорта: " + String(err))
+    } finally {
+      setProgress(null)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+      onCompleteBatch?.()
+      onRefreshCurrent()
+    }
+  }
+
   const buttons: Array<{ key: BatchAction; label: string; icon: typeof Wand2; onClick: () => void; accent: string }> = [
-    { key: "detect", label: "Detect All", icon: Wand2, onClick: detectAll, accent: "text-indigo-400" },
+    { key: "detect", label: "Detect & OCR All", icon: Wand2, onClick: detectAll, accent: "text-indigo-400" },
     { key: "translate", label: "Translate Chapter", icon: Languages, onClick: translateChapter, accent: "text-emerald-400" },
-    { key: "clean", label: "Clean Chapter", icon: Eraser, onClick: cleanChapter, accent: "text-sky-400" },
+    { key: "clean", label: "Smart Clean Chapter", icon: Sparkles, onClick: cleanChapter, accent: "text-purple-400" },
     { key: "export", label: "Export All", icon: Download, onClick: exportAll, accent: "text-amber-400" },
   ]
 
@@ -205,9 +244,50 @@ export function BatchChapterActions({ pages, currentPageId, onRefreshCurrent }: 
             </button>
           )
         })}
+
+        <div className="mx-1 h-4 w-[1px] bg-slate-800 hidden sm:block" />
+
+        {/* Экспорт диалогов в JSON */}
+        <button
+          onClick={handleExportScript}
+          disabled={disabled || isRunning}
+          className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-50"
+          title="Скачать JSON с репликами, глоссарием и промптом для Claude/ChatGPT (с распознаванием спикеров)"
+        >
+          {justFinished === "script-export" ? (
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
+          ) : (
+            <FileDown className="h-3.5 w-3.5 text-sky-400" />
+          )}
+          Export JSON
+        </button>
+
+        {/* Импорт перевода из JSON */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || isRunning}
+          className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-50"
+          title="Загрузить переведённый JSON обратно (обновит реплики и персонажей)"
+        >
+          {progress?.action === "script-import" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : justFinished === "script-import" ? (
+            <Check className="h-3.5 w-3.5 text-emerald-400" />
+          ) : (
+            <FileUp className="h-3.5 w-3.5 text-amber-400" />
+          )}
+          Import JSON
+        </button>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,.txt"
+          onChange={handleImportScriptFile}
+          className="hidden"
+        />
       </div>
 
-      {/* Прогресс-бар */}
       <div className="ml-auto flex min-w-0 flex-1 items-center gap-3 sm:max-w-xs">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
           <div
@@ -219,7 +299,7 @@ export function BatchChapterActions({ pages, currentPageId, onRefreshCurrent }: 
           />
         </div>
         <span className="shrink-0 text-[11px] tabular-nums text-slate-500">
-          {isRunning ? `${progress?.label} ${progress?.done}/${progress?.total}` : justFinished ? "Done" : "Idle"}
+          {isRunning ? progress?.label : justFinished ? "Done" : "Idle"}
         </span>
       </div>
     </div>

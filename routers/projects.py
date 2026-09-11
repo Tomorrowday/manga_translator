@@ -1,15 +1,23 @@
 import os
 from pathlib import Path
-from fastapi import APIRouter
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query
 from database import db_session, get_db
-from schemas import ScanProjectRequest
+from schemas import ScanProjectRequest, AddChapterRequest, GlossaryItemCreate, UpdateTitleDescriptionRequest
+from config import natural_sort_key
+from logger import logger
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
+
+# Служебные папки, которые ни при каких условиях не должны распознаваться как главы манги
+EXCLUDED_DIR_NAMES = {
+    "clean", "cleaned", "translated", "export", "exports",
+    "raw", ".git", ".idea", "__pycache__", "logs"
+}
 
 
 @router.post("/scan")
 async def scan_project(req: ScanProjectRequest):
-    """Сканирует локальную папку на диске и добавляет тайтл, главы и страницы в БД."""
     folder = Path(req.folder_path)
     if not folder.exists() or not folder.is_dir():
         return {"success": False, "error": "Папка не найдена или путь указан неверно"}
@@ -18,18 +26,28 @@ async def scan_project(req: ScanProjectRequest):
 
     try:
         with db_session() as cursor:
-            # 1. Создаём тайтл
             cursor.execute("INSERT INTO titles (name, folder_path) VALUES (?, ?)", (req.name, str(folder)))
             title_id = cursor.lastrowid
 
             chapters_count = 0
             pages_count = 0
 
-            # 2. Обходим подпапки (главы)
-            for root, _, files in os.walk(folder):
+            walk_dirs = []
+            for root, dirs, files in os.walk(folder):
+                # Исключаем служебные папки из дальнейшего обхода
+                dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIR_NAMES]
+                walk_dirs.append((root, dirs, files))
+
+            walk_dirs.sort(key=lambda item: natural_sort_key(item[0]))
+
+            for root, _, files in walk_dirs:
+                # Дополнительно проверяем имя текущей папки
+                if Path(root).name.lower() in EXCLUDED_DIR_NAMES:
+                    continue
+
                 images = [f for f in files if Path(f).suffix.lower() in valid_extensions]
                 if images:
-                    images.sort()
+                    images.sort(key=natural_sort_key)
                     chapter_name = Path(root).name
 
                     cursor.execute(
@@ -47,20 +65,117 @@ async def scan_project(req: ScanProjectRequest):
                         )
                         pages_count += 1
 
+        logger.info(f"Отсканирован проект '{req.name}': {chapters_count} глав, {pages_count} страниц.")
         return {
             "success": True,
             "message": f"Тайтл '{req.name}' добавлен! Глав: {chapters_count}, страниц: {pages_count}"
         }
     except Exception as e:
+        logger.error(f"Ошибка сканирования папки: {e}")
         return {"success": False, "error": str(e)}
+
+
+@router.post("/{title_id}/chapters")
+async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
+    """
+    Добавляет новую главу (или пачку глав) в существующий тайтл.
+    Если в папке лежат файлы напрямую — создается одна глава.
+    Если в папке лежат подпапки с изображениями — добавляются все найденные главы (за исключением clean, translated и т.п.).
+    """
+    folder = Path(req.folder_path)
+    if not folder.exists() or not folder.is_dir():
+        raise HTTPException(status_code=400, detail="Папка не найдена или путь некорректен")
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM titles WHERE id = ?", (title_id,))
+    title_row = cursor.fetchone()
+    conn.close()
+
+    if not title_row:
+        raise HTTPException(status_code=404, detail="Тайтл не найден")
+
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+
+    direct_files = [f for f in os.listdir(folder) if (folder / f).is_file()]
+    direct_images = [f for f in direct_files if Path(f).suffix.lower() in valid_extensions]
+
+    added_chapters = 0
+    added_pages = 0
+
+    try:
+        with db_session() as cur:
+            if direct_images:
+                direct_images.sort(key=natural_sort_key)
+                ch_name = req.chapter_number.strip() if req.chapter_number and req.chapter_number.strip() else folder.name
+
+                cur.execute(
+                    "INSERT INTO chapters (title_id, chapter_number, folder_path) VALUES (?, ?, ?)",
+                    (title_id, ch_name, str(folder))
+                )
+                ch_id = cur.lastrowid
+                added_chapters += 1
+
+                for i, img in enumerate(direct_images):
+                    cur.execute(
+                        "INSERT INTO pages (chapter_id, page_number, file_path) VALUES (?, ?, ?)",
+                        (ch_id, i + 1, str(folder / img))
+                    )
+                    added_pages += 1
+            else:
+                walk_dirs = []
+                for root, dirs, files in os.walk(folder):
+                    dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIR_NAMES]
+                    walk_dirs.append((root, dirs, files))
+
+                walk_dirs.sort(key=lambda item: natural_sort_key(item[0]))
+
+                for root, _, files in walk_dirs:
+                    if Path(root).name.lower() in EXCLUDED_DIR_NAMES:
+                        continue
+
+                    images = [f for f in files if Path(f).suffix.lower() in valid_extensions]
+                    if images:
+                        images.sort(key=natural_sort_key)
+                        chapter_name = Path(root).name
+
+                        cur.execute(
+                            "INSERT INTO chapters (title_id, chapter_number, folder_path) VALUES (?, ?, ?)",
+                            (title_id, chapter_name, root)
+                        )
+                        chapter_id = cur.lastrowid
+                        added_chapters += 1
+
+                        for i, img in enumerate(images):
+                            img_path = os.path.join(root, img)
+                            cur.execute(
+                                "INSERT INTO pages (chapter_id, page_number, file_path) VALUES (?, ?, ?)",
+                                (chapter_id, i + 1, img_path)
+                            )
+                            added_pages += 1
+
+        if added_chapters == 0:
+            raise HTTPException(status_code=400, detail="В указанной папке не найдено изображений (.jpg, .png, .webp)")
+
+        logger.info(f"В тайтл '{title_row['name']}' (ID {title_id}) добавлено глав: {added_chapters}, страниц: {added_pages}")
+        return {
+            "success": True,
+            "message": f"Добавлено глав: {added_chapters}, страниц: {added_pages}",
+            "chapters_added": added_chapters,
+            "pages_added": added_pages
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка добавления главы в тайтл {title_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("")
 async def get_projects():
-    """Возвращает список всех проектов (тайтлов)."""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM titles ORDER BY created_at DESC")
+    cursor.execute("SELECT id, name, folder_path, description, created_at FROM titles ORDER BY created_at DESC")
     projects = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return {"success": True, "projects": projects}
@@ -68,11 +183,10 @@ async def get_projects():
 
 @router.get("/{title_id}/tree")
 async def get_project_tree(title_id: int):
-    """Возвращает иерархическое дерево: Тайтл -> Главы -> Страницы."""
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM titles WHERE id = ?", (title_id,))
+    cursor.execute("SELECT id, name, folder_path, description, created_at FROM titles WHERE id = ?", (title_id,))
     title_row = cursor.fetchone()
     if not title_row:
         conn.close()
@@ -80,11 +194,12 @@ async def get_project_tree(title_id: int):
 
     title = dict(title_row)
 
-    cursor.execute("SELECT * FROM chapters WHERE title_id = ? ORDER BY chapter_number", (title_id,))
+    cursor.execute("SELECT * FROM chapters WHERE title_id = ?", (title_id,))
     chapters = [dict(row) for row in cursor.fetchall()]
+    chapters.sort(key=lambda c: natural_sort_key(c["chapter_number"]))
 
     for chapter in chapters:
-        cursor.execute("SELECT * FROM pages WHERE chapter_id = ? ORDER BY page_number", (chapter["id"],))
+        cursor.execute("SELECT * FROM pages WHERE chapter_id = ? ORDER BY page_number ASC", (chapter["id"],))
         chapter["pages"] = [dict(row) for row in cursor.fetchall()]
 
     title["chapters"] = chapters
@@ -92,9 +207,180 @@ async def get_project_tree(title_id: int):
     return {"success": True, "title": title}
 
 
+@router.put("/{title_id}/description")
+async def update_title_description(title_id: int, req: UpdateTitleDescriptionRequest):
+    """Обновляет синопсис и стиль повествования тайтла."""
+    with db_session() as cur:
+        cur.execute("UPDATE titles SET description = ? WHERE id = ?", (req.description.strip(), title_id))
+    logger.info(f"Обновлен синопсис для тайтла ID {title_id}")
+    return {"success": True, "description": req.description.strip()}
+
+
+@router.get("/{title_id}/speakers")
+async def get_title_speakers(title_id: int, chapter_id: Optional[int] = Query(None)):
+    """
+    Возвращает объединенный список подсказок спикеров:
+    1. Имена из глоссария тайтла (даже если японское имя не задано).
+    2. Имена спикеров, которые уже вводились в этой главе или тайтле.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT rus_word FROM glossary WHERE title_id = ?", (title_id,))
+    glossary_speakers = [r["rus_word"].strip() for r in cursor.fetchall() if r["rus_word"] and r["rus_word"].strip()]
+
+    if chapter_id:
+        cursor.execute(
+            """
+            SELECT DISTINCT tb.speaker 
+            FROM text_blocks tb
+            JOIN pages p ON p.id = tb.page_id
+            WHERE p.chapter_id = ? AND tb.speaker != ''
+            """,
+            (chapter_id,)
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT DISTINCT tb.speaker 
+            FROM text_blocks tb
+            JOIN pages p ON p.id = tb.page_id
+            JOIN chapters c ON c.id = p.chapter_id
+            WHERE c.title_id = ? AND tb.speaker != ''
+            """,
+            (title_id,)
+        )
+    used_speakers = [r["speaker"].strip() for r in cursor.fetchall() if r["speaker"] and r["speaker"].strip()]
+    conn.close()
+
+    combined = []
+    seen = set()
+    for name in glossary_speakers + used_speakers:
+        if name and name.lower() not in seen:
+            seen.add(name.lower())
+            combined.append(name)
+
+    return {"success": True, "speakers": sorted(combined)}
+
+
 @router.delete("/{title_id}")
 async def delete_project(title_id: int):
-    """Удаляет тайтл и все связанные данные каскадно."""
-    with db_session() as cursor:
-        cursor.execute("DELETE FROM titles WHERE id = ?", (title_id,))
-    return {"success": True, "message": "Проект успешно удалён"}
+    try:
+        conn = get_db()
+        conn.execute("PRAGMA foreign_keys = ON")
+        cur = conn.cursor()
+
+        cur.execute("DELETE FROM titles WHERE id = ?", (title_id,))
+        conn.commit()
+
+        conn.execute("VACUUM")
+        conn.close()
+
+        logger.info(f"Проект ID {title_id} полностью удалён. Выполнен VACUUM базы данных.")
+        return {"success": True, "message": "Проект успешно удалён, база данных оптимизирована"}
+    except Exception as e:
+        logger.error(f"Ошибка при удалении проекта {title_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{title_id}/glossary")
+async def get_glossary(title_id: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM glossary WHERE title_id = ? ORDER BY id DESC", (title_id,))
+    items = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return {"success": True, "items": items}
+
+
+@router.post("/{title_id}/glossary")
+async def add_glossary_item(title_id: int, req: GlossaryItemCreate):
+    if not req.rus_word.strip():
+        raise HTTPException(status_code=400, detail="Русское имя или обозначение персонажа обязательно")
+
+    jap_word_clean = req.jap_word.strip() if req.jap_word else ""
+    rus_word_clean = req.rus_word.strip()
+    context_clean = req.context.strip() if req.context else ""
+
+    with db_session() as cur:
+        cur.execute(
+            "INSERT INTO glossary (title_id, jap_word, rus_word, context) VALUES (?, ?, ?, ?)",
+            (title_id, jap_word_clean, rus_word_clean, context_clean)
+        )
+        item_id = cur.lastrowid
+
+    logger.info(f"В глоссарий тайтла {title_id} добавлен термин/спикер: '{jap_word_clean}' -> '{rus_word_clean}'")
+    return {
+        "success": True,
+        "item": {
+            "id": item_id,
+            "title_id": title_id,
+            "jap_word": jap_word_clean,
+            "rus_word": rus_word_clean,
+            "context": context_clean
+        }
+    }
+
+
+@router.delete("/{title_id}/glossary/{entry_id}")
+async def delete_glossary_item(title_id: int, entry_id: int):
+    with db_session() as cur:
+        cur.execute("DELETE FROM glossary WHERE id = ? AND title_id = ?", (entry_id, title_id))
+    return {"success": True}
+
+
+@router.get("/{title_id}/stats")
+async def get_project_stats(title_id: int):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM chapters WHERE title_id = ?", (title_id,))
+    total_chapters = cur.fetchone()[0]
+
+    cur.execute(
+        """
+        SELECT p.status, COUNT(*) 
+        FROM pages p
+        JOIN chapters c ON c.id = p.chapter_id
+        WHERE c.title_id = ?
+        GROUP BY p.status
+        """,
+        (title_id,)
+    )
+    status_counts = dict(cur.fetchall())
+    total_pages = sum(status_counts.values())
+
+    cur.execute(
+        """
+        SELECT COUNT(*), SUM(CASE WHEN tb.status = 'translated' THEN 1 ELSE 0 END)
+        FROM text_blocks tb
+        JOIN pages p ON p.id = tb.page_id
+        JOIN chapters c ON c.id = p.chapter_id
+        WHERE c.title_id = ?
+        """,
+        (title_id,)
+    )
+    row = cur.fetchone()
+    total_blocks = row[0] or 0
+    translated_blocks = row[1] or 0
+
+    cur.execute("SELECT COUNT(*) FROM glossary WHERE title_id = ?", (title_id,))
+    total_glossary = cur.fetchone()[0]
+
+    conn.close()
+
+    return {
+        "success": True,
+        "stats": {
+            "total_chapters": total_chapters,
+            "total_pages": total_pages,
+            "pages_raw": status_counts.get("raw", 0) + status_counts.get("new", 0),
+            "pages_detected": status_counts.get("detected", 0),
+            "pages_translated": status_counts.get("translated", 0),
+            "pages_cleaned": status_counts.get("cleaned", 0),
+            "pages_done": status_counts.get("done", 0),
+            "total_blocks": total_blocks,
+            "translated_blocks": translated_blocks,
+            "total_glossary": total_glossary,
+        }
+    }
