@@ -1,3 +1,6 @@
+# config.py
+# Глобальная конфигурация путей, моделей и окружения
+
 import os
 import re
 from pathlib import Path
@@ -12,10 +15,25 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 
 # Базовые пути
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "manga_db.sqlite"
-YOLO_WEIGHTS_PATH = BASE_DIR / "yolo_manga.pt"
 
-# API-ключи
+# 1. Папка для баз данных SQLite и бэкапов
+DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+DB_PATH = DATA_DIR / "manga_db.sqlite"
+
+# 2. Папка для весов нейросетей (.pt, .onnx, чекпоинты)
+WEIGHTS_DIR = BASE_DIR / "weights"
+WEIGHTS_DIR.mkdir(exist_ok=True)
+YOLO_WEIGHTS_PATH = WEIGHTS_DIR / "yolo_manga.pt"
+
+# Плавный fallback: если файл еще не успели переместить из корня
+if not YOLO_WEIGHTS_PATH.exists() and (BASE_DIR / "yolo_manga.pt").exists():
+    YOLO_WEIGHTS_PATH = BASE_DIR / "yolo_manga.pt"
+
+if not DB_PATH.exists() and (BASE_DIR / "manga_db.sqlite").exists():
+    DB_PATH = BASE_DIR / "manga_db.sqlite"
+
+# API-ключи и конфигурация LLM
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_NAME = "gemini-3.5-flash-lite"
 

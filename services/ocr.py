@@ -1,3 +1,6 @@
+# services/ocr.py
+# Модуль распознавания японского текста с поддержкой свободного угла поворота
+
 import math
 from PIL import Image
 from ml.models import ml
@@ -43,7 +46,7 @@ def ocr_image_region(
         return ml.mocr(crop_img).strip()
 
     # Если задан поворот:
-    # 1. Извлекаем подкроп, описывающий окружность вокруг центра
+    # 1. Извлекаем охватывающую область (sub-crop), описывающую окружность вокруг центра
     radius = math.ceil(math.sqrt(bw * bw + bh * bh) / 2.0) + 4
     sub_x1 = max(0, int(cx - radius))
     sub_y1 = max(0, int(cy - radius))
@@ -63,7 +66,7 @@ def ocr_image_region(
     # что в точности компенсирует положительный CSS-поворот по часовой стрелке.
     rotated_sub = sub_crop.rotate(
         rotation,
-        resample=Image.BICUBIC,
+        resample=Image.Resampling.BICUBIC,
         center=(local_cx, local_cy),
         fillcolor=(255, 255, 255)
     )

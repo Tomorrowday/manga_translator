@@ -1,4 +1,7 @@
-from typing import List, Dict, Tuple
+# services/detector.py
+# Детекция речевых баблов (YOLO), их фильтрация и подгонка под контур
+
+from typing import List, Dict, Any, Tuple
 import cv2
 import numpy as np
 from PIL import Image
@@ -13,7 +16,7 @@ def manga_sort_key(box: Dict[str, float]) -> tuple:
     """
     row_height = 0.18
     row_idx = int(box["y"] / row_height)
-    return (row_idx, -box["x"])
+    return row_idx, -box["x"]
 
 
 def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> Tuple[int, int, int, int]:
@@ -106,11 +109,12 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
         final_y2 = min(img_h, y2 + max(0, bottom_expand - pad_in))
 
         return final_x1, final_y1, final_x2, final_y2
+    # noinspection PyBroadException
     except Exception:
         return x1, y1, x2, y2
 
 
-def detect_and_filter_bubbles(image: Image.Image, padding: int = 2) -> List[Dict[str, float]]:
+def detect_and_filter_bubbles(image: Image.Image, padding: int = 2) -> List[Dict[str, Any]]:
     if ml.yolo_model is None:
         raise RuntimeError("Модель YOLO не загружена")
 
@@ -142,7 +146,7 @@ def detect_and_filter_bubbles(image: Image.Image, padding: int = 2) -> List[Dict
     np_img = np.array(image.convert("RGB"))
     gray_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
 
-    boxes = []
+    boxes: List[Dict[str, Any]] = []
     for x1, y1, x2, y2 in filtered_boxes:
         ix1 = int(max(0, x1))
         iy1 = int(max(0, y1))

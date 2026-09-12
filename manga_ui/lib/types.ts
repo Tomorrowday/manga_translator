@@ -56,6 +56,10 @@ export interface TitleProject {
   created_at: string
 }
 
+export interface ProjectTree extends TitleProject {
+  chapters: ChapterItem[]
+}
+
 export interface GlossaryItem {
   id: number
   title_id: number

@@ -1,4 +1,4 @@
-# Секретные ключи (КРИТИЧЕСКИ ВАЖНО!)
+# Секретные ключи
 .env
 *.env
 
@@ -14,15 +14,18 @@ manga_ui/node_modules/
 manga_ui/.next/
 manga_ui/out/
 
-# Локальная база данных SQLite
+# Локальные данные и базы SQLite
+data/
 *.sqlite
 *.sqlite3
 *.db
 
-# Тяжёлые веса нейросетей (файлы > 100 МБ GitHub не примет)
-yolo_manga.pt
+# Тяжёлые веса нейросетей
+weights/
 *.pt
 *.onnx
+*.bin
+*.safetensors
 
 # Системные файлы и IDE
 .idea/
@@ -31,4 +34,5 @@ yolo_manga.pt
 Thumbs.db
 
 # Логи
+logs/
 *.log

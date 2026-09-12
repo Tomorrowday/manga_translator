@@ -16,7 +16,7 @@ import {
   BookMarked,
   Sparkles,
 } from "lucide-react"
-import type { TitleProject, ProjectTree, PageItem, PageStatus } from "@/lib/types"
+import type { TitleProject, ProjectTree, PageItem, PageStatus, ChapterItem } from "@/lib/types"
 import {
   getProjects,
   getProjectTree,
@@ -121,11 +121,11 @@ export function Sidebar({
   useEffect(() => {
     if (!activePageUpdate) return
 
-    setProjectTree((prev) => {
+    setProjectTree((prev: ProjectTree | null) => {
       if (!prev || !prev.chapters) return prev
-      const updatedChapters = prev.chapters.map((ch) => ({
+      const updatedChapters = prev.chapters.map((ch: ChapterItem) => ({
         ...ch,
-        pages: ch.pages.map((p) =>
+        pages: ch.pages.map((p: PageItem) =>
           p.id === activePageUpdate.id
             ? {
                 ...p,
@@ -325,7 +325,7 @@ export function Sidebar({
           </div>
         ) : (
           <div className="space-y-1">
-            {projectTree.chapters.map((ch) => {
+            {projectTree.chapters.map((ch: ChapterItem) => {
               const isExpanded = !!expandedChapters[ch.id]
               return (
                 <div key={ch.id} className="group/ch rounded-md">
@@ -356,7 +356,7 @@ export function Sidebar({
 
                   {isExpanded && (
                     <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-800 pl-2">
-                      {ch.pages.map((p) => {
+                      {ch.pages.map((p: PageItem) => {
                         const isSelected = p.id === currentPageId
                         const statusConfig = STATUS_CONFIG[p.status as PageStatus] || STATUS_CONFIG.raw
 
