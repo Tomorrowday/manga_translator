@@ -25,7 +25,7 @@ interface BatchChapterActionsProps {
   onCompleteBatch?: () => void
 }
 
-type BatchAction = "detect" | "translate" | "clean" | "export" | "script-export" | "script-import"
+type BatchAction = "detect" | "clean" | "translate" | "export" | "script-export" | "script-import"
 
 interface Progress {
   action: BatchAction
@@ -36,8 +36,8 @@ interface Progress {
 
 const ACTION_LABELS: Record<BatchAction, string> = {
   detect: "Detecting & OCR",
-  translate: "Translating chapter with Gemini",
   clean: "Smart Cleaning & Retouching (AI)",
+  translate: "Translating chapter with Gemini",
   export: "Exporting pages",
   "script-export": "Exporting JSON script...",
   "script-import": "Importing JSON script...",
@@ -91,6 +91,14 @@ export function BatchChapterActions({
       }
     })
 
+  const cleanChapter = () =>
+    runBatch("clean", async (page) => {
+      const res = await runCleanPage(page.id)
+      if (res.success) {
+        onPageStatusUpdate?.(page.id, res.page_status || "cleaned", res.clean_path)
+      }
+    })
+
   const translateChapter = async () => {
     if (!chapterId || isRunning) return
 
@@ -105,7 +113,7 @@ export function BatchChapterActions({
     try {
       await runTranslateChapter(chapterId)
       pages.forEach((p) => {
-        if (p.status !== "done" && p.status !== "cleaned") {
+        if (p.status !== "done") {
           onPageStatusUpdate?.(p.id, "translated")
         }
       })
@@ -126,14 +134,6 @@ export function BatchChapterActions({
       onRefreshCurrent()
     }
   }
-
-  const cleanChapter = () =>
-    runBatch("clean", async (page) => {
-      const res = await runCleanPage(page.id)
-      if (res.success) {
-        onPageStatusUpdate?.(page.id, res.page_status || "cleaned", res.clean_path)
-      }
-    })
 
   const exportAll = () =>
     runBatch("export", async (page) => {
@@ -156,7 +156,6 @@ export function BatchChapterActions({
       }
     })
 
-  // Экспорт диалогов в JSON файл с готовым AI-промптом
   const handleExportScript = async () => {
     if (!chapterId) return
     try {
@@ -168,7 +167,6 @@ export function BatchChapterActions({
     }
   }
 
-  // Импорт переведённого JSON файла с распознанными спикерами
   const handleImportScriptFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file || !chapterId) return
@@ -177,7 +175,7 @@ export function BatchChapterActions({
     try {
       const res = await uploadChapterScript(chapterId, file)
       pages.forEach((p) => {
-        if (p.status !== "done" && p.status !== "cleaned") {
+        if (p.status !== "done") {
           onPageStatusUpdate?.(p.id, "translated")
         }
       })
@@ -202,10 +200,11 @@ export function BatchChapterActions({
     }
   }
 
+  // Кнопки выстроены в правильном хронологическом порядке: Detect -> Clean -> Translate -> Export
   const buttons: Array<{ key: BatchAction; label: string; icon: typeof Wand2; onClick: () => void; accent: string }> = [
     { key: "detect", label: "Detect & OCR All", icon: Wand2, onClick: detectAll, accent: "text-indigo-400" },
-    { key: "translate", label: "Translate Chapter", icon: Languages, onClick: translateChapter, accent: "text-emerald-400" },
     { key: "clean", label: "Smart Clean Chapter", icon: Sparkles, onClick: cleanChapter, accent: "text-purple-400" },
+    { key: "translate", label: "Translate Chapter", icon: Languages, onClick: translateChapter, accent: "text-emerald-400" },
     { key: "export", label: "Export All", icon: Download, onClick: exportAll, accent: "text-amber-400" },
   ]
 
@@ -252,7 +251,7 @@ export function BatchChapterActions({
           onClick={handleExportScript}
           disabled={disabled || isRunning}
           className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-50"
-          title="Скачать JSON с репликами, глоссарием и промптом для Claude/ChatGPT (с распознаванием спикеров)"
+          title="Скачать JSON с репликами, глоссарием и промптом для Claude/ChatGPT"
         >
           {justFinished === "script-export" ? (
             <Check className="h-3.5 w-3.5 text-emerald-400" />
@@ -267,7 +266,7 @@ export function BatchChapterActions({
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || isRunning}
           className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-50"
-          title="Загрузить переведённый JSON обратно (обновит реплики и персонажей)"
+          title="Загрузить переведённый JSON обратно"
         >
           {progress?.action === "script-import" ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

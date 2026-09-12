@@ -114,21 +114,29 @@ export function useMangaHotkeys({
         return
       }
 
-      // 9. Жирный шрифт (B)
+      // 9. Режим минимизации переносов (H: Min Hyphens / Normal)
+      if (code === BUBBLE_HOTKEYS.toggleHyphenation.code && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        const curVal = activeBlock.minHyphens !== false
+        onUpdateBlock(selectedId, { minHyphens: !curVal })
+        return
+      }
+
+      // 10. Жирный шрифт (B)
       if (code === BUBBLE_HOTKEYS.toggleBold.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isBold: !activeBlock.isBold })
         return
       }
 
-      // 10. Курсив (I)
+      // 11. Курсив (I)
       if (code === BUBBLE_HOTKEYS.toggleItalic.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isItalic: !activeBlock.isItalic })
         return
       }
 
-      // 11. Все заглавные (U)
+      // 12. Все заглавные (U)
       if (code === BUBBLE_HOTKEYS.toggleUppercase.code) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isUppercase: !activeBlock.isUppercase })

@@ -1,3 +1,5 @@
+// manga_ui/lib/types.ts
+
 export type BlockStatus = "new" | "ocr-done" | "translated"
 
 export type PageStatus = "raw" | "new" | "detected" | "translated" | "cleaned" | "done"
@@ -27,6 +29,7 @@ export interface TextBlock {
   fontFamily?: string
   shape?: BlockShape
   paddingMode?: PaddingMode
+  minHyphens?: boolean
 }
 
 export interface PageItem {

@@ -5,7 +5,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response
 
-from database import get_db
+from database import db_session
 from logger import logger
 from services.chapter_service import (
     translate_entire_chapter_service,
@@ -18,16 +18,26 @@ router = APIRouter(prefix="/api/chapters", tags=["Chapters"])
 
 @router.delete("/{chapter_id}")
 async def delete_chapter(chapter_id: int):
-    """Удаляет отдельную главу и все её страницы/баблы из базы данных."""
+    """
+    Удаляет главу с гарантированным явным каскадным удалением
+    всех баблов и страниц, чтобы не оставлять сиротских записей в SQLite.
+    """
     try:
-        conn = get_db()
-        conn.execute("PRAGMA foreign_keys = ON")
-        cur = conn.cursor()
-        cur.execute("DELETE FROM chapters WHERE id = ?", (chapter_id,))
-        conn.commit()
-        conn.close()
+        with db_session() as cur:
+            # 1. Удаляем все текстовые блоки страниц этой главы
+            cur.execute(
+                """
+                DELETE FROM text_blocks 
+                WHERE page_id IN (SELECT id FROM pages WHERE chapter_id = ?)
+                """,
+                (chapter_id,)
+            )
+            # 2. Удаляем сами страницы главы
+            cur.execute("DELETE FROM pages WHERE chapter_id = ?", (chapter_id,))
+            # 3. Удаляем саму главу
+            cur.execute("DELETE FROM chapters WHERE id = ?", (chapter_id,))
 
-        logger.info(f"Глава ID {chapter_id} успешно удалена из базы данных.")
+        logger.info(f"Глава ID {chapter_id} и все её страницы/баблы полностью удалены из БД.")
         return {"success": True, "message": "Глава успешно удалена"}
     except Exception as e:
         logger.error(f"Ошибка при удалении главы {chapter_id}: {e}")

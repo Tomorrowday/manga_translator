@@ -1,3 +1,4 @@
+# database.py
 import sqlite3
 from contextlib import contextmanager
 from config import DB_PATH
@@ -54,6 +55,7 @@ def init_db():
                 page_number INTEGER,
                 file_path TEXT NOT NULL,
                 clean_path TEXT,
+                panels_json TEXT DEFAULT '[]',
                 status TEXT DEFAULT 'raw',
                 FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
             )
@@ -77,6 +79,7 @@ def init_db():
                 has_stroke INTEGER DEFAULT 0,
                 shape TEXT DEFAULT 'rect',
                 padding_mode TEXT DEFAULT 'safe',
+                min_hyphens INTEGER DEFAULT 1,
                 status TEXT DEFAULT 'new',
                 FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
             )
@@ -100,6 +103,13 @@ def init_db():
             cursor.execute("ALTER TABLE titles ADD COLUMN description TEXT DEFAULT ''")
             print("Миграция: добавлена колонка 'description' в titles")
 
+        # Проверка и миграция panels_json в pages
+        cursor.execute("PRAGMA table_info(pages)")
+        page_cols = [row["name"] for row in cursor.fetchall()]
+        if "panels_json" not in page_cols:
+            cursor.execute("ALTER TABLE pages ADD COLUMN panels_json TEXT DEFAULT '[]'")
+            print("Миграция: добавлена колонка 'panels_json' в pages")
+
         # Проверка миграций text_blocks
         cursor.execute("PRAGMA table_info(text_blocks)")
         columns = [row["name"] for row in cursor.fetchall()]
@@ -115,7 +125,8 @@ def init_db():
             "has_stroke": "INTEGER DEFAULT 0",
             "shape": "TEXT DEFAULT 'rect'",
             "padding_mode": "TEXT DEFAULT 'safe'",
-            "rotation": "REAL DEFAULT 0.0"
+            "rotation": "REAL DEFAULT 0.0",
+            "min_hyphens": "INTEGER DEFAULT 1"
         }
 
         for col, col_type in migrations.items():
@@ -123,4 +134,9 @@ def init_db():
                 cursor.execute(f"ALTER TABLE text_blocks ADD COLUMN {col} {col_type}")
                 print(f"Миграция: добавлена колонка '{col}' в text_blocks")
 
-    print("База данных проверена и готова к работе.")
+        # Автоматическая очистка сиротских записей
+        cursor.execute("DELETE FROM text_blocks WHERE page_id NOT IN (SELECT id FROM pages)")
+        cursor.execute("DELETE FROM pages WHERE chapter_id NOT IN (SELECT id FROM chapters)")
+        cursor.execute("DELETE FROM chapters WHERE title_id NOT IN (SELECT id FROM titles)")
+
+    print("База данных проверена, сиротские записи зачищены.")

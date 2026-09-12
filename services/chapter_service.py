@@ -143,11 +143,12 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
                 (translated_text, block_id)
             )
 
+        # Страницы с любым статусом (raw, detected, cleaned) переводятся в 'translated'. Исключаем только готовый 'done'.
         cur.execute(
             """
             UPDATE pages 
             SET status = 'translated' 
-            WHERE chapter_id = ? AND status NOT IN ('done', 'cleaned')
+            WHERE chapter_id = ? AND status != 'done'
             """,
             (chapter_id,)
         )
@@ -273,7 +274,7 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
             """
             UPDATE pages 
             SET status = 'translated' 
-            WHERE chapter_id = ? AND status NOT IN ('done', 'cleaned')
+            WHERE chapter_id = ? AND status != 'done'
             """,
             (chapter_id,)
         )

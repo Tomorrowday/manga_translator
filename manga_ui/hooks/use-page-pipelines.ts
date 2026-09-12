@@ -1,5 +1,5 @@
-// hooks/use-page-pipelines.ts
-// Тяжелые конвейеры обработки страницы: автодетект, OCR, Gemini, Clean, Export, Full-Auto
+// manga_ui/hooks/use-page-pipelines.ts
+// Тяжелые конвейеры обработки страницы: автодетект, OCR, Clean, Gemini, Export, Full-Auto
 
 import { useState } from "react"
 import type { PageItem, PageStatus, TextBlock } from "@/lib/types"
@@ -57,6 +57,7 @@ export function usePagePipelines({
     try {
       const detectRes = await runPageAutoDetect(currentPage.id)
       const boxes = detectRes.boxes || []
+
       if (!boxes || boxes.length === 0) {
         alert("Баблы не найдены!")
         return
@@ -91,6 +92,7 @@ export function usePagePipelines({
       }
 
       setTextBlocks(newBlocks)
+      textBlocksRef.current = newBlocks
       if (newBlocks.length > 0) setSelectedId(newBlocks[0].id)
       onPageStatusUpdate(currentPage.id, "detected")
     } catch (e) {
@@ -123,6 +125,31 @@ export function usePagePipelines({
       alert("Ошибка OCR")
     } finally {
       setIsOcrRunning(false)
+    }
+  }
+
+  const handleCleanPage = async () => {
+    if (!currentPage) return
+    if (textBlocks.length === 0) {
+      alert("Сначала запустите Auto-Detect, чтобы найти баблы.")
+      return
+    }
+
+    setIsCleaning(true)
+    try {
+      await saveBlocks(true)
+      const res = await runCleanPage(currentPage.id)
+      if (res.success) {
+        setViewMode("clean")
+        onPageStatusUpdate(currentPage.id, (res.page_status as PageStatus) || "cleaned", res.clean_path)
+      } else {
+        alert("Ошибка клина: " + res.error)
+      }
+    } catch (e) {
+      console.error(e)
+      alert("Не удалось очистить страницу")
+    } finally {
+      setIsCleaning(false)
     }
   }
 
@@ -162,35 +189,9 @@ export function usePagePipelines({
       onPageStatusUpdate(currentPage.id, "translated")
     } catch (e) {
       console.error(e)
-      alert("Ошибка при массовом переводе")
+      alert("Ошибка при переводе")
     } finally {
       setIsBatchTranslating(false)
-    }
-  }
-
-  const handleCleanPage = async () => {
-    if (!currentPage) return
-    if (textBlocks.length === 0) {
-      alert("Сначала запустите Auto-Detect, чтобы найти баблы.")
-      return
-    }
-
-    setIsCleaning(true)
-    try {
-      await saveBlocks(true)
-      const res = await runCleanPage(currentPage.id)
-      if (res.success) {
-        setViewMode("clean")
-        setShowTypeset(true)
-        onPageStatusUpdate(currentPage.id, "cleaned", res.clean_path)
-      } else {
-        alert("Ошибка клина: " + res.error)
-      }
-    } catch (e) {
-      console.error(e)
-      alert("Не удалось очистить страницу")
-    } finally {
-      setIsCleaning(false)
     }
   }
 
@@ -277,6 +278,15 @@ export function usePagePipelines({
           currentBlocks[i] = { ...b, japText: ocrText, status: "ocr-done" }
         }
       }
+      setTextBlocks([...currentBlocks])
+      textBlocksRef.current = currentBlocks
+      await saveBlocks(true)
+
+      const cleanRes = await runCleanPage(currentPage.id)
+      if (!cleanRes.success) {
+        throw new Error("Ошибка при очистке страницы: " + cleanRes.error)
+      }
+      setViewMode("clean")
 
       const toTranslate = currentBlocks
         .filter((b) => b.japText.trim().length > 0)
@@ -295,21 +305,17 @@ export function usePagePipelines({
       textBlocksRef.current = currentBlocks
       await saveBlocks(true)
 
-      const cleanRes = await runCleanPage(currentPage.id)
-      if (cleanRes.success) {
-        setViewMode("clean")
-        setShowTypeset(true)
+      setShowTypeset(true)
 
-        const cleanImgUrl = `${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`
-        const cleanImg = await loadImage(cleanImgUrl)
-        const blob = await bakePageBlob(cleanImg, textBlocksRef.current)
+      const cleanImgUrl = `${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`
+      const cleanImg = await loadImage(cleanImgUrl)
+      const blob = await bakePageBlob(cleanImg, textBlocksRef.current)
 
-        if (blob) {
-          await saveTranslatedPage(currentPage.id, blob)
-          setIsExportSuccess(true)
-          onPageStatusUpdate(currentPage.id, "done", cleanRes.clean_path)
-          setTimeout(() => setIsExportSuccess(false), 2500)
-        }
+      if (blob) {
+        await saveTranslatedPage(currentPage.id, blob)
+        setIsExportSuccess(true)
+        onPageStatusUpdate(currentPage.id, "done", cleanRes.clean_path)
+        setTimeout(() => setIsExportSuccess(false), 2500)
       }
     } catch (e) {
       console.error(e)

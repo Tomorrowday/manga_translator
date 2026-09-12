@@ -33,14 +33,15 @@ interface SidebarProps {
   refreshTrigger?: number
   onSelectPage: (page: PageItem) => void
   onActiveChapterChange?: (pages: PageItem[]) => void
+  onChapterDeleted?: (chapterId: number) => void
 }
 
 const STATUS_CONFIG: Record<PageStatus, { color: string; label: string }> = {
   raw: { color: "bg-slate-600", label: "Raw (Без разметки)" },
   new: { color: "bg-slate-600", label: "Raw (Новая)" },
   detected: { color: "bg-sky-400", label: "Detected (OCR готов)" },
-  translated: { color: "bg-amber-400", label: "Translated (Переведено)" },
   cleaned: { color: "bg-purple-400", label: "Cleaned (Скан очищен)" },
+  translated: { color: "bg-amber-400", label: "Translated (Переведено)" },
   done: { color: "bg-emerald-400", label: "Done (Экспортировано)" },
 }
 
@@ -50,6 +51,7 @@ export function Sidebar({
   refreshTrigger,
   onSelectPage,
   onActiveChapterChange,
+  onChapterDeleted,
 }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(true)
   const [projects, setProjects] = useState<TitleProject[]>([])
@@ -75,7 +77,6 @@ export function Sidebar({
   const [showProjectModal, setShowProjectModal] = useState(false)
   const [projectModalTab, setProjectModalTab] = useState<"glossary" | "synopsis" | "stats">("glossary")
 
-  // Загрузка проектов (без зависимости от selectedTitleId для предотвращения двойного вызова)
   const loadProjects = useCallback(async () => {
     try {
       const list = await getProjects()
@@ -186,15 +187,17 @@ export function Sidebar({
     }
   }
 
-  // Удаление отдельной главы
   const handleDeleteChapter = async (e: React.MouseEvent, chapterId: number, chapterNum: string) => {
     e.stopPropagation()
     if (!confirm(`Удалить главу "${chapterNum}" из этого тайтла? Сканы на диске останутся нетронутыми.`)) return
 
     try {
       const res = await deleteChapter(chapterId)
-      if (res.success && selectedTitleId) {
-        await loadTree(selectedTitleId)
+      if (res.success) {
+        onChapterDeleted?.(chapterId)
+        if (selectedTitleId) {
+          await loadTree(selectedTitleId)
+        }
       }
     } catch (err) {
       alert("Ошибка удаления главы: " + String(err))
@@ -344,7 +347,6 @@ export function Sidebar({
                       <span className="ml-1 text-[10px] text-slate-600">({ch.pages.length}p)</span>
                     </button>
 
-                    {/* КНОПКА УДАЛЕНИЯ ГЛАВЫ */}
                     <button
                       onClick={(e) => handleDeleteChapter(e, ch.id, ch.chapter_number)}
                       className="rounded p-1 text-slate-600 opacity-0 group-hover/ch:opacity-100 hover:bg-slate-800 hover:text-rose-400 transition-all"
@@ -392,7 +394,6 @@ export function Sidebar({
         )}
       </div>
 
-      {/* МОДАЛКА 1: СКАНИРОВАНИЕ НОВОГО ТАЙТЛА */}
       {showScanModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
@@ -448,7 +449,6 @@ export function Sidebar({
         </div>
       )}
 
-      {/* МОДАЛКА 2: ДОБАВЛЕНИЕ ГЛАВЫ В СУЩЕСТВУЮЩИЙ ТАЙТЛ */}
       {showAddChapterModal && selectedProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
@@ -505,7 +505,6 @@ export function Sidebar({
         </div>
       )}
 
-      {/* МОДАЛКА 3: УПРАВЛЕНИЕ ПРОЕКТОМ */}
       {showProjectModal && selectedTitleId && (
         <ProjectModal
           titleId={selectedTitleId}

@@ -1,9 +1,9 @@
-// hooks/use-page-blocks.ts
+// manga_ui/hooks/use-page-blocks.ts
 // Управление состоянием и операциями над текстовыми блоками страницы
 
 import { useState, useRef, useCallback } from "react"
 import type { TextBlock, PageItem, PageStatus } from "@/lib/types"
-import { cropRegion } from "@/lib/typeset"
+import { cropRegion, sortBlocksMangaOrder } from "@/lib/typeset"
 import { savePageBlocks, runSpotClean } from "@/lib/api"
 
 export interface DrawRect {
@@ -12,11 +12,6 @@ export interface DrawRect {
   width: number
   height: number
   rotation?: number
-}
-
-function getMangaScore(b: { x: number; y: number }): number {
-  const rowIdx = Math.floor(b.y / 0.18)
-  return rowIdx * 1000 + (1 - b.x) * 100
 }
 
 export function usePageBlocks(
@@ -57,6 +52,7 @@ export function usePageBlocks(
           has_stroke: b.hasStroke,
           shape: b.shape || "rect",
           padding_mode: b.paddingMode || "safe",
+          min_hyphens: b.minHyphens !== undefined ? b.minHyphens : true,
           status: b.status,
         }))
 
@@ -107,7 +103,14 @@ export function usePageBlocks(
       try {
         const res = await runSpotClean(
           currentPageRef.current.id,
-          { x: block.x, y: block.y, width: block.width, height: block.height },
+          {
+            x: block.x,
+            y: block.y,
+            width: block.width,
+            height: block.height,
+            rotation: block.rotation || 0.0,
+            shape: block.shape || "rect",
+          },
           method
         )
         if (res.success) {
@@ -160,25 +163,14 @@ export function usePageBlocks(
         rusText: "",
         shape: "rect",
         paddingMode: "safe",
+        minHyphens: true,
         status: "new",
       }
 
+      // Ансамблевая сортировка баблов при добавлении нового
       setTextBlocks((prev) => {
-        if (prev.length === 0) return [{ ...newBlock, orderIndex: 1 }]
-
-        const newScore = getMangaScore(newBlock)
-        let insertIdx = prev.length
-
-        for (let i = 0; i < prev.length; i++) {
-          if (getMangaScore(prev[i]) > newScore) {
-            insertIdx = i
-            break
-          }
-        }
-
-        const next = [...prev]
-        next.splice(insertIdx, 0, newBlock)
-        return next.map((b, idx) => ({ ...b, orderIndex: idx + 1 }))
+        const sorted = sortBlocksMangaOrder([...prev, newBlock])
+        return sorted.map((b, idx) => ({ ...b, orderIndex: idx + 1 }))
       })
 
       setSelectedId(id)

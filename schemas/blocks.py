@@ -7,6 +7,8 @@ class SpotCleanRequest(BaseModel):
     y: float
     width: float
     height: float
+    rotation: Optional[float] = 0.0
+    shape: Optional[str] = "rect"
     method: Optional[str] = "auto"  # "auto" | "lama" | "white"
 
 
@@ -29,6 +31,7 @@ class TextBlockItem(BaseModel):
     has_stroke: Optional[bool] = False
     shape: Optional[str] = "rect"
     padding_mode: Optional[str] = "safe"
+    min_hyphens: Optional[bool] = True
     status: str = "new"
 
 

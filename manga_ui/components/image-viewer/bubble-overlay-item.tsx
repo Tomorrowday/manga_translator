@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useRef, useEffect } from "react"
 import { RotateCw } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { layoutBubbleTextLines } from "@/lib/typeset"
@@ -34,6 +35,7 @@ interface BubbleOverlayItemProps {
   activeRotation: number
   onStartTransform: (e: React.MouseEvent, box: TextBlock, action: EditAction) => void
   onSelect: (id: string) => void
+  onUpdate?: (id: string, patch: Partial<TextBlock>) => void
 }
 
 export function BubbleOverlayItem({
@@ -48,11 +50,28 @@ export function BubbleOverlayItem({
   activeRotation,
   onStartTransform,
   onSelect,
+  onUpdate,
 }: BubbleOverlayItemProps) {
   const isDraft = box.id === "__draft__"
-  const hasTranslation = !!box.rusText
+  const hasTranslation = Boolean(box.rusText && box.rusText.trim())
   const isEllipse = box.shape === "ellipse"
   const padMode = box.paddingMode || "safe"
+  const isMinHyphens = box.minHyphens !== false
+
+  const [isInlineEditing, setIsInlineEditing] = useState(false)
+  const [localText, setLocalText] = useState(box.rusText || "")
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    setLocalText(box.rusText || "")
+  }, [box.rusText])
+
+  useEffect(() => {
+    if (isInlineEditing && textareaRef.current) {
+      textareaRef.current.focus()
+      textareaRef.current.select()
+    }
+  }, [isInlineEditing])
 
   const currentX = isEditingCurrent && activeBox ? activeBox.x : box.x
   const currentY = isEditingCurrent && activeBox ? activeBox.y : box.y
@@ -61,13 +80,52 @@ export function BubbleOverlayItem({
   const currentRot = isEditingCurrent && editType === "rotate" ? activeRotation : box.rotation || 0
 
   const handleMouseDown = (e: React.MouseEvent, action: EditAction) => {
+    if (isInlineEditing) return
     e.stopPropagation()
     onSelect(box.id)
     onStartTransform(e, box, action)
   }
 
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    if (isDraft) return
+    e.stopPropagation()
+    onSelect(box.id)
+    setIsInlineEditing(true)
+  }
+
+  const commitInlineEdit = () => {
+    setIsInlineEditing(false)
+    if (localText !== box.rusText && onUpdate) {
+      onUpdate(box.id, {
+        rusText: localText,
+        status: localText.trim() ? "translated" : box.japText ? "ocr-done" : "new",
+      })
+    }
+  }
+
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    e.stopPropagation()
+
+    // Ctrl+Enter или Cmd+Enter -> Сохранить и выйти
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      commitInlineEdit()
+      return
+    }
+
+    // Escape -> Отменить и выйти
+    if (e.key === "Escape") {
+      e.preventDefault()
+      setLocalText(box.rusText || "")
+      setIsInlineEditing(false)
+      return
+    }
+
+    // Обычный Enter создаёт перенос строки (\n)
+  }
+
   const renderHandles = () => {
-    if (!isSelected) return null
+    if (!isSelected || isInlineEditing) return null
     return (
       <>
         {/* Верхний маркер вращения */}
@@ -106,55 +164,100 @@ export function BubbleOverlayItem({
     )
   }
 
+  // Расчет шрифтов и верстки для отображения
+  const naturalH = imgElement?.naturalHeight || 1600
+  const naturalW = imgElement?.naturalWidth || 1100
+  const displayH = imgElement?.clientHeight || naturalH
+  const baseSize = box.fontSize || Math.max(11, Math.min(16, Math.round(11 + currentH * 24)))
+  const masterFontSize = Math.round(baseSize * (naturalH / 1200))
+  const masterBoxPixelW = currentW * naturalW
+  const masterBoxPixelH = currentH * naturalH
+  const currentFont = box.fontFamily || "v_CCFaceFront"
+
+  if (!previewCanvas && typeof document !== "undefined") {
+    previewCanvas = document.createElement("canvas")
+  }
+  const ctx = previewCanvas?.getContext("2d")
+
+  let screenLines: string[] = []
+  let masterActualFontSize = masterFontSize
+  let masterLineHeight = Math.round(masterFontSize * 1.15)
+
+  const rawDisplayText = isInlineEditing ? localText : box.rusText || ""
+  const displayText = box.isUppercase ? rawDisplayText.toUpperCase() : rawDisplayText
+
+  if (ctx && displayText.trim()) {
+    const res = layoutBubbleTextLines(
+      ctx,
+      displayText,
+      masterBoxPixelW,
+      masterBoxPixelH,
+      masterFontSize,
+      currentFont,
+      box.shape || "rect",
+      padMode,
+      box.isBold,
+      box.isItalic,
+      isMinHyphens
+    )
+    screenLines = res.lines
+    masterActualFontSize = res.actualFontSize
+    masterLineHeight = res.lineHeight
+  }
+
+  const scale = displayH / naturalH
+  const finalScreenFontSize = Math.max(7, Math.round(masterActualFontSize * scale))
+  const finalScreenLineHeight = Math.max(8, Math.round(masterLineHeight * scale))
+
+  // ИНЛАЙН-РЕДАКТИРОВАНИЕ ПРЯМО НА СКАНЕ
+  if (isInlineEditing) {
+    return (
+      <div
+        id={`box-${box.id}`}
+        className="absolute z-50 flex items-center justify-center"
+        style={{
+          left: `${currentX * 100}%`,
+          top: `${currentY * 100}%`,
+          width: `${currentW * 100}%`,
+          height: `${currentH * 100}%`,
+          transform: `rotate(${currentRot}deg)`,
+          transformOrigin: "center center",
+        }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <textarea
+          ref={textareaRef}
+          value={localText}
+          onChange={(e) => setLocalText(e.target.value)}
+          onKeyDown={handleTextareaKeyDown}
+          onBlur={commitInlineEdit}
+          placeholder="Текст реплики..."
+          className={[
+            "h-full w-full resize-none p-1.5 text-center text-black outline-none border-2 border-indigo-500 rounded shadow-2xl bg-white/95 backdrop-blur-sm",
+            box.isBold ? "font-bold" : "font-normal",
+            box.isItalic ? "italic" : "not-italic",
+          ].join(" ")}
+          style={{
+            fontFamily: `'${currentFont}', sans-serif`,
+            fontSize: `${Math.max(10, finalScreenFontSize)}px`,
+            lineHeight: `${Math.max(12, finalScreenLineHeight)}px`,
+          }}
+        />
+        <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-slate-950 px-1.5 py-0.5 text-[9px] text-slate-300 border border-slate-700 pointer-events-none shadow">
+          Enter: перенос | Ctrl+Enter: готово | Esc: отмена
+        </div>
+      </div>
+    )
+  }
+
   // РЕЖИМ 1: ПРЕДПРОСМОТР ТАЙПСЕТА (ТЕКСТ НА СКАНИРОВАНИИ)
   if (showTypeset && !isDraft && hasTranslation) {
-    const displayText = box.isUppercase ? box.rusText.toUpperCase() : box.rusText
-    const currentFont = box.fontFamily || "v_CCFaceFront"
-
-    const naturalH = imgElement?.naturalHeight || 1600
-    const naturalW = imgElement?.naturalWidth || 1100
-    const displayH = imgElement?.clientHeight || naturalH
-
-    const baseSize = box.fontSize || Math.max(11, Math.min(16, Math.round(11 + currentH * 24)))
-    const masterFontSize = Math.round(baseSize * (naturalH / 1200))
-    const masterBoxPixelW = currentW * naturalW
-    const masterBoxPixelH = currentH * naturalH
-
-    if (!previewCanvas && typeof document !== "undefined") {
-      previewCanvas = document.createElement("canvas")
-    }
-    const ctx = previewCanvas?.getContext("2d")
-
-    let screenLines: string[] = []
-    let masterActualFontSize = masterFontSize
-    let masterLineHeight = Math.round(masterFontSize * 1.15)
-
-    if (ctx) {
-      const res = layoutBubbleTextLines(
-        ctx,
-        displayText,
-        masterBoxPixelW,
-        masterBoxPixelH,
-        masterFontSize,
-        currentFont,
-        box.shape || "rect",
-        padMode,
-        box.isBold,
-        box.isItalic
-      )
-      screenLines = res.lines
-      masterActualFontSize = res.actualFontSize
-      masterLineHeight = res.lineHeight
-    }
-
-    const scale = displayH / naturalH
-    const finalScreenFontSize = Math.max(7, Math.round(masterActualFontSize * scale))
-    const finalScreenLineHeight = Math.max(8, Math.round(masterLineHeight * scale))
-
     return (
       <div
         id={`box-${box.id}`}
         onMouseDown={(e) => handleMouseDown(e, "move")}
+        onDoubleClick={handleDoubleClick}
         className={[
           "group absolute flex flex-col items-center justify-center select-none cursor-move",
           "bg-transparent text-black",
@@ -180,6 +283,7 @@ export function BubbleOverlayItem({
           fontSize: `${finalScreenFontSize}px`,
           lineHeight: `${finalScreenLineHeight}px`,
         }}
+        title="Двойной клик — редактировать текст прямо на скане"
       >
         {isEllipse && (
           <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -219,6 +323,7 @@ export function BubbleOverlayItem({
         if (isDraft) return
         handleMouseDown(e, "move")
       }}
+      onDoubleClick={handleDoubleClick}
       className={[
         "group absolute flex items-start justify-start",
         isSelected ? "z-10 cursor-move" : "cursor-pointer",
@@ -241,6 +346,7 @@ export function BubbleOverlayItem({
         transform: `rotate(${currentRot}deg)`,
         transformOrigin: "center center",
       }}
+      title="Двойной клик — редактировать текст"
     >
       {isEllipse && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">

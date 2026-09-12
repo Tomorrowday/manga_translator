@@ -105,6 +105,7 @@ export async function bakePageBlob(img: HTMLImageElement, blocks: TextBlock[]): 
     const bw = box.width * canvas.width
     const bh = box.height * canvas.height
     const rot = box.rotation || 0
+    const minHyphens = box.minHyphens !== undefined ? box.minHyphens : true
 
     const baseSize = box.fontSize || Math.max(11, Math.min(16, Math.round(11 + box.height * 24)))
     const currentFontSize = Math.round(baseSize * (canvas.height / 1200))
@@ -120,7 +121,8 @@ export async function bakePageBlob(img: HTMLImageElement, blocks: TextBlock[]): 
       box.shape || "rect",
       box.paddingMode || "safe",
       box.isBold,
-      box.isItalic
+      box.isItalic,
+      minHyphens
     )
 
     const totalHeight = lines.length * lineHeight

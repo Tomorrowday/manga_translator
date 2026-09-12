@@ -7,6 +7,7 @@ import {
   CircleDot,
   Maximize2,
   Shield,
+  WrapText,
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
@@ -19,6 +20,7 @@ interface BubbleStyleControlsProps {
 export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProps) {
   const isEllipse = block.shape === "ellipse"
   const isFit = block.paddingMode === "fit"
+  const isMinHyphens = block.minHyphens !== false
 
   return (
     <div
@@ -81,7 +83,7 @@ export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProp
           </button>
         </div>
 
-        {/* Форма, отступ и начертание */}
+        {/* Форма, отступ, режим переносов и начертание */}
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -111,6 +113,21 @@ export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProp
           >
             {isFit ? <Maximize2 className="h-3 w-3 text-emerald-400" /> : <Shield className="h-3 w-3" />}
             {isFit ? `Fit [${BUBBLE_HOTKEYS.togglePadding.label}]` : `Safe [${BUBBLE_HOTKEYS.togglePadding.label}]`}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onChange({ minHyphens: !isMinHyphens })}
+            className={[
+              "flex items-center gap-1 px-1.5 h-6 rounded text-[10px] font-medium border transition-colors",
+              isMinHyphens
+                ? "border-teal-500 bg-teal-600/30 text-teal-200"
+                : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200",
+            ].join(" ")}
+            title={`Минимум переносов [${BUBBLE_HOTKEYS.toggleHyphenation.label}]: Вкл (переносить целые слова) / Выкл (активно дефисировать)`}
+          >
+            <WrapText className="h-3 w-3" />
+            {isMinHyphens ? `No-Hyph [${BUBBLE_HOTKEYS.toggleHyphenation.label}]` : `Hyph [${BUBBLE_HOTKEYS.toggleHyphenation.label}]`}
           </button>
 
           <button

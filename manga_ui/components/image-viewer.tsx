@@ -19,6 +19,7 @@ interface ImageViewerProps {
   onToggleViewMode: () => void
   onSelect: (id: string | null) => void
   onDrawComplete: (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => void
+  onUpdateBlock?: (id: string, patch: Partial<TextBlock>) => void
 }
 
 function normalize(a: number, b: number) {
@@ -36,6 +37,7 @@ export function ImageViewer({
   onToggleViewMode,
   onSelect,
   onDrawComplete,
+  onUpdateBlock,
 }: ImageViewerProps) {
   const imgRef = useRef<HTMLImageElement>(null)
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
@@ -183,6 +185,7 @@ export function ImageViewer({
                 activeRotation={activeRotation}
                 onStartTransform={startTransform}
                 onSelect={onSelect}
+                onUpdate={onUpdateBlock}
               />
             ))}
           </div>
@@ -193,7 +196,7 @@ export function ImageViewer({
         <footer className="flex items-center justify-between border-t border-slate-800 px-5 py-2 text-xs text-slate-400 bg-slate-950/60">
           <div className="flex items-center gap-2">
             <MousePointerSquareDashed className="h-3.5 w-3.5 text-slate-500" />
-            <span>Resize from 8 points. Drag top circle to rotate.</span>
+            <span>Resize from 8 points. Double click bubble to edit text inline.</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
@@ -201,6 +204,9 @@ export function ImageViewer({
             <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-indigo-300 border border-slate-700">
               {BUBBLE_HOTKEYS.toggleShape.label}
             </kbd> Oval
+            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-teal-300 border border-slate-700">
+              {BUBBLE_HOTKEYS.toggleHyphenation.label}
+            </kbd> No-Hyph
             <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-amber-300 border border-slate-700">
               {BUBBLE_HOTKEYS.toggleStroke.label}
             </kbd> Stroke

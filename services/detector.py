@@ -153,7 +153,7 @@ def detect_and_filter_bubbles(image: Image.Image, padding: int = 2) -> List[Dict
         ix2 = int(min(img_width, x2))
         iy2 = int(min(img_height, y2))
 
-        # АККУРАТНОЕ ЛУЧЕВОЕ РАСШИРЕНИЕ ДО СТЕНОК БАБЛА
+        # Аккуратное лучевое расширение до стенок бабла
         ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2)
 
         px1 = max(0, ex1 - padding) / img_width

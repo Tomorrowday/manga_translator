@@ -18,7 +18,10 @@ from logger import logger
 
 
 def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
-    """Сохраняет блоки страницы с валидацией координат и вычисляет новый статус страницы."""
+    """
+    Сохраняет блоки страницы с валидацией координат и вычисляет новый статус страницы.
+    Использует INSERT OR REPLACE для предотвращения коллизий первичных ключей.
+    """
     with db_session() as cursor:
         cursor.execute("SELECT status, clean_path FROM pages WHERE id = ?", (page_id,))
         page_row = cursor.fetchone()
@@ -32,6 +35,7 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
             current_order = b.order_index if b.order_index else (idx + 1)
             shape_val = b.shape if b.shape in ["rect", "ellipse"] else "rect"
             pad_mode = b.padding_mode if b.padding_mode in ["safe", "fit"] else "safe"
+            min_hyphens_val = 1 if b.min_hyphens is None or b.min_hyphens else 0
 
             clamped_x = max(0.0, min(0.995, float(b.x)))
             clamped_y = max(0.0, min(0.995, float(b.y)))
@@ -43,31 +47,32 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
 
             cursor.execute(
                 """
-                INSERT INTO text_blocks (
+                INSERT OR REPLACE INTO text_blocks (
                     id, page_id, x, y, width, height, rotation, jap_text, rus_text, speaker, order_index,
                     font_size, font_family, is_bold, is_italic, is_uppercase, has_stroke,
-                    shape, padding_mode, status
+                    shape, padding_mode, min_hyphens, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     b.id, page_id, clamped_x, clamped_y, clamped_w, clamped_h, round(normalized_rot, 2),
                     b.jap_text, b.rus_text, b.speaker,
                     current_order, b.font_size, b.font_family, int(b.is_bold or False),
                     int(b.is_italic or False), int(b.is_uppercase or False),
-                    int(b.has_stroke or False), shape_val, pad_mode, b.status
+                    int(b.has_stroke or False), shape_val, pad_mode, min_hyphens_val, b.status
                 )
             )
 
         has_rus = any(bool(b.rus_text and b.rus_text.strip()) for b in blocks)
         clean_path_val = str(page_row["clean_path"]) if page_row["clean_path"] else ""
+        has_clean = bool(clean_path_val and os.path.exists(clean_path_val))
 
         if current_status == "done":
             page_status = "done"
-        elif clean_path_val and os.path.exists(clean_path_val):
-            page_status = "cleaned"
         elif has_rus:
             page_status = "translated"
+        elif has_clean:
+            page_status = "cleaned"
         elif blocks:
             page_status = "detected"
         else:
@@ -79,7 +84,7 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
 
 
 def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str, float]:
-    """Выполняет YOLO-детекцию и первичный MangaOCR для страницы."""
+    """Выполняет детекцию баблов, ансамблевую нумерацию и первичный MangaOCR."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
@@ -94,9 +99,9 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
 
     start_time = time.time()
     image = Image.open(file_path).convert("RGB")
-    raw_boxes = detect_and_filter_bubbles(image)
 
-    # Приводим словари к универсальному типу Dict[str, Any], чтобы можно было хранить текст и статус
+    # Детектируем баблы (уже отсортированы ансамблем с голосованием)
+    raw_boxes = detect_and_filter_bubbles(image)
     boxes: List[Dict[str, Any]] = [dict(b) for b in raw_boxes]
 
     with db_session() as cur:
@@ -106,6 +111,7 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
             b["id"] = block_id
             b["shape"] = "rect"
             b["padding_mode"] = "safe"
+            b["min_hyphens"] = True
             b["rotation"] = 0.0
 
             jap_text = ocr_image_region(
@@ -121,24 +127,27 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
 
             cur.execute(
                 """
-                INSERT INTO text_blocks (
-                    id, page_id, x, y, width, height, rotation, jap_text, order_index, shape, padding_mode, status
+                INSERT OR REPLACE INTO text_blocks (
+                    id, page_id, x, y, width, height, rotation, jap_text, order_index, shape, padding_mode, min_hyphens, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, 'rect', 'safe', ?)
+                VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, 'rect', 'safe', 1, ?)
                 """,
                 (block_id, page_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"], b["status"])
             )
 
         new_status = "detected" if boxes else "raw"
-        if current_status not in ["translated", "cleaned", "done"]:
+
+        if current_status not in ["cleaned", "translated", "done"]:
             cur.execute("UPDATE pages SET status = ? WHERE id = ?", (new_status, page_id))
+        else:
+            new_status = current_status
 
     elapsed = round(time.time() - start_time, 4)
     return boxes, new_status, elapsed
 
 
 def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
-    """Очищает баблы на странице (белый клин + LaMa inpainting)."""
+    """Очищает баблы на странице (белый клин + LaМа inpainting)."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
@@ -148,11 +157,14 @@ def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
         conn.close()
         raise ValueError("Файл страницы не найден")
 
-    cursor.execute("SELECT x, y, width, height, shape, rotation FROM text_blocks WHERE page_id = ?", (page_id,))
-    boxes = [dict(r) for r in cursor.fetchall()]
+    cursor.execute(
+        "SELECT x, y, width, height, shape, rotation, rus_text FROM text_blocks WHERE page_id = ?",
+        (page_id,)
+    )
+    blocks = [dict(r) for r in cursor.fetchall()]
     conn.close()
 
-    if not boxes:
+    if not blocks:
         raise ValueError("Нет размеченных баблов для очистки")
 
     orig_path = str(page_row["file_path"])
@@ -163,7 +175,7 @@ def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
     image: np.ndarray = raw_cv_img
 
     stats = {"white": 0, "inpaint": 0}
-    for box in boxes:
+    for box in blocks:
         method = clean_speech_bubble(image, box)
         if method in stats:
             stats[method] += 1
@@ -176,7 +188,14 @@ def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
     cv2.imwrite(clean_path, image)
 
     page_status_str = str(page_row["status"])
-    new_status = "done" if page_status_str == "done" else "cleaned"
+    has_rus = any(bool(b.get("rus_text") and b["rus_text"].strip()) for b in blocks)
+
+    if page_status_str == "done":
+        new_status = "done"
+    elif has_rus or page_status_str == "translated":
+        new_status = "translated"
+    else:
+        new_status = "cleaned"
 
     with db_session() as cur:
         cur.execute("UPDATE pages SET clean_path = ?, status = ? WHERE id = ?", (clean_path, new_status, page_id))

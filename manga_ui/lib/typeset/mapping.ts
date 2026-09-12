@@ -1,19 +1,29 @@
-// lib/typeset/mapping.ts
-// Преобразование моделей данных и правила порядка чтения манги
+// manga_ui/lib/typeset/mapping.ts
+// Преобразование моделей данных и утренняя стабильная сортировка (ярусы 0.18 + справа налево)
 
 import type { TextBlock } from "../types"
 
-export function sortBlocksMangaOrder<T extends { x: number; y: number }>(blocks: T[]): T[] {
+export function sortBlocksMangaOrder<
+  T extends { x: number; y: number; width?: number; height?: number }
+>(boxes: T[]): T[] {
   const rowHeight = 0.18
-  return [...blocks].sort((a, b) => {
+
+  return [...boxes].sort((a, b) => {
     const rowA = Math.floor(a.y / rowHeight)
     const rowB = Math.floor(b.y / rowHeight)
+
+    // Если разные ярусы по высоте — сверху вниз
     if (rowA !== rowB) {
       return rowA - rowB
     }
+
+    // Внутри одного яруса — строго справа налево (по убыванию координаты X)
     return b.x - a.x
   })
 }
+
+// Для совместимости оставляем алиас
+export const sortBlocksMangaOrderWithPanels = sortBlocksMangaOrder
 
 export function mapDbBlockToTextBlock(b: any, cropDataUrl: string = ""): TextBlock {
   return {
@@ -35,6 +45,7 @@ export function mapDbBlockToTextBlock(b: any, cropDataUrl: string = ""): TextBlo
     hasStroke: Boolean(b.has_stroke),
     shape: (b.shape as TextBlock["shape"]) || "rect",
     paddingMode: (b.padding_mode as TextBlock["paddingMode"]) || "safe",
+    minHyphens: b.min_hyphens !== undefined ? Boolean(b.min_hyphens) : true,
     status: (b.status as TextBlock["status"]) || "new",
     imageCrop: cropDataUrl,
   }

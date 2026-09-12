@@ -52,11 +52,12 @@ export function TranslationToolbar({
       </div>
 
       <div className="flex items-center gap-1.5">
+        {/* FULL AUTO */}
         <button
           onClick={onFullAuto}
           disabled={!hasCurrentPage || isAnyActionRunning}
           className="flex items-center gap-1.5 rounded-md bg-gradient-to-r from-amber-500 to-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white shadow-md transition-all hover:brightness-110 disabled:opacity-50"
-          title="Полный автоматический цикл"
+          title="Полный автоматический цикл: Detect -> Clean -> Translate -> Export"
         >
           {isFullAuto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5 fill-current" />}
           Full Auto
@@ -86,18 +87,7 @@ export function TranslationToolbar({
           OCR All
         </button>
 
-        {/* 2. TRANSLATE */}
-        <button
-          onClick={onTranslateAll}
-          disabled={!hasCurrentPage || !hasBlocks || isBatchTranslating || isFullAuto}
-          className="flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
-          title="2. Перевести страницу с учетом синопсиса и глоссария"
-        >
-          {isBatchTranslating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5 text-emerald-400" />}
-          2. Translate
-        </button>
-
-        {/* 3. SMART CLEAN & REVERT CLEAN */}
+        {/* 2. SMART CLEAN & REVERT CLEAN (Теперь ШАГ 2) */}
         <div className="flex items-center">
           <button
             onClick={onCleanPage}
@@ -106,10 +96,10 @@ export function TranslationToolbar({
               "flex items-center gap-1.5 rounded-l-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50",
               !hasCleanScan ? "rounded-r-md" : "",
             ].join(" ")}
-            title="3. Умный клин (выбеливание + AI-ретушь арта через LaMa)"
+            title="2. Умный клин (выбеливание баблов + AI-ретушь арта через LaMa)"
           >
             {isCleaning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 text-purple-400" />}
-            3. Clean
+            2. Clean
           </button>
 
           {hasCleanScan && (
@@ -128,7 +118,18 @@ export function TranslationToolbar({
           )}
         </div>
 
-        {/* 4. TYPESET */}
+        {/* 3. TRANSLATE (Теперь ШАГ 3) */}
+        <button
+          onClick={onTranslateAll}
+          disabled={!hasCurrentPage || !hasBlocks || isBatchTranslating || isFullAuto}
+          className="flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50"
+          title="3. Перевести страницу с учетом синопсиса и глоссария"
+        >
+          {isBatchTranslating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5 text-emerald-400" />}
+          3. Translate
+        </button>
+
+        {/* 4. TYPESET TOGGLE */}
         <button
           onClick={onToggleTypeset}
           className={[
@@ -137,7 +138,7 @@ export function TranslationToolbar({
               ? "bg-indigo-600/30 border-indigo-500/60 text-indigo-300"
               : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200",
           ].join(" ")}
-          title="Переключить режим тайпсета"
+          title="Включить/выключить предпросмотр тайпсета на скане"
         >
           {showTypeset ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
           {showTypeset ? "Typeset ON" : "OFF"}

@@ -34,14 +34,12 @@ async def scan_project(req: ScanProjectRequest):
 
             walk_dirs = []
             for root, dirs, files in os.walk(folder):
-                # Исключаем служебные папки из дальнейшего обхода
                 dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIR_NAMES]
                 walk_dirs.append((root, dirs, files))
 
             walk_dirs.sort(key=lambda item: natural_sort_key(item[0]))
 
             for root, _, files in walk_dirs:
-                # Дополнительно проверяем имя текущей папки
                 if Path(root).name.lower() in EXCLUDED_DIR_NAMES:
                     continue
 
@@ -80,7 +78,7 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
     """
     Добавляет новую главу (или пачку глав) в существующий тайтл.
     Если в папке лежат файлы напрямую — создается одна глава.
-    Если в папке лежат подпапки с изображениями — добавляются все найденные главы (за исключением clean, translated и т.п.).
+    Если в папке лежат подпапки с изображениями — добавляются все найденные главы.
     """
     folder = Path(req.folder_path)
     if not folder.exists() or not folder.is_dir():
@@ -220,7 +218,7 @@ async def update_title_description(title_id: int, req: UpdateTitleDescriptionReq
 async def get_title_speakers(title_id: int, chapter_id: Optional[int] = Query(None)):
     """
     Возвращает объединенный список подсказок спикеров:
-    1. Имена из глоссария тайтла (даже если японское имя не задано).
+    1. Имена из глоссария тайтла.
     2. Имена спикеров, которые уже вводились в этой главе или тайтле.
     """
     conn = get_db()
@@ -376,8 +374,8 @@ async def get_project_stats(title_id: int):
             "total_pages": total_pages,
             "pages_raw": status_counts.get("raw", 0) + status_counts.get("new", 0),
             "pages_detected": status_counts.get("detected", 0),
-            "pages_translated": status_counts.get("translated", 0),
             "pages_cleaned": status_counts.get("cleaned", 0),
+            "pages_translated": status_counts.get("translated", 0),
             "pages_done": status_counts.get("done", 0),
             "total_blocks": total_blocks,
             "translated_blocks": translated_blocks,

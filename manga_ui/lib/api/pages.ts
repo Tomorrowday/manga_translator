@@ -72,6 +72,7 @@ export async function savePageBlocks(
     has_stroke?: boolean
     shape?: string
     padding_mode?: string
+    min_hyphens?: boolean
     status: string
   }>
 ) {
@@ -99,7 +100,7 @@ export async function revertCleanPage(pageId: number) {
 
 export async function runSpotClean(
   pageId: number,
-  rect: { x: number; y: number; width: number; height: number },
+  rect: { x: number; y: number; width: number; height: number; rotation?: number; shape?: string },
   method: "auto" | "lama" | "white" = "auto"
 ) {
   const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}/clean-spot`, {
@@ -110,6 +111,8 @@ export async function runSpotClean(
       y: rect.y,
       width: rect.width,
       height: rect.height,
+      rotation: rect.rotation || 0.0,
+      shape: rect.shape || "rect",
       method,
     }),
   })

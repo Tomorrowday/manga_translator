@@ -130,7 +130,6 @@ export function ProjectModal({
 
   const handleAddGlossary = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Теперь обязателен только русский перевод/имя!
     if (!rusWord.trim()) return
 
     setIsAdding(true)
@@ -446,6 +445,7 @@ export function ProjectModal({
                     </p>
                   </div>
 
+                  {/* СТАДИИ В НОВОМ ПОРЯДКЕ: Raw -> Detected -> Cleaned -> Translated -> Done */}
                   <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
                     <p className="text-xs font-semibold text-slate-300">Распределение страниц по стадиям</p>
                     <div className="mt-3 grid grid-cols-5 gap-2.5 text-center text-xs">
@@ -460,14 +460,14 @@ export function ProjectModal({
                         <p className="font-bold text-sky-400 mt-0.5">{stats.pages_detected}</p>
                       </div>
                       <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5">
-                        <span className="block h-2 w-2 mx-auto mb-1.5 rounded-full bg-amber-400" />
-                        <span className="text-[10px] text-slate-400">Translated</span>
-                        <p className="font-bold text-amber-400 mt-0.5">{stats.pages_translated}</p>
-                      </div>
-                      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5">
                         <span className="block h-2 w-2 mx-auto mb-1.5 rounded-full bg-purple-400" />
                         <span className="text-[10px] text-slate-400">Cleaned</span>
                         <p className="font-bold text-purple-400 mt-0.5">{stats.pages_cleaned}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5">
+                        <span className="block h-2 w-2 mx-auto mb-1.5 rounded-full bg-amber-400" />
+                        <span className="text-[10px] text-slate-400">Translated</span>
+                        <p className="font-bold text-amber-400 mt-0.5">{stats.pages_translated}</p>
                       </div>
                       <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5">
                         <span className="block h-2 w-2 mx-auto mb-1.5 rounded-full bg-emerald-400" />

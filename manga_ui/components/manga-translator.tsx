@@ -88,10 +88,24 @@ export function MangaTranslator() {
     cleanCacheBuster,
   })
 
-  // Выбор страницы
+  // Очистка состояния при удалении главы из сайдбара
+  const handleChapterDeleted = useCallback((deletedChapterId: number) => {
+    if (currentPage?.chapter_id === deletedChapterId) {
+      setCurrentPage(null)
+      setChapterPages([])
+      setTextBlocks([])
+      setSelectedId(null)
+    }
+  }, [currentPage?.chapter_id, setTextBlocks, setSelectedId])
+
+  // Выбор страницы с безопасным автосохранением предыдущей
   const handleSelectPage = async (page: PageItem, skipSave = false) => {
     if (!skipSave && currentPage && textBlocksRef.current.length > 0) {
-      await saveBlocks(false)
+      try {
+        await saveBlocks(false)
+      } catch (e) {
+        console.warn("Не удалось сохранить предыдущую страницу (возможно, была удалена):", e)
+      }
     }
 
     const freshPage = (await getPageDetails(page.id)) || page
@@ -142,6 +156,7 @@ export function MangaTranslator() {
               orderIndex: box.order_index,
               shape: "rect" as const,
               paddingMode: "safe" as const,
+              minHyphens: true,
               status: (box.status as any) || (box.jap_text ? "ocr-done" : "new"),
             })
           }
@@ -237,6 +252,7 @@ export function MangaTranslator() {
           refreshTrigger={sidebarRefreshTrigger}
           onSelectPage={(page) => handleSelectPage(page, false)}
           onActiveChapterChange={setChapterPages}
+          onChapterDeleted={handleChapterDeleted}
         />
 
         <ImageViewer
@@ -250,6 +266,7 @@ export function MangaTranslator() {
           onToggleViewMode={() => setViewMode((prev) => (prev === "original" ? "clean" : "original"))}
           onSelect={setSelectedId}
           onDrawComplete={addOrUpdateDrawnBlock}
+          onUpdateBlock={updateBlock}
         />
 
         <section className="flex min-h-0 w-full flex-col border-t border-slate-800 lg:w-2/5 lg:border-l lg:border-t-0">

@@ -20,6 +20,12 @@ export const BUBBLE_HOTKEYS = {
     label: "F",
     name: "Fit / Safe",
   },
+  // Минимизация переносов: Целые слова / Дефисы (H / русская Р)
+  toggleHyphenation: {
+    code: "KeyH",
+    label: "H",
+    name: "Min Hyphens",
+  },
   // Жирный шрифт (B / русская И)
   toggleBold: {
     code: "KeyB",
