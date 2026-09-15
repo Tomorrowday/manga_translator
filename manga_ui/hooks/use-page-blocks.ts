@@ -3,7 +3,7 @@
 
 import { useState, useRef, useCallback } from "react"
 import type { TextBlock, PageItem, PageStatus } from "@/lib/types"
-import { cropRegion, sortBlocksMangaOrder } from "@/lib/typeset"
+import { cropRegion, insertBlockInMangaOrder } from "@/lib/typeset"
 import { savePageBlocks, runSpotClean } from "@/lib/api"
 
 export interface DrawRect {
@@ -167,12 +167,9 @@ export function usePageBlocks(
         status: "new",
       }
 
-      // Ансамблевая сортировка баблов при добавлении нового
-      setTextBlocks((prev) => {
-        const sorted = sortBlocksMangaOrder([...prev, newBlock])
-        return sorted.map((b, idx) => ({ ...b, orderIndex: idx + 1 }))
-      })
-
+      // Умное вклинивание: только новый блок встает на свое место,
+      // порядок всех уже созданных и вручную настроенных блоков сохраняется
+      setTextBlocks((prev) => insertBlockInMangaOrder(prev, newBlock))
       setSelectedId(id)
     },
     []
