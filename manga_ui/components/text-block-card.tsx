@@ -57,9 +57,10 @@ export function TextBlockCard({
   const [translateLoading, setTranslateLoading] = useState(false)
   const cardRef = useRef<HTMLElement>(null)
 
+  // Мгновенный быстрый скролл без тормозящей плавной анимации
   useEffect(() => {
     if (isSelected && cardRef.current) {
-      cardRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" })
+      cardRef.current.scrollIntoView({ behavior: "auto", block: "nearest" })
     }
   }, [isSelected])
 

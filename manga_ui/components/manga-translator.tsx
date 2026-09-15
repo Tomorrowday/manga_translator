@@ -189,7 +189,7 @@ export function MangaTranslator() {
     }
   }, [currentPageIdx])
 
-  // Горячие клавиши
+  // Горячие клавиши (с поддержкой спот-клина W / L / Shift+W / Shift+L)
   useMangaHotkeys({
     selectedId,
     textBlocks,
@@ -199,6 +199,7 @@ export function MangaTranslator() {
     onDeleteBlock: deleteBlock,
     onMoveBlock: moveBlock,
     onUpdateBlock: updateBlock,
+    onSpotClean: spotCleanBlock,
   })
 
   const translatedCount = textBlocks.filter((b) => b.status === "translated").length

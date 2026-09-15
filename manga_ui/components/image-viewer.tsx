@@ -200,6 +200,17 @@ export function ImageViewer({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+            <span>Spot:</span>
+            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-slate-200 border border-slate-700">
+              {BUBBLE_HOTKEYS.spotWhite.label}
+            </kbd> White
+            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-purple-300 border border-slate-700">
+              {BUBBLE_HOTKEYS.spotLama.label}
+            </kbd> LaMa
+            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-rose-300 border border-slate-700">
+              {BUBBLE_HOTKEYS.spotLamaDel.label}
+            </kbd> Del
+            <span className="mx-1 text-slate-700">|</span>
             <span>Бабл:</span>
             <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-indigo-300 border border-slate-700">
               {BUBBLE_HOTKEYS.toggleShape.label}

@@ -1,5 +1,5 @@
 # services/detector.py
-# Детекция речевых баблов (YOLO), их фильтрация и подгонка под контур
+# Детекция речевых баблов (YOLO), их фильтрация и аккуратная подгонка внутрь контура
 
 from typing import List, Dict, Any, Tuple
 import cv2
@@ -22,8 +22,8 @@ def manga_sort_key(box: Dict[str, float]) -> tuple:
 def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> Tuple[int, int, int, int]:
     """
     Деликатное лучевое расширение:
-    Мягко раздвигает бокс в стороны до черных стенок бабла,
-    не допуская вылезания за пределы контура.
+    Мягко раздвигает бокс в стороны до черных стенок бабла с запасом отступа,
+    чтобы углы описанного прямоугольника не вылезали за контур эллиптических баблов.
     """
     try:
         img_h, img_w = gray_img.shape[:2]
@@ -40,19 +40,19 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
             # Тёмный фон или сложный арт — не трогаем границы
             return x1, y1, x2, y2
 
-        # Жесткие максимальные лимиты расширения (не более 45px по ширине и 18px по высоте)
-        max_expand_x = min(45, max(15, int(bw * 0.55)))
-        max_expand_y = min(20, max(8, int(bh * 0.18)))
+        # Ограничиваем максимальный размах лучей
+        max_expand_x = min(35, max(10, int(bw * 0.40)))
+        max_expand_y = min(15, max(6, int(bh * 0.12)))
 
         # Внутренний срез по высоте (чтобы не задевать верх/низ при сканировании влево/вправо)
-        y_slice_start = int(y1 + bh * 0.2)
-        y_slice_end = int(y2 - bh * 0.2)
+        y_slice_start = int(y1 + bh * 0.25)
+        y_slice_end = int(y2 - bh * 0.25)
         if y_slice_end <= y_slice_start:
             y_slice_start, y_slice_end = y1, y2
 
         # Внутренний срез по ширине (для сканирования вверх/вниз)
-        x_slice_start = int(x1 + bw * 0.2)
-        x_slice_end = int(x2 - bw * 0.2)
+        x_slice_start = int(x1 + bw * 0.25)
+        x_slice_end = int(x2 - bw * 0.25)
         if x_slice_end <= x_slice_start:
             x_slice_start, x_slice_end = x1, x2
 
@@ -63,8 +63,7 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
             if cur_x < 2:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            # Если встретили черную линию контура бабла (< 160) или границу
-            if np.min(col) < 160 or np.mean(col) < 205:
+            if np.min(col) < 165 or np.mean(col) < 210:
                 break
             left_expand = dx
 
@@ -75,7 +74,7 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
             if cur_x >= img_w - 2:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            if np.min(col) < 160 or np.mean(col) < 205:
+            if np.min(col) < 165 or np.mean(col) < 210:
                 break
             right_expand = dx
 
@@ -86,7 +85,7 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
             if cur_y < 2:
                 break
             row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
-            if np.min(row_pix) < 160 or np.mean(row_pix) < 205:
+            if np.min(row_pix) < 165 or np.mean(row_pix) < 210:
                 break
             top_expand = dy
 
@@ -97,12 +96,13 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
             if cur_y >= img_h - 2:
                 break
             row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
-            if np.min(row_pix) < 160 or np.mean(row_pix) < 205:
+            if np.min(row_pix) < 165 or np.mean(row_pix) < 210:
                 break
             bottom_expand = dy
 
-        # Безопасный отступ на 2px назад от найденной стенки контура
-        pad_in = 2
+        # Увеличенный внутренний отступ назад от границы бабла (5px),
+        # благодаря чему углы прямоугольника гарантированно помещаются в овал
+        pad_in = 5
         final_x1 = max(0, x1 - max(0, left_expand - pad_in))
         final_x2 = min(img_w, x2 + max(0, right_expand - pad_in))
         final_y1 = max(0, y1 - max(0, top_expand - pad_in))
@@ -114,7 +114,7 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
         return x1, y1, x2, y2
 
 
-def detect_and_filter_bubbles(image: Image.Image, padding: int = 2) -> List[Dict[str, Any]]:
+def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
     if ml.yolo_model is None:
         raise RuntimeError("Модель YOLO не загружена")
 
@@ -153,13 +153,24 @@ def detect_and_filter_bubbles(image: Image.Image, padding: int = 2) -> List[Dict
         ix2 = int(min(img_width, x2))
         iy2 = int(min(img_height, y2))
 
-        # Аккуратное лучевое расширение до стенок бабла
+        # Лучевое расширение с безопасным отступом от контура
         ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2)
 
-        px1 = max(0, ex1 - padding) / img_width
-        py1 = max(0, ey1 - padding) / img_height
-        px2 = min(img_width, ex2 + padding) / img_width
-        py2 = min(img_height, ey2 + padding) / img_height
+        # Небольшой внутренний inset (1.5%), чтобы углы гарантированно вписывались в овал
+        box_w = ex2 - ex1
+        box_h = ey2 - ey1
+        inset_x = int(box_w * 0.015)
+        inset_y = int(box_h * 0.015)
+
+        ex1_clamped = min(ex2 - 4, ex1 + inset_x)
+        ex2_clamped = max(ex1 + 4, ex2 - inset_x)
+        ey1_clamped = min(ey2 - 4, ey1 + inset_y)
+        ey2_clamped = max(ey1 + 4, ey2 - inset_y)
+
+        px1 = max(0, ex1_clamped) / img_width
+        py1 = max(0, ey1_clamped) / img_height
+        px2 = min(img_width, ex2_clamped) / img_width
+        py2 = min(img_height, ey2_clamped) / img_height
 
         boxes.append({
             "x": px1,

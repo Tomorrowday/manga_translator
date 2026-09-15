@@ -14,6 +14,7 @@ interface UseMangaHotkeysProps {
   onDeleteBlock: (id: string) => void
   onMoveBlock: (id: string, direction: "up" | "down") => void
   onUpdateBlock: (id: string, patch: Partial<TextBlock>) => void
+  onSpotClean?: (block: TextBlock, method: "auto" | "lama" | "white", deleteAfter?: boolean) => Promise<void>
 }
 
 export function useMangaHotkeys({
@@ -25,6 +26,7 @@ export function useMangaHotkeys({
   onDeleteBlock,
   onMoveBlock,
   onUpdateBlock,
+  onSpotClean,
 }: UseMangaHotkeysProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -60,14 +62,33 @@ export function useMangaHotkeys({
       const activeBlock = textBlocks.find((b) => b.id === selectedId)
       if (!activeBlock) return
 
-      // 3. Удаление бабла
+      // 3. Точечный клин (Spot Clean)
+      // W / Shift+W (White / White & Del)
+      if (code === BUBBLE_HOTKEYS.spotWhite.code && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        if (onSpotClean) {
+          onSpotClean(activeBlock, "white", e.shiftKey)
+        }
+        return
+      }
+
+      // L / Shift+L (LaMa / LaMa & Del)
+      if (code === BUBBLE_HOTKEYS.spotLama.code && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        if (onSpotClean) {
+          onSpotClean(activeBlock, "lama", e.shiftKey)
+        }
+        return
+      }
+
+      // 4. Удаление бабла
       if (code === "Delete" || code === "Backspace" || key === "Delete" || key === "Backspace") {
         e.preventDefault()
         onDeleteBlock(selectedId)
         return
       }
 
-      // 4. Изменение порядка чтения ([ / ])
+      // 5. Изменение порядка чтения ([ / ])
       if (code === BUBBLE_HOTKEYS.moveOrderUp.code || (e.altKey && code === "ArrowUp")) {
         e.preventDefault()
         onMoveBlock(selectedId, "up")
@@ -79,7 +100,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 5. Размер шрифта (- / +)
+      // 6. Размер шрифта (- / +)
       if (key === "-" || key === "_" || code === "NumpadSubtract") {
         e.preventDefault()
         const curFont = activeBlock.fontSize || Math.max(11, Math.min(16, Math.round(11 + (activeBlock.height || 0.1) * 22)))
@@ -93,28 +114,28 @@ export function useMangaHotkeys({
         return
       }
 
-      // 6. Форма бабла (R: Овал / Прямоугольник)
-      if (code === BUBBLE_HOTKEYS.toggleShape.code) {
+      // 7. Форма бабла (R: Овал / Прямоугольник)
+      if (code === BUBBLE_HOTKEYS.toggleShape.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { shape: activeBlock.shape === "ellipse" ? "rect" : "ellipse" })
         return
       }
 
-      // 7. Белая обводка текста (S)
+      // 8. Белая обводка текста (S)
       if (code === BUBBLE_HOTKEYS.toggleStroke.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { hasStroke: !activeBlock.hasStroke })
         return
       }
 
-      // 8. Режим отступа (F: Fit / Safe)
-      if (code === BUBBLE_HOTKEYS.togglePadding.code) {
+      // 9. Режим отступа (F: Fit / Safe)
+      if (code === BUBBLE_HOTKEYS.togglePadding.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { paddingMode: activeBlock.paddingMode === "fit" ? "safe" : "fit" })
         return
       }
 
-      // 9. Режим минимизации переносов (H: Min Hyphens / Normal)
+      // 10. Режим минимизации переносов (H: Min Hyphens / Normal)
       if (code === BUBBLE_HOTKEYS.toggleHyphenation.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         const curVal = activeBlock.minHyphens !== false
@@ -122,22 +143,22 @@ export function useMangaHotkeys({
         return
       }
 
-      // 10. Жирный шрифт (B)
+      // 11. Жирный шрифт (B)
       if (code === BUBBLE_HOTKEYS.toggleBold.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isBold: !activeBlock.isBold })
         return
       }
 
-      // 11. Курсив (I)
+      // 12. Курсив (I)
       if (code === BUBBLE_HOTKEYS.toggleItalic.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isItalic: !activeBlock.isItalic })
         return
       }
 
-      // 12. Все заглавные (U)
-      if (code === BUBBLE_HOTKEYS.toggleUppercase.code) {
+      // 13. Все заглавные (U)
+      if (code === BUBBLE_HOTKEYS.toggleUppercase.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isUppercase: !activeBlock.isUppercase })
         return
@@ -146,5 +167,5 @@ export function useMangaHotkeys({
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selectedId, textBlocks, onPrevPage, onNextPage, onSave, onDeleteBlock, onMoveBlock, onUpdateBlock])
+  }, [selectedId, textBlocks, onPrevPage, onNextPage, onSave, onDeleteBlock, onMoveBlock, onUpdateBlock, onSpotClean])
 }

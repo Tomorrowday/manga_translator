@@ -56,4 +56,28 @@ export const BUBBLE_HOTKEYS = {
     label: "]",
     name: "Move Down",
   },
+  // Точечный клин: Белый (W / русская Ц)
+  spotWhite: {
+    code: "KeyW",
+    label: "W",
+    name: "Spot White",
+  },
+  // Точечный клин: LaMa (L / русская Д)
+  spotLama: {
+    code: "KeyL",
+    label: "L",
+    name: "Spot LaMa",
+  },
+  // Точечный клин: Белый + Удалить рамку (Shift + W)
+  spotWhiteDel: {
+    code: "KeyW",
+    label: "Shift+W",
+    name: "Spot White & Del",
+  },
+  // Точечный клин: LaMa + Удалить рамку (Shift + L)
+  spotLamaDel: {
+    code: "KeyL",
+    label: "Shift+L",
+    name: "Spot LaMa & Del",
+  },
 } as const
