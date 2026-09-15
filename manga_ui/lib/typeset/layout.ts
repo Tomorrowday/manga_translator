@@ -74,7 +74,11 @@ export function layoutBubbleTextLines(
           let curLine = ""
 
           while (remainingWords.length > 0) {
-            const w = cleanLeadingPunct(remainingWords[0])
+            const w = remainingWords[0]
+            if (!w) {
+              remainingWords.shift()
+              continue
+            }
             const testLine = curLine ? `${curLine} ${w}` : w
 
             if (ctx.measureText(testLine).width <= allowedW) {
@@ -154,7 +158,11 @@ export function layoutBubbleTextLines(
         let curLine = ""
 
         while (remainingWords.length > 0) {
-          const w = cleanLeadingPunct(remainingWords[0])
+          const w = remainingWords[0]
+          if (!w) {
+            remainingWords.shift()
+            continue
+          }
           const testLine = curLine ? `${curLine} ${w}` : w
 
           if (ctx.measureText(testLine).width <= maxW) {
@@ -219,10 +227,16 @@ export function layoutBubbleTextLines(
       }
     }
 
-    // Удаляем висячую пунктуацию на отдельных строках
+    // Удаляем висячую пунктуацию на отдельных строках (точки, запятые и т.д.)
     for (let i = lines.length - 1; i > 0; i--) {
-      if (/^[-—–.,!?:;…«»"'\s]+$/.test(lines[i].trim())) {
-        lines[i - 1] = lines[i - 1].trimEnd() + lines[i].trim()
+      const trimmedLine = lines[i].trim()
+      // Если это только пунктуация закрытия строки/предложения
+      if (/^[.,!?:;…«»"'\s]+$/.test(trimmedLine)) {
+        lines[i - 1] = lines[i - 1].trimEnd() + trimmedLine
+        lines.splice(i, 1)
+      } else if (/^[-—–−]+$/.test(trimmedLine)) {
+        // Если тире оказалось одно на новой строке, подтягиваем его к предыдущей с пробелом
+        lines[i - 1] = lines[i - 1].trimEnd() + " " + trimmedLine
         lines.splice(i, 1)
       }
     }
@@ -233,8 +247,6 @@ export function layoutBubbleTextLines(
     const fitsHeight = totalHeight <= boxH * 0.96
 
     // Если всё поместилось:
-    // В режиме minHyphens, если произошло вынужденное разбиение слова дефисом и кегль еще > 10,
-    // пробуем уменьшить шрифт на 1pt, чтобы проверить, не поместится ли слово целиком!
     if (allLinesFitWidth && fitsHeight) {
       if (minHyphens && hadHyphenation && curSize > 10) {
         curSize = curSize - 1

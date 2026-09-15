@@ -8,14 +8,19 @@ export function appendHyphenSafe(str: string): string {
   if (!str) return str
   const trimmed = str.trimEnd()
   const lastChar = trimmed[trimmed.length - 1]
-  if (/[-—–.,!?:;…«»"'\)\]]/.test(lastChar)) {
+  if (/[-—–−.,!?:;…«»"'\)\]]/.test(lastChar)) {
     return trimmed
   }
   return trimmed + "-"
 }
 
 export function cleanLeadingPunct(str: string): string {
-  return str.replace(/^[-—–\s]+/, "")
+  if (!str) return str
+  // Если строка состоит только из дефисов, тире, минусов или пробелов (например, отдельное "—" или "-"), не стираем её!
+  if (/^[-—–−\s]+$/.test(str)) {
+    return str.trim()
+  }
+  return str.replace(/^[-—–−\s]+/, "")
 }
 
 export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffix: string }> {
