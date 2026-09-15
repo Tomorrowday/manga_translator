@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-page-blocks.ts
-// Управление состоянием и операциями над текстовыми блоками страницы
+// Управление состоянием и операциями над текстовыми блоками страницы с защитой от рассинхронизации
 
 import { useState, useRef, useCallback } from "react"
 import type { TextBlock, PageItem, PageStatus } from "@/lib/types"
@@ -28,12 +28,15 @@ export function usePageBlocks(
   const currentPageRef = useRef<PageItem | null>(null)
   currentPageRef.current = currentPage
 
-  const saveBlocks = useCallback(
-    async (refreshSpeakers = true) => {
-      if (!currentPageRef.current) return
+  // Флаг реальных пользовательских изменений
+  const isDirtyRef = useRef(false)
+
+  // Явное сохранение блоков для конкретного pageId (исключает запись блоков в чужую страницу)
+  const saveBlocksExplicit = useCallback(
+    async (targetPageId: number, blocksToSave: TextBlock[], refreshSpeakers = true) => {
       setIsSaving(true)
       try {
-        const payload = textBlocksRef.current.map((b) => ({
+        const payload = blocksToSave.map((b) => ({
           id: b.id,
           x: b.x,
           y: b.y,
@@ -56,16 +59,19 @@ export function usePageBlocks(
           status: b.status,
         }))
 
-        const res = await savePageBlocks(currentPageRef.current.id, payload)
+        const res = await savePageBlocks(targetPageId, payload)
         if (res.page_status) {
-          onPageStatusUpdate(currentPageRef.current.id, res.page_status)
+          onPageStatusUpdate(targetPageId, res.page_status)
         }
 
-        if (refreshSpeakers && currentPageRef.current) {
-          onRefreshSpeakers(currentPageRef.current.id)
+        if (refreshSpeakers) {
+          onRefreshSpeakers(targetPageId)
         }
+
+        isDirtyRef.current = false
       } catch (e) {
-        console.error("Ошибка сохранения блоков:", e)
+        console.error("Ошибка сохранения блоков страницы", targetPageId, e)
+        throw e
       } finally {
         setIsSaving(false)
       }
@@ -73,17 +79,42 @@ export function usePageBlocks(
     [onPageStatusUpdate, onRefreshSpeakers]
   )
 
+  // Стандартное сохранение текущей страницы (по кнопке Save или Ctrl+S)
+  const saveBlocks = useCallback(
+    async (refreshSpeakers = true) => {
+      if (!currentPageRef.current) return
+      await saveBlocksExplicit(currentPageRef.current.id, textBlocksRef.current, refreshSpeakers)
+    },
+    [saveBlocksExplicit]
+  )
+
+  // Безопасная загрузка блоков новой страницы (сбрасывает isDirty)
+  const setNewPageBlocks = useCallback((newBlocks: TextBlock[]) => {
+    setTextBlocks(newBlocks)
+    textBlocksRef.current = newBlocks
+    isDirtyRef.current = false
+  }, [])
+
+  // Мгновенная очистка стейта перед переходом
+  const clearBlocks = useCallback(() => {
+    setTextBlocks([])
+    textBlocksRef.current = []
+    setSelectedId(null)
+    isDirtyRef.current = false
+  }, [])
+
   const updateBlock = useCallback((id: string, patch: Partial<TextBlock>) => {
+    isDirtyRef.current = true
     setTextBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)))
   }, [])
 
   const deleteBlock = useCallback((id: string) => {
+    isDirtyRef.current = true
     setTextBlocks((prev) => {
       const idx = prev.findIndex((b) => b.id === id)
       const filtered = prev.filter((b) => b.id !== id)
       const updated = filtered.map((b, i) => ({ ...b, orderIndex: i + 1 }))
 
-      // Автоматический выбор следующего активного бабла
       setSelectedId((cur) => {
         if (cur !== id) return cur
         if (updated.length === 0) return null
@@ -96,6 +127,7 @@ export function usePageBlocks(
   }, [])
 
   const moveBlock = useCallback((id: string, direction: "up" | "down") => {
+    isDirtyRef.current = true
     setTextBlocks((prev) => {
       const idx = prev.findIndex((b) => b.id === id)
       if (idx < 0) return prev
@@ -138,6 +170,7 @@ export function usePageBlocks(
 
   const addOrUpdateDrawnBlock = useCallback(
     async (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => {
+      isDirtyRef.current = true
       const rot = rotation !== undefined ? rotation : rect.rotation || 0
       const { dataUrl } = await cropRegion(img, { ...rect, rotation: rot })
 
@@ -190,7 +223,11 @@ export function usePageBlocks(
     selectedId,
     setSelectedId,
     isSaving,
+    isDirtyRef,
     saveBlocks,
+    saveBlocksExplicit,
+    setNewPageBlocks,
+    clearBlocks,
     updateBlock,
     deleteBlock,
     moveBlock,

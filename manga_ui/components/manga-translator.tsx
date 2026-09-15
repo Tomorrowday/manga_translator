@@ -36,6 +36,9 @@ export function MangaTranslator() {
   const chapterPagesRef = useRef<PageItem[]>([])
   chapterPagesRef.current = chapterPages
 
+  // Мьютекс против гонки переключения страниц
+  const isSwitchingPageRef = useRef(false)
+
   const refreshSpeakersList = useCallback(async (pageId: number) => {
     try {
       const speakers = await getPageSpeakers(pageId)
@@ -65,7 +68,11 @@ export function MangaTranslator() {
     selectedId,
     setSelectedId,
     isSaving,
+    isDirtyRef,
     saveBlocks,
+    saveBlocksExplicit,
+    setNewPageBlocks,
+    clearBlocks,
     updateBlock,
     deleteBlock,
     moveBlock,
@@ -91,32 +98,38 @@ export function MangaTranslator() {
   // Очистка состояния при удалении главы из сайдбара
   const handleChapterDeleted = useCallback((deletedChapterId: number) => {
     if (currentPage?.chapter_id === deletedChapterId) {
+      clearBlocks()
       setCurrentPage(null)
       setChapterPages([])
-      setTextBlocks([])
-      setSelectedId(null)
     }
-  }, [currentPage?.chapter_id, setTextBlocks, setSelectedId])
+  }, [currentPage?.chapter_id, clearBlocks])
 
-  // Выбор страницы с безопасным автосохранением предыдущей (в том числе при 0 блоков)
+  // Безопасное атомарное переключение страниц
   const handleSelectPage = async (page: PageItem, skipSave = false) => {
-    if (!skipSave && currentPage) {
-      try {
-        await saveBlocks(false)
-      } catch (e) {
-        console.warn("Не удалось сохранить предыдущую страницу:", e)
-      }
-    }
+    if (isSwitchingPageRef.current) return
+    isSwitchingPageRef.current = true
 
-    const freshPage = (await getPageDetails(page.id)) || page
-    setCurrentPage(freshPage)
-    setSelectedId(null)
-    setViewMode(freshPage.clean_path ? "clean" : "original")
-    setCleanCacheBuster(Date.now())
-    refreshSpeakersList(freshPage.id)
-
-    const rawUrl = getPageImageUrl(page.id)
     try {
+      // 1. Сохраняем предыдущую страницу ТОЛЬКО ЕСЛИ на ней реально менялись данные
+      if (!skipSave && currentPage && isDirtyRef.current) {
+        try {
+          await saveBlocksExplicit(currentPage.id, textBlocksRef.current, false)
+        } catch (e) {
+          console.warn("Не удалось сохранить предыдущую страницу:", e)
+        }
+      }
+
+      // 2. Мгновенно зачищаем блоки в памяти, чтобы старые данные физически не утекли на новую страницу
+      clearBlocks()
+
+      // 3. Загружаем свежие метаданные новой страницы
+      const freshPage = (await getPageDetails(page.id)) || page
+      setCurrentPage(freshPage)
+      setViewMode(freshPage.clean_path ? "clean" : "original")
+      setCleanCacheBuster(Date.now())
+      refreshSpeakersList(freshPage.id)
+
+      const rawUrl = getPageImageUrl(page.id)
       const dbBlocks = await getPageBlocks(page.id)
       const img = new Image()
       img.crossOrigin = "anonymous"
@@ -129,19 +142,16 @@ export function MangaTranslator() {
         }
       })
 
-      if (dbBlocks.length > 0) {
+      if (dbBlocks && dbBlocks.length > 0) {
         const loaded = []
         for (const b of dbBlocks) {
           const cropped = img.naturalWidth > 0 ? await cropRegion(img, { ...b, rotation: b.rotation || 0 }) : { dataUrl: "" }
           loaded.push(mapDbBlockToTextBlock(b, cropped.dataUrl))
         }
-        setTextBlocks(loaded)
+        setNewPageBlocks(loaded)
         setSelectedId(loaded[0]?.id || null)
       } else {
-        // Автодетект вызывается ТОЛЬКО ЕСЛИ страница полностью нетронута (raw / new).
-        // Если страница уже detected, cleaned, translated или done — повторный детект не запускается!
         const isFreshPage = freshPage.status === "raw" || freshPage.status === "new"
-
         if (isFreshPage) {
           const detectRes = await runPageAutoDetect(page.id)
           if (detectRes?.boxes?.length) {
@@ -165,21 +175,22 @@ export function MangaTranslator() {
                 status: (box.status as any) || (box.jap_text ? "ocr-done" : "new"),
               })
             }
-            setTextBlocks(fresh)
+            setNewPageBlocks(fresh)
             if (fresh[0]) setSelectedId(fresh[0].id)
             handlePageStatusUpdate(page.id, "detected")
           } else {
-            setTextBlocks([])
+            setNewPageBlocks([])
             handlePageStatusUpdate(page.id, "detected")
           }
         } else {
-          // Страница уже обработана, блоков нет (арт, пейзаж или удаленный мусор)
-          setTextBlocks([])
+          setNewPageBlocks([])
         }
       }
     } catch (e) {
-      console.error("Ошибка загрузки блоков страницы:", e)
-      setTextBlocks([])
+      console.error("Ошибка при переключении страницы:", e)
+      setNewPageBlocks([])
+    } finally {
+      isSwitchingPageRef.current = false
     }
   }
 
