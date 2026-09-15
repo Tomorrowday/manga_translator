@@ -21,6 +21,8 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
     """
     Сохраняет блоки страницы с валидацией координат и вычисляет новый статус страницы.
     Использует INSERT OR REPLACE для предотвращения коллизий первичных ключей.
+    Если пользователь удалил все блоки на обработанной странице, статус не откатывается в 'raw',
+    чтобы не провоцировать повторную ложную автодетекцию.
     """
     with db_session() as cursor:
         cursor.execute("SELECT status, clean_path FROM pages WHERE id = ?", (page_id,))
@@ -74,6 +76,10 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
         elif has_clean:
             page_status = "cleaned"
         elif blocks:
+            page_status = "detected"
+        elif current_status in ["detected", "cleaned", "translated"]:
+            # Если блоков 0, но страница уже была обработана (например, пустой пейзаж или удален мусор),
+            # сохраняем статус 'detected', чтобы не откатывать в 'raw'
             page_status = "detected"
         else:
             page_status = "raw"

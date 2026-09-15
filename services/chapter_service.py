@@ -27,7 +27,7 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, page_number, file_path FROM pages WHERE chapter_id = ? ORDER BY page_number ASC",
+        "SELECT id, page_number, file_path, status FROM pages WHERE chapter_id = ? ORDER BY page_number ASC",
         (chapter_id,)
     )
     pages = [dict(r) for r in cursor.fetchall()]
@@ -64,6 +64,7 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
     for page in pages:
         page_id = page["id"]
         img_path = page["file_path"]
+        page_status = page.get("status", "raw")
 
         with db_session() as cur:
             cur.execute(
@@ -78,7 +79,8 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
             blocks = [dict(r) for r in cur.fetchall()]
             img = None
 
-            if not blocks and os.path.exists(img_path):
+            # Автодетект запускается только если на странице нет блоков И страница ещё не была размечена/проверена
+            if not blocks and os.path.exists(img_path) and page_status in ["raw", "new"]:
                 img = Image.open(img_path).convert("RGB")
                 detected_boxes = detect_and_filter_bubbles(img)
 
@@ -143,7 +145,6 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
                 (translated_text, block_id)
             )
 
-        # Страницы с любым статусом (raw, detected, cleaned) переводятся в 'translated'. Исключаем только готовый 'done'.
         cur.execute(
             """
             UPDATE pages 

@@ -79,10 +79,20 @@ export function usePageBlocks(
 
   const deleteBlock = useCallback((id: string) => {
     setTextBlocks((prev) => {
+      const idx = prev.findIndex((b) => b.id === id)
       const filtered = prev.filter((b) => b.id !== id)
-      return filtered.map((b, idx) => ({ ...b, orderIndex: idx + 1 }))
+      const updated = filtered.map((b, i) => ({ ...b, orderIndex: i + 1 }))
+
+      // Автоматический выбор следующего активного бабла
+      setSelectedId((cur) => {
+        if (cur !== id) return cur
+        if (updated.length === 0) return null
+        const nextIdx = Math.min(Math.max(0, idx), updated.length - 1)
+        return updated[nextIdx].id
+      })
+
+      return updated
     })
-    setSelectedId((cur) => (cur === id ? null : cur))
   }, [])
 
   const moveBlock = useCallback((id: string, direction: "up" | "down") => {
@@ -167,8 +177,6 @@ export function usePageBlocks(
         status: "new",
       }
 
-      // Умное вклинивание: только новый блок встает на свое место,
-      // порядок всех уже созданных и вручную настроенных блоков сохраняется
       setTextBlocks((prev) => insertBlockInMangaOrder(prev, newBlock))
       setSelectedId(id)
     },

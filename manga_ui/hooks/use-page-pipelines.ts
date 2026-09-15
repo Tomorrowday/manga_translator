@@ -53,13 +53,24 @@ export function usePagePipelines({
 
   const handleAutoDetect = async () => {
     if (!currentPage) return
+
+    // Защита от случайного сброса ручной работы
+    if (textBlocks.length > 0 || (currentPage.status !== "raw" && currentPage.status !== "new")) {
+      const ok = confirm("Пересканировать страницу с нуля? Все текущие баблы и переводы на этой странице будут заменены.")
+      if (!ok) return
+    }
+
     setIsDetecting(true)
     try {
       const detectRes = await runPageAutoDetect(currentPage.id)
       const boxes = detectRes.boxes || []
 
       if (!boxes || boxes.length === 0) {
-        alert("Баблы не найдены!")
+        setTextBlocks([])
+        textBlocksRef.current = []
+        setSelectedId(null)
+        onPageStatusUpdate(currentPage.id, "detected")
+        alert("Баблы с текстом не найдены.")
         return
       }
 
@@ -131,7 +142,7 @@ export function usePagePipelines({
   const handleCleanPage = async () => {
     if (!currentPage) return
     if (textBlocks.length === 0) {
-      alert("Сначала запустите Auto-Detect, чтобы найти баблы.")
+      alert("Сначала добавьте или найдите баблы для очистки.")
       return
     }
 
@@ -261,13 +272,13 @@ export function usePagePipelines({
     setIsFullAuto(true)
     try {
       let currentBlocks = [...textBlocks]
-      if (currentBlocks.length === 0) {
+      if (currentBlocks.length === 0 && (currentPage.status === "raw" || currentPage.status === "new")) {
         await handleAutoDetect()
         currentBlocks = textBlocksRef.current
       }
 
       if (currentBlocks.length === 0) {
-        alert("Баблы не обнаружены.")
+        alert("Баблы на странице отсутствуют.")
         return
       }
 

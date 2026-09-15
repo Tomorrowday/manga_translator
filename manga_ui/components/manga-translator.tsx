@@ -98,13 +98,13 @@ export function MangaTranslator() {
     }
   }, [currentPage?.chapter_id, setTextBlocks, setSelectedId])
 
-  // Выбор страницы с безопасным автосохранением предыдущей
+  // Выбор страницы с безопасным автосохранением предыдущей (в том числе при 0 блоков)
   const handleSelectPage = async (page: PageItem, skipSave = false) => {
-    if (!skipSave && currentPage && textBlocksRef.current.length > 0) {
+    if (!skipSave && currentPage) {
       try {
         await saveBlocks(false)
       } catch (e) {
-        console.warn("Не удалось сохранить предыдущую страницу (возможно, была удалена):", e)
+        console.warn("Не удалось сохранить предыдущую страницу:", e)
       }
     }
 
@@ -138,32 +138,42 @@ export function MangaTranslator() {
         setTextBlocks(loaded)
         setSelectedId(loaded[0]?.id || null)
       } else {
-        const detectRes = await runPageAutoDetect(page.id)
-        if (detectRes?.boxes?.length) {
-          const fresh = []
-          for (const box of detectRes.boxes) {
-            const cropped = await cropRegion(img, { ...box, rotation: 0 })
-            fresh.push({
-              id: box.id || crypto.randomUUID(),
-              x: box.x,
-              y: box.y,
-              width: box.width,
-              height: box.height,
-              rotation: 0,
-              imageCrop: cropped.dataUrl,
-              japText: box.jap_text || "",
-              rusText: "",
-              orderIndex: box.order_index,
-              shape: "rect" as const,
-              paddingMode: "safe" as const,
-              minHyphens: true,
-              status: (box.status as any) || (box.jap_text ? "ocr-done" : "new"),
-            })
+        // Автодетект вызывается ТОЛЬКО ЕСЛИ страница полностью нетронута (raw / new).
+        // Если страница уже detected, cleaned, translated или done — повторный детект не запускается!
+        const isFreshPage = freshPage.status === "raw" || freshPage.status === "new"
+
+        if (isFreshPage) {
+          const detectRes = await runPageAutoDetect(page.id)
+          if (detectRes?.boxes?.length) {
+            const fresh = []
+            for (const box of detectRes.boxes) {
+              const cropped = await cropRegion(img, { ...box, rotation: 0 })
+              fresh.push({
+                id: box.id || crypto.randomUUID(),
+                x: box.x,
+                y: box.y,
+                width: box.width,
+                height: box.height,
+                rotation: 0,
+                imageCrop: cropped.dataUrl,
+                japText: box.jap_text || "",
+                rusText: "",
+                orderIndex: box.order_index,
+                shape: "rect" as const,
+                paddingMode: "safe" as const,
+                minHyphens: true,
+                status: (box.status as any) || (box.jap_text ? "ocr-done" : "new"),
+              })
+            }
+            setTextBlocks(fresh)
+            if (fresh[0]) setSelectedId(fresh[0].id)
+            handlePageStatusUpdate(page.id, "detected")
+          } else {
+            setTextBlocks([])
+            handlePageStatusUpdate(page.id, "detected")
           }
-          setTextBlocks(fresh)
-          if (fresh[0]) setSelectedId(fresh[0].id)
-          handlePageStatusUpdate(page.id, "detected")
         } else {
+          // Страница уже обработана, блоков нет (арт, пейзаж или удаленный мусор)
           setTextBlocks([])
         }
       }
@@ -189,7 +199,6 @@ export function MangaTranslator() {
     }
   }, [currentPageIdx])
 
-  // Горячие клавиши (с поддержкой спот-клина W / L / Shift+W / Shift+L)
   useMangaHotkeys({
     selectedId,
     textBlocks,

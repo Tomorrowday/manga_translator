@@ -83,8 +83,12 @@ export function BatchChapterActions({
     }
   }
 
+  // Сканируем только нетронутые страницы: уже размеченная или переведенная часть главы остаётся в сохранности!
   const detectAll = () =>
     runBatch("detect", async (page) => {
+      if (page.status !== "raw" && page.status !== "new") {
+        return
+      }
       const res = await runPageAutoDetect(page.id)
       if (res.success && res.boxes && res.boxes.length > 0) {
         onPageStatusUpdate?.(page.id, "detected")
@@ -200,7 +204,6 @@ export function BatchChapterActions({
     }
   }
 
-  // Кнопки выстроены в правильном хронологическом порядке: Detect -> Clean -> Translate -> Export
   const buttons: Array<{ key: BatchAction; label: string; icon: typeof Wand2; onClick: () => void; accent: string }> = [
     { key: "detect", label: "Detect & OCR All", icon: Wand2, onClick: detectAll, accent: "text-indigo-400" },
     { key: "clean", label: "Smart Clean Chapter", icon: Sparkles, onClick: cleanChapter, accent: "text-purple-400" },
@@ -246,7 +249,6 @@ export function BatchChapterActions({
 
         <div className="mx-1 h-4 w-[1px] bg-slate-800 hidden sm:block" />
 
-        {/* Экспорт диалогов в JSON */}
         <button
           onClick={handleExportScript}
           disabled={disabled || isRunning}
@@ -261,7 +263,6 @@ export function BatchChapterActions({
           Export JSON
         </button>
 
-        {/* Импорт перевода из JSON */}
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || isRunning}
