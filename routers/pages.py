@@ -6,12 +6,15 @@ import subprocess
 import shutil
 import cv2
 import time
+import base64
+import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 
 from database import get_db, db_session
 from schemas import SavePageBlocksRequest, SpotCleanRequest
-from services.cleaner import spot_clean_region
+from schemas.blocks import BrushCleanRequest
+from services.cleaner import spot_clean_region, inpaint_by_brush_mask
 from services.page_service import (
     save_page_blocks_service,
     detect_page_bubbles_service,
@@ -243,6 +246,67 @@ async def spot_clean_page(page_id: int, req: SpotCleanRequest):
         "clean_path": final_clean_path,
         "page_status": new_status,
         "method": used_method,
+        "timestamp": int(time.time() * 1000)
+    }
+
+
+@router.post("/{page_id}/clean-brush")
+async def brush_clean_page(page_id: int, req: BrushCleanRequest):
+    """
+    Точечная восстанавливающая кисть (Spot Healing Brush).
+    Принимает base64-маску штрихов кисти от фронтенда и применяет LaMa.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
+    page_row = cursor.fetchone()
+    conn.close()
+
+    if not page_row:
+        raise HTTPException(status_code=404, detail="Страница не найдена")
+
+    orig_path = str(page_row["file_path"])
+    source_path = str(page_row["clean_path"]) if page_row["clean_path"] and os.path.exists(page_row["clean_path"]) else orig_path
+
+    image = cv2.imread(source_path)
+    if image is None:
+        raise HTTPException(status_code=500, detail="Не удалось открыть изображение")
+
+    try:
+        raw_b64 = req.mask_base64
+        if "," in raw_b64:
+            raw_b64 = raw_b64.split(",", 1)[1]
+        mask_bytes = base64.b64decode(raw_b64)
+        mask_arr = np.frombuffer(mask_bytes, dtype=np.uint8)
+        mask_img = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+
+        if mask_img is None:
+            raise ValueError("Не удалось декодировать маску")
+
+        if mask_img.shape[:2] != image.shape[:2]:
+            mask_img = cv2.resize(mask_img, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Ошибка обработки маски: {e}")
+
+    # Локальный инпейнтинг LaMa
+    inpaint_by_brush_mask(image, mask_img)
+
+    clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
+    os.makedirs(clean_dir, exist_ok=True)
+    file_name = os.path.splitext(os.path.basename(orig_path))[0]
+    final_clean_path = os.path.join(clean_dir, f"{file_name}.png")
+    cv2.imwrite(final_clean_path, image)
+
+    new_status = "done" if page_row["status"] == "done" else "cleaned"
+
+    with db_session() as cur:
+        cur.execute("UPDATE pages SET clean_path = ?, status = ? WHERE id = ?", (final_clean_path, new_status, page_id))
+
+    return {
+        "success": True,
+        "clean_path": final_clean_path,
+        "page_status": new_status,
         "timestamp": int(time.time() * 1000)
     }
 

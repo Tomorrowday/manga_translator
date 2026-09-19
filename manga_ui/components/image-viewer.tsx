@@ -2,7 +2,17 @@
 
 import type React from "react"
 import { useRef, useState, useCallback, useEffect } from "react"
-import { FolderOpen, MousePointerSquareDashed, Sparkles, Image as ImageIcon } from "lucide-react"
+import {
+  FolderOpen,
+  MousePointerSquareDashed,
+  Sparkles,
+  Image as ImageIcon,
+  Paintbrush,
+  BoxSelect,
+  Loader2,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
 import { useBoxTransform, type DrawRect } from "@/hooks/use-box-transform"
@@ -20,6 +30,7 @@ interface ImageViewerProps {
   onSelect: (id: string | null) => void
   onDrawComplete: (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => void
   onUpdateBlock?: (id: string, patch: Partial<TextBlock>) => void
+  onBrushClean?: (maskBase64: string) => Promise<void>
 }
 
 function normalize(a: number, b: number) {
@@ -38,23 +49,49 @@ export function ImageViewer({
   onSelect,
   onDrawComplete,
   onUpdateBlock,
+  onBrushClean,
 }: ImageViewerProps) {
   const imgRef = useRef<HTMLImageElement>(null)
+  const brushCanvasRef = useRef<HTMLCanvasElement>(null)
+  const cursorRef = useRef<HTMLDivElement>(null)
+
+  // Режим работы: "box" (выделение рамок) | "brush" (точечная кисть LaMa)
+  const [activeTool, setActiveTool] = useState<"box" | "brush">("box")
+  const [brushSize, setBrushSize] = useState<number>(32)
+  const [isBrushPainting, setIsBrushPainting] = useState<boolean>(false)
+  const [isBrushProcessing, setIsBrushProcessing] = useState<boolean>(false)
+
+  // Для режима рисования рамок
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState<DrawRect | null>(null)
 
-  // Переключение скана по нажатию клавиши Tab
+  // Переключение скана (Tab) и горячие клавиши кисти (Стрелки Вверх / Вниз)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
+
+      // Tab -> переключение Original/Cleaned
       if (e.key === "Tab" && hasCleanScan) {
         e.preventDefault()
         onToggleViewMode()
+        return
+      }
+
+      // Стрелки ↑ и ↓ для изменения размера кисти в режиме Brush
+      if (activeTool === "brush") {
+        if (e.code === "ArrowDown") {
+          e.preventDefault()
+          setBrushSize((prev) => Math.max(6, prev - 4))
+        } else if (e.code === "ArrowUp") {
+          e.preventDefault()
+          setBrushSize((prev) => Math.min(160, prev + 4))
+        }
       }
     }
+
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [hasCleanScan, onToggleViewMode])
+  }, [hasCleanScan, onToggleViewMode, activeTool])
 
   const pointFromEvent = useCallback((e: React.MouseEvent | MouseEvent) => {
     const img = imgRef.current
@@ -65,15 +102,163 @@ export function ImageViewer({
     return { x, y }
   }, [])
 
-  // Хук трансформаций (ресайз, поворот, перемещение)
+  // Хук трансформаций рамок
   const { isEditing, editId, editType, activeBox, activeRotation, startTransform } = useBoxTransform(
     imgRef,
     pointFromEvent,
     (rect, img, id, rot) => onDrawComplete(rect, img, id, rot)
   )
 
-  // Рисование новой рамки
+  // Синхронизация размера Canvas кисти с отображаемым изображением
+  const syncBrushCanvasSize = useCallback(() => {
+    const canvas = brushCanvasRef.current
+    const img = imgRef.current
+    if (!canvas || !img) return
+    if (canvas.width !== img.clientWidth || canvas.height !== img.clientHeight) {
+      canvas.width = img.clientWidth
+      canvas.height = img.clientHeight
+    }
+  }, [])
+
+  useEffect(() => {
+    syncBrushCanvasSize()
+    window.addEventListener("resize", syncBrushCanvasSize)
+    return () => window.removeEventListener("resize", syncBrushCanvasSize)
+  }, [syncBrushCanvasSize, imageSrc])
+
+  // --- ЛОГИКА РАБОТЫ КИСТИ (SPOT HEALING BRUSH) ---
+  const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = brushCanvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    }
+  }
+
+  const handleBrushMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isBrushProcessing || !onBrushClean) return
+    syncBrushCanvasSize()
+    const canvas = brushCanvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    setIsBrushPainting(true)
+    const { x, y } = getCanvasCoords(e)
+
+    // Обновляем позицию прицела
+    if (cursorRef.current) {
+      cursorRef.current.style.display = "block"
+      cursorRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
+    }
+
+    ctx.strokeStyle = "rgba(236, 72, 153, 0.65)"
+    ctx.fillStyle = "rgba(236, 72, 153, 0.65)"
+    ctx.lineWidth = brushSize
+    ctx.lineCap = "round"
+    ctx.lineJoin = "round"
+
+    ctx.beginPath()
+    ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+  }
+
+  const handleBrushMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { x, y } = getCanvasCoords(e)
+
+    // Прицел перемещается всегда плавно и без задержки (и при наведении, и при рисовании)
+    if (cursorRef.current) {
+      cursorRef.current.style.display = "block"
+      cursorRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
+    }
+
+    if (isBrushPainting) {
+      const canvas = brushCanvasRef.current
+      if (!canvas) return
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return
+
+      ctx.lineTo(x, y)
+      ctx.stroke()
+    }
+  }
+
+  const handleBrushMouseLeave = () => {
+    if (cursorRef.current) {
+      cursorRef.current.style.display = "none"
+    }
+    if (isBrushPainting) {
+      handleBrushMouseUp()
+    }
+  }
+
+  const handleBrushMouseUp = async () => {
+    if (!isBrushPainting) return
+    setIsBrushPainting(false)
+
+    const screenCanvas = brushCanvasRef.current
+    const img = imgRef.current
+    if (!screenCanvas || !img || !onBrushClean) return
+
+    setIsBrushProcessing(true)
+
+    try {
+      const offscreen = document.createElement("canvas")
+      offscreen.width = img.naturalWidth
+      offscreen.height = img.naturalHeight
+      const oCtx = offscreen.getContext("2d")
+
+      if (oCtx) {
+        oCtx.fillStyle = "#000000"
+        oCtx.fillRect(0, 0, offscreen.width, offscreen.height)
+
+        const scaleX = img.naturalWidth / screenCanvas.width
+        const scaleY = img.naturalHeight / screenCanvas.height
+
+        oCtx.save()
+        oCtx.scale(scaleX, scaleY)
+        oCtx.globalCompositeOperation = "source-over"
+        oCtx.drawImage(screenCanvas, 0, 0)
+        oCtx.restore()
+
+        const imgData = oCtx.getImageData(0, 0, offscreen.width, offscreen.height)
+        const d = imgData.data
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i] > 20 || d[i + 1] > 20 || d[i + 2] > 20) {
+            d[i] = 255
+            d[i + 1] = 255
+            d[i + 2] = 255
+          } else {
+            d[i] = 0
+            d[i + 1] = 0
+            d[i + 2] = 0
+          }
+          d[i + 3] = 255
+        }
+        oCtx.putImageData(imgData, 0, 0)
+
+        const maskBase64 = offscreen.toDataURL("image/png")
+
+        const sCtx = screenCanvas.getContext("2d")
+        sCtx?.clearRect(0, 0, screenCanvas.width, screenCanvas.height)
+
+        await onBrushClean(maskBase64)
+      }
+    } catch (err) {
+      console.error("Ошибка применения восстанавливающей кисти:", err)
+    } finally {
+      setIsBrushProcessing(false)
+    }
+  }
+
+  // --- ЛОГИКА РИСОВАНИЯ РАМОК БАБЛОВ (BOX TOOL) ---
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (activeTool === "brush") return
     if (!imageSrc || isEditing) return
     const p = pointFromEvent(e)
     if (!p) return
@@ -83,7 +268,7 @@ export function ImageViewer({
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!origin) return
+    if (activeTool === "brush" || !origin) return
     const p = pointFromEvent(e)
     if (!p) return
     const hx = normalize(origin.x, p.x)
@@ -92,6 +277,7 @@ export function ImageViewer({
   }
 
   const finishDraw = () => {
+    if (activeTool === "brush") return
     if (draft && imgRef.current && draft.width > 0.01 && draft.height > 0.01) {
       onDrawComplete(draft, imgRef.current, undefined, 0)
     }
@@ -103,16 +289,77 @@ export function ImageViewer({
 
   return (
     <section className="flex min-h-0 w-full flex-col lg:w-3/5">
-      <header className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-100">
-            {pageNumber !== undefined ? `Page ${pageNumber}` : "Page Viewer"}
-          </h2>
-          <p className="text-xs text-slate-500">
-            {imageSrc ? "Click & drag over speech bubbles" : "Select a page from explorer"}
-          </p>
+      <header className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">
+              {pageNumber !== undefined ? `Page ${pageNumber}` : "Page Viewer"}
+            </h2>
+            <p className="text-xs text-slate-500">
+              {activeTool === "brush"
+                ? "Закрасьте дефект кистью для AI-удаления (LaMa)"
+                : imageSrc
+                  ? "Выделяйте баблы рамкой"
+                  : "Выберите страницу"}
+            </p>
+          </div>
+
+          {/* ПЕРЕКЛЮЧАТЕЛЬ ИНСТРУМЕНТОВ: BOX / BRUSH */}
+          {imageSrc && (
+            <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950 p-1 ml-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTool("box")
+                  if (cursorRef.current) cursorRef.current.style.display = "none"
+                }}
+                className={[
+                  "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-all",
+                  activeTool === "box"
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200",
+                ].join(" ")}
+                title="Инструмент «Рамка бабла»"
+              >
+                <BoxSelect className="h-3.5 w-3.5" />
+                Box
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTool("brush")}
+                className={[
+                  "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-all",
+                  activeTool === "brush"
+                    ? "bg-pink-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200",
+                ].join(" ")}
+                title="Точечная восстанавливающая кисть (LaMa Inpaint)"
+              >
+                <Paintbrush className="h-3.5 w-3.5" />
+                Healing Brush
+              </button>
+            </div>
+          )}
+
+          {/* НАСТРОЙКА РАЗМЕРА КИСТИ */}
+          {activeTool === "brush" && imageSrc && (
+            <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs">
+              <span className="text-[11px] font-medium text-slate-400">Размер (↑/↓):</span>
+              <input
+                type="range"
+                min="6"
+                max="140"
+                value={brushSize}
+                onChange={(e) => setBrushSize(Number(e.target.value))}
+                className="h-1.5 w-20 cursor-pointer accent-pink-500"
+              />
+              <span className="w-6 text-[11px] font-mono text-pink-300">{brushSize}px</span>
+            </div>
+          )}
         </div>
 
+        {/* ПЕРЕКЛЮЧАТЕЛЬ СКАНОК: ORIGINAL / CLEANED */}
         {imageSrc && (
           <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
             <button
@@ -135,7 +382,7 @@ export function ImageViewer({
                 "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-all disabled:opacity-40",
                 viewMode === "clean" ? "bg-purple-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200",
               ].join(" ")}
-              title={hasCleanScan ? "Показать заклиненный скан (Хоткей: Tab)" : "Сначала нажмите Clean для очистки"}
+              title={hasCleanScan ? "Показать заклиненный скан (Хоткей: Tab)" : "Сначала выполните клин"}
             >
               <Sparkles className="h-3.5 w-3.5 text-purple-300" />
               Cleaned
@@ -160,7 +407,6 @@ export function ImageViewer({
             onMouseMove={handleMouseMove}
             onMouseUp={finishDraw}
             onMouseLeave={finishDraw}
-            style={{ cursor: "crosshair" }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -171,23 +417,65 @@ export function ImageViewer({
               draggable={false}
               className="block w-full rounded-lg border border-slate-800"
             />
-            {boxes.map((box, index) => (
-              <BubbleOverlayItem
-                key={box.id}
-                box={box}
-                index={index}
-                isSelected={box.id === selectedId}
-                showTypeset={showTypeset}
-                imgElement={imgRef.current}
-                isEditingCurrent={isEditing && editId === box.id}
-                editType={editType}
-                activeBox={activeBox}
-                activeRotation={activeRotation}
-                onStartTransform={startTransform}
-                onSelect={onSelect}
-                onUpdate={onUpdateBlock}
-              />
-            ))}
+
+            {/* ХОЛСТ ВОССТАНАВЛИВАЮЩЕЙ КИСТИ (SPOT HEALING BRUSH) */}
+            <canvas
+              ref={brushCanvasRef}
+              onMouseDown={handleBrushMouseDown}
+              onMouseMove={handleBrushMouseMove}
+              onMouseUp={handleBrushMouseUp}
+              onMouseLeave={handleBrushMouseLeave}
+              className={[
+                "absolute inset-0 z-30 touch-none",
+                activeTool === "brush" ? "pointer-events-auto cursor-none" : "pointer-events-none hidden",
+              ].join(" ")}
+            />
+
+            {/* ВЫСОКОКОНТРАСТНЫЙ КУРСОР КИСТИ (ВИДЕН ВСЕГДА, 0ms LAG) */}
+            {activeTool === "brush" && (
+              <div
+                ref={cursorRef}
+                className="pointer-events-none absolute left-0 top-0 z-50 rounded-full border border-white shadow-[0_0_0_1.5px_rgba(0,0,0,0.85)] will-change-transform"
+                style={{
+                  width: brushSize,
+                  height: brushSize,
+                  display: "none",
+                }}
+              >
+                {/* Центрированная точка-прицел с черной обводкой для 100% читаемости на белом и черном */}
+                <div className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.9)]" />
+              </div>
+            )}
+
+            {/* ИНДИКАТОР ОБРАБОТКИ КИСТИ */}
+            {isBrushProcessing && (
+              <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[1px] rounded-lg">
+                <div className="flex items-center gap-2 rounded-lg border border-pink-500/50 bg-slate-950/90 px-3 py-2 text-xs font-medium text-pink-300 shadow-2xl">
+                  <Loader2 className="h-4 w-4 animate-spin text-pink-400" />
+                  LaMa Inpainting...
+                </div>
+              </div>
+            )}
+
+            {/* БАБЛЫ (визуализируются только в режиме Box) */}
+            {activeTool === "box" &&
+              boxes.map((box, index) => (
+                <BubbleOverlayItem
+                  key={box.id}
+                  box={box}
+                  index={index}
+                  isSelected={box.id === selectedId}
+                  showTypeset={showTypeset}
+                  imgElement={imgRef.current}
+                  isEditingCurrent={isEditing && editId === box.id}
+                  editType={editType}
+                  activeBox={activeBox}
+                  activeRotation={activeRotation}
+                  onStartTransform={startTransform}
+                  onSelect={onSelect}
+                  onUpdate={onUpdateBlock}
+                />
+              ))}
           </div>
         )}
       </div>
@@ -196,43 +484,68 @@ export function ImageViewer({
         <footer className="flex items-center justify-between border-t border-slate-800 px-5 py-2 text-xs text-slate-400 bg-slate-950/60">
           <div className="flex items-center gap-2">
             <MousePointerSquareDashed className="h-3.5 w-3.5 text-slate-500" />
-            <span>Resize from 8 points. Double click bubble to edit text inline.</span>
+            {activeTool === "brush" ? (
+              <span className="text-pink-300 font-medium">
+                Кисть LaMa: закрасьте дефект и отпустите мышь.
+              </span>
+            ) : (
+              <span>Resize from 8 points. Double click bubble to edit text inline.</span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-            <span>Spot:</span>
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-slate-200 border border-slate-700">
-              {BUBBLE_HOTKEYS.spotWhite.label}
-            </kbd> White
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-purple-300 border border-slate-700">
-              {BUBBLE_HOTKEYS.spotLama.label}
-            </kbd> LaMa
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-rose-300 border border-slate-700">
-              {BUBBLE_HOTKEYS.spotLamaDel.label}
-            </kbd> Del
+            {activeTool === "brush" ? (
+              <>
+                <span className="text-slate-400">Размер кисти:</span>
+                <kbd className="inline-flex items-center gap-0.5 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-pink-300 border border-slate-700">
+                  <ArrowUp className="h-2.5 w-2.5" />
+                </kbd>
+                больше
+                <kbd className="inline-flex items-center gap-0.5 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-pink-300 border border-slate-700">
+                  <ArrowDown className="h-2.5 w-2.5" />
+                </kbd>
+                меньше
+              </>
+            ) : (
+              <>
+                <span>Spot:</span>
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-slate-200 border border-slate-700">
+                  {BUBBLE_HOTKEYS.spotWhite.label}
+                </kbd>{" "}
+                White
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-purple-300 border border-slate-700">
+                  {BUBBLE_HOTKEYS.spotLama.label}
+                </kbd>{" "}
+                LaMa
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-rose-300 border border-slate-700">
+                  {BUBBLE_HOTKEYS.spotLamaDel.label}
+                </kbd>{" "}
+                Del
+                <span className="mx-1 text-slate-700">|</span>
+                <span>Бабл:</span>
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-indigo-300 border border-slate-700">
+                  {BUBBLE_HOTKEYS.toggleShape.label}
+                </kbd>{" "}
+                Oval
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-teal-300 border border-slate-700">
+                  {BUBBLE_HOTKEYS.toggleHyphenation.label}
+                </kbd>{" "}
+                No-Hyph
+                <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-sky-300 border border-slate-700">
+                  - / +
+                </kbd>{" "}
+                Font
+                <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-violet-300 border border-slate-700">
+                  [ / ]
+                </kbd>{" "}
+                Order
+              </>
+            )}
             <span className="mx-1 text-slate-700">|</span>
-            <span>Бабл:</span>
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-indigo-300 border border-slate-700">
-              {BUBBLE_HOTKEYS.toggleShape.label}
-            </kbd> Oval
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-teal-300 border border-slate-700">
-              {BUBBLE_HOTKEYS.toggleHyphenation.label}
-            </kbd> No-Hyph
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-amber-300 border border-slate-700">
-              {BUBBLE_HOTKEYS.toggleStroke.label}
-            </kbd> Stroke
-            <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-emerald-300 border border-slate-700">
-              {BUBBLE_HOTKEYS.togglePadding.label}
-            </kbd> Fit
-            <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-sky-300 border border-slate-700">
-              - / +
-            </kbd> Font
-            <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-violet-300 border border-slate-700">
-              [ / ]
-            </kbd> Order
             <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300 border border-slate-700">
               Tab
-            </kbd> Scan
+            </kbd>{" "}
+            Scan
           </div>
         </footer>
       )}

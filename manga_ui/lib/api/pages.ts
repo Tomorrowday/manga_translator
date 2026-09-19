@@ -136,3 +136,14 @@ export async function openTranslatedFolder(pageId: number) {
   })
   return await handleApiResponse<any>(res, "Не удалось открыть папку")
 }
+
+export async function runBrushClean(pageId: number, maskBase64: string) {
+  const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}/clean-brush`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mask_base64: maskBase64,
+    }),
+  })
+  return await handleApiResponse<any>(res, "Ошибка кисти восстановления")
+}

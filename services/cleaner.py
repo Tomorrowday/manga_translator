@@ -1,5 +1,5 @@
 # services/cleaner.py
-# Интеллектуальный клин баблов (белый клин + LaMa) с поддержкой угла поворота и формы
+# Интеллектуальный клин баблов (белый клин + LaMa) с поддержкой угла поворота, формы и бесшовного смешивания
 
 import math
 from typing import Tuple
@@ -81,6 +81,7 @@ def inpaint_patch_with_lama(patch_bgr: np.ndarray, mask: np.ndarray) -> np.ndarr
     if ml.inpaint_model is None:
         return patch_bgr
 
+    # Дилатация маски для чистого покрытия краев букв
     dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     dilated_mask = cv2.dilate(mask, dilate_kernel, iterations=1)
 
@@ -93,10 +94,35 @@ def inpaint_patch_with_lama(patch_bgr: np.ndarray, mask: np.ndarray) -> np.ndarr
 
     h, w = patch_bgr.shape[:2]
     if inpainted_bgr.shape[:2] != (h, w):
-        inpainted_bgr = cv2.resize(inpainted_bgr, (w, h))
+        inpainted_bgr = cv2.resize(inpainted_bgr, (w, h), interpolation=cv2.INTER_LANCZOS4)
 
     inpainted_gray = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2GRAY)
     return cv2.cvtColor(inpainted_gray, cv2.COLOR_GRAY2BGR)
+
+
+def blend_inpainted_patch(
+    target_img: np.ndarray,
+    inpainted_patch: np.ndarray,
+    clean_mask: np.ndarray,
+    x1: int, y1: int, x2: int, y2: int
+):
+    """
+    Бесшовное альфа-смешивание (Feathering):
+    Заменяет ТОЛЬКО пиксели маски с мягким гауссовым переходом (3px).
+    Оригинальные пиксели вокруг бабла остаются нетронутыми на 100%,
+    что полностью исключает эффект «съезда линий» и ступени.
+    """
+    roi_orig = target_img[y1:y2, x1:x2].astype(np.float32)
+    roi_inp = inpainted_patch.astype(np.float32)
+
+    # Дилатация и мягкое размытие альфа-маски для бесшовности
+    k_size = (5, 5)
+    dilated = cv2.dilate(clean_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, k_size), iterations=1)
+    feathered = cv2.GaussianBlur(dilated.astype(np.float32) / 255.0, (5, 5), 1.2)
+    alpha = np.expand_dims(feathered, axis=2)
+
+    blended = roi_orig * (1.0 - alpha) + roi_inp * alpha
+    target_img[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
 
 
 def get_box_geometry(image_np: np.ndarray, box: dict) -> Tuple[float, float, int, int, float, str]:
@@ -113,12 +139,13 @@ def get_box_geometry(image_np: np.ndarray, box: dict) -> Tuple[float, float, int
 
 def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
     """
-    Единая точка входа для автоматической очистки бабла с поддержкой поворота.
+    Единая точка входа для автоматической очистки бабла с поддержкой поворота
+    и гарантией отсутствия геометрических искажений фона.
     """
     cx, cy, bw, bh, rot, shape = get_box_geometry(image_np, box)
     img_h, img_w = image_np.shape[:2]
 
-    # Если угол нулевой — используем быстрый путь без аффинных трансформаций
+    # Если угол нулевой — быстрый и точный путь
     if abs(rot) < 0.5:
         x1 = max(0, int(cx - bw / 2.0))
         y1 = max(0, int(cy - bh / 2.0))
@@ -131,12 +158,13 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
+        # 1. Белые баблы чистим векторно — это дает 100% идеальный белый цвет без мыла
         if is_mostly_white_bubble(roi, gray):
             clean_white_bubble_patch(roi, gray, shape=shape)
             image_np[y1:y2, x1:x2] = roi
             return "white"
 
-        # LaMa Inpaint
+        # 2. Если требуется LaMa (скринтоны, арт, темный фон)
         if ml.inpaint_model is None:
             clean_white_bubble_patch(roi, gray, shape=shape)
             image_np[y1:y2, x1:x2] = roi
@@ -149,42 +177,37 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         if np.sum(text_clean_mask) < 20:
             text_clean_mask[margin:-margin, margin:-margin] = 255
 
-        pad = max(40, min(80, int(max(bw, bh) * 0.4)))
+        # Щедрый контекстный отступ (от 48 до 140px), чтобы нейросеть понимала текстуру вокруг
+        pad = max(48, min(140, int(max(bw, bh) * 0.45)))
         cx1 = max(0, x1 - pad)
         cy1 = max(0, y1 - pad)
         cx2 = min(img_w, x2 + pad)
         cy2 = min(img_h, y2 + pad)
 
-        crop_bgr = image_np[cy1:cy2, cx1:cx2]
+        crop_bgr = image_np[cy1:cy2, cx1:cx2].copy()
         crop_mask = np.zeros(crop_bgr.shape[:2], dtype=np.uint8)
         crop_mask[y1 - cy1:y1 - cy1 + roi.shape[0], x1 - cx1:x1 - cx1 + roi.shape[1]] = text_clean_mask
 
         inpainted = inpaint_patch_with_lama(crop_bgr, crop_mask)
-        image_np[cy1:cy2, cx1:cx2] = inpainted
+
+        # Бесшовное вклеивание ТОЛЬКО под маску (фон не трогаем!)
+        blend_inpainted_patch(image_np, inpainted, crop_mask, cx1, cy1, cx2, cy2)
         return "inpaint"
 
     # =========================================================================
-    # ПОВЕРНУТЫЙ БЛОК (abs(rot) >= 0.5):
-    # Выравниваем в горизонталь, чистим, затем возвращаем обратно на угол rot
+    # ПОВЕРНУТЫЙ БЛОК (abs(rot) >= 0.5)
     # =========================================================================
     rad = math.radians(rot)
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
 
-    # 3 опорные точки повернутого прямоугольника на исходном изображении
     src_pts = np.float32([
-        [cx - (bw / 2.0) * cos_a - (-bh / 2.0) * sin_a, cy + (-bw / 2.0) * sin_a + (-bh / 2.0) * cos_a],  # TL
-        [cx + (bw / 2.0) * cos_a - (-bh / 2.0) * sin_a, cy + (bw / 2.0) * sin_a + (-bh / 2.0) * cos_a],   # TR
-        [cx - (bw / 2.0) * cos_a - (bh / 2.0) * sin_a,  cy + (-bw / 2.0) * sin_a + (bh / 2.0) * cos_a]    # BL
+        [cx - (bw / 2.0) * cos_a - (-bh / 2.0) * sin_a, cy + (-bw / 2.0) * sin_a + (-bh / 2.0) * cos_a],
+        [cx + (bw / 2.0) * cos_a - (-bh / 2.0) * sin_a, cy + (bw / 2.0) * sin_a + (-bh / 2.0) * cos_a],
+        [cx - (bw / 2.0) * cos_a - (bh / 2.0) * sin_a,  cy + (-bw / 2.0) * sin_a + (bh / 2.0) * cos_a]
     ])
+    dst_pts = np.float32([[0, 0], [bw, 0], [0, bh]])
 
-    dst_pts = np.float32([
-        [0, 0],
-        [bw, 0],
-        [0, bh]
-    ])
-
-    # 1. Извлекаем выровненный кроп
     m_extract = cv2.getAffineTransform(src_pts, dst_pts)
     upright_patch = cv2.warpAffine(
         image_np, m_extract, (bw, bh),
@@ -198,8 +221,7 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
         cleaned_upright = upright_patch
     elif ml.inpaint_model is not None:
-        # Для арта/скринтонов очищаем через LaMa с контекстным запасом (padding)
-        pad = max(30, min(60, int(max(bw, bh) * 0.35)))
+        pad = max(40, min(80, int(max(bw, bh) * 0.40)))
         pw = bw + 2 * pad
         ph = bh + 2 * pad
 
@@ -232,14 +254,12 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
         cleaned_upright = upright_patch
 
-    # 2. Маска формы (овал или прямоугольник)
     mask_patch = np.zeros((bh, bw), dtype=np.uint8)
     if shape == "ellipse":
         cv2.ellipse(mask_patch, (bw // 2, bh // 2), (bw // 2, bh // 2), 0, 0, 360, 255, -1)
     else:
         mask_patch.fill(255)
 
-    # 3. Обратное аффинное преобразование: возвращаем очищенный кроп на угол rot
     m_paste = cv2.getAffineTransform(dst_pts, src_pts)
     cleaned_back = cv2.warpAffine(
         cleaned_upright, m_paste, (img_w, img_h),
@@ -250,17 +270,13 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0
     )
 
-    # Впечатываем обратно строго в пределы повернутого бабла
     image_np[mask_back == 255] = cleaned_back[mask_back == 255]
     return used_method
 
 
 def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> str:
     """
-    Точечная очистка повернутой области поверх страницы:
-    - 'white': выбеливание выровненного бабла с защитой контура.
-    - 'lama': принудительная ретушь нейросетью LaMa.
-    - 'auto': автоматический выбор режима.
+    Точечная очистка области поверх страницы (кнопки White / LaMa в карточке бабла).
     """
     if method == "auto":
         return clean_speech_bubble(image_np, box)
@@ -268,7 +284,6 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
     cx, cy, bw, bh, rot, shape = get_box_geometry(image_np, box)
     img_h, img_w = image_np.shape[:2]
 
-    # Быстрый путь для неповёрнутых боксов
     if abs(rot) < 0.5:
         x1 = max(0, int(cx - bw / 2.0))
         y1 = max(0, int(cy - bh / 2.0))
@@ -286,22 +301,22 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
             image_np[y1:y2, x1:x2] = roi
             return "white"
 
-        # Принудительная LaMa
-        pad = max(30, min(70, int(max(bw, bh) * 0.35)))
+        # Принудительная LaMa с безопасным блендингом
+        pad = max(40, min(100, int(max(bw, bh) * 0.45)))
         cx1 = max(0, x1 - pad)
         cy1 = max(0, y1 - pad)
         cx2 = min(img_w, x2 + pad)
         cy2 = min(img_h, y2 + pad)
 
-        crop_bgr = image_np[cy1:cy2, cx1:cx2]
+        crop_bgr = image_np[cy1:cy2, cx1:cx2].copy()
         crop_mask = np.zeros(crop_bgr.shape[:2], dtype=np.uint8)
         crop_mask[y1 - cy1:y1 - cy1 + roi.shape[0], x1 - cx1:x1 - cx1 + roi.shape[1]] = 255
 
         inpainted = inpaint_patch_with_lama(crop_bgr, crop_mask)
-        image_np[cy1:cy2, cx1:cx2] = inpainted
+        blend_inpainted_patch(image_np, inpainted, crop_mask, cx1, cy1, cx2, cy2)
         return "inpaint"
 
-    # Повернутый бокс для spot clean
+    # Повернутый бокс
     rad = math.radians(rot)
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
@@ -326,7 +341,7 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
         cleaned_upright = upright_patch
         used_method = "white"
     else:
-        pad = max(30, min(60, int(max(bw, bh) * 0.35)))
+        pad = max(40, min(80, int(max(bw, bh) * 0.40)))
         pw = bw + 2 * pad
         ph = bh + 2 * pad
 
@@ -362,3 +377,36 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
 
     image_np[mask_back == 255] = cleaned_back[mask_back == 255]
     return used_method
+
+
+def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray) -> np.ndarray:
+    """
+    Быстрый локальный инпейнтинг произвольного мазка кисти с помощью LaMa.
+    - Ограничивает область вызовом boundingRect + щедрый запас контекста.
+    - Вставляет пиксели с мягким гауссовым переходом, сохраняя оригинальный рисунок на 100%.
+    """
+    if ml.inpaint_model is None:
+        image_np[mask_gray > 127] = [255, 255, 255]
+        return image_np
+
+    points = cv2.findNonZero(mask_gray)
+    if points is None:
+        return image_np
+
+    x, y, w, h = cv2.boundingRect(points)
+    img_h, img_w = image_np.shape[:2]
+
+    # Достаточный запас контекста для понимания фактуры манги
+    pad = max(50, min(140, int(max(w, h) * 0.50)))
+    x1 = max(0, x - pad)
+    y1 = max(0, y - pad)
+    x2 = min(img_w, x + w + pad)
+    y2 = min(img_h, y + h + pad)
+
+    crop_bgr = image_np[y1:y2, x1:x2].copy()
+    crop_mask = mask_gray[y1:y2, x1:x2]
+
+    inpainted_crop = inpaint_patch_with_lama(crop_bgr, crop_mask)
+    blend_inpainted_patch(image_np, inpainted_crop, crop_mask, x1, y1, x2, y2)
+
+    return image_np

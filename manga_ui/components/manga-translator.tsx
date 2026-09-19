@@ -20,7 +20,8 @@ import {
   getPageBlocks,
   runPageAutoDetect,
   openTranslatedFolder,
-} from "@/lib/api"
+  runBrushClean,
+} from "@/lib/api/pages"
 
 export function MangaTranslator() {
   const [currentPage, setCurrentPage] = useState<PageItem | null>(null)
@@ -194,6 +195,27 @@ export function MangaTranslator() {
     }
   }
 
+  // Обработчик точечной восстанавливающей кисти LaMa
+  const handleBrushClean = useCallback(
+    async (maskBase64: string) => {
+      if (!currentPage) return
+      try {
+        const res = await runBrushClean(currentPage.id, maskBase64)
+        if (res.success) {
+          handlePageStatusUpdate(currentPage.id, res.page_status || "cleaned", res.clean_path)
+          setViewMode("clean")
+          setCleanCacheBuster(Date.now())
+        } else {
+          alert("Ошибка кисти: " + (res.error || "Неизвестная ошибка"))
+        }
+      } catch (e) {
+        console.error("Ошибка применения кисти:", e)
+        alert("Ошибка кисти: " + String(e))
+      }
+    },
+    [currentPage, handlePageStatusUpdate]
+  )
+
   const currentPageIdx = chapterPages.findIndex((p) => p.id === currentPage?.id)
 
   const handlePrevPage = useCallback(async () => {
@@ -288,6 +310,7 @@ export function MangaTranslator() {
           onSelect={setSelectedId}
           onDrawComplete={addOrUpdateDrawnBlock}
           onUpdateBlock={updateBlock}
+          onBrushClean={handleBrushClean}
         />
 
         <section className="flex min-h-0 w-full flex-col border-t border-slate-800 lg:w-2/5 lg:border-l lg:border-t-0">

@@ -1,5 +1,10 @@
+# schemas/blocks.py
 from pydantic import BaseModel
 from typing import List, Optional
+
+
+class BrushCleanRequest(BaseModel):
+    mask_base64: str  # PNG-маска в data:image/png;base64,... или сырой base64
 
 
 class SpotCleanRequest(BaseModel):
