@@ -57,6 +57,7 @@ export function BubbleOverlayItem({
   const isEllipse = box.shape === "ellipse"
   const padMode = box.paddingMode || "safe"
   const isMinHyphens = box.minHyphens !== false
+  const isWhiteText = box.textColor === "white"
 
   const [isInlineEditing, setIsInlineEditing] = useState(false)
   const [localText, setLocalText] = useState(box.rusText || "")
@@ -120,8 +121,6 @@ export function BubbleOverlayItem({
       setIsInlineEditing(false)
       return
     }
-
-    // Обычный Enter создаёт перенос строки (\n)
   }
 
   const renderHandles = () => {
@@ -234,7 +233,10 @@ export function BubbleOverlayItem({
           onBlur={commitInlineEdit}
           placeholder="Текст реплики..."
           className={[
-            "h-full w-full resize-none p-1.5 text-center text-black outline-none border-2 border-indigo-500 rounded shadow-2xl bg-white/95 backdrop-blur-sm",
+            "h-full w-full resize-none p-1.5 text-center outline-none border-2 border-indigo-500 rounded shadow-2xl backdrop-blur-sm",
+            isWhiteText
+              ? "bg-slate-900/95 text-white placeholder:text-slate-400"
+              : "bg-white/95 text-black placeholder:text-slate-500",
             box.isBold ? "font-bold" : "font-normal",
             box.isItalic ? "italic" : "not-italic",
           ].join(" ")}
@@ -259,11 +261,15 @@ export function BubbleOverlayItem({
         onMouseDown={(e) => handleMouseDown(e, "move")}
         onDoubleClick={handleDoubleClick}
         className={[
-          "group absolute flex flex-col items-center justify-center select-none cursor-move",
-          "bg-transparent text-black",
+          "group absolute flex flex-col items-center justify-center select-none cursor-move bg-transparent",
+          isWhiteText ? "text-white" : "text-black",
           box.isBold ? "font-bold" : "font-normal",
           box.isItalic ? "italic" : "not-italic",
-          box.hasStroke ? "manga-text-stroke" : "",
+          box.hasStroke
+            ? isWhiteText
+              ? "manga-text-stroke-black"
+              : "manga-text-stroke"
+            : "",
           isSelected ? "z-20" : "z-10",
           !isEllipse &&
             (isSelected

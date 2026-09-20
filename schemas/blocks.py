@@ -5,6 +5,7 @@ from typing import List, Optional
 
 class BrushCleanRequest(BaseModel):
     mask_base64: str  # PNG-маска в data:image/png;base64,... или сырой base64
+    mode: Optional[str] = "lama"  # "lama" | "white" | "black"
 
 
 class SpotCleanRequest(BaseModel):
@@ -34,6 +35,7 @@ class TextBlockItem(BaseModel):
     is_italic: Optional[bool] = False
     is_uppercase: Optional[bool] = False
     has_stroke: Optional[bool] = False
+    text_color: Optional[str] = "black"  # "black" | "white"
     shape: Optional[str] = "rect"
     padding_mode: Optional[str] = "safe"
     min_hyphens: Optional[bool] = True

@@ -1,5 +1,5 @@
 // lib/typeset/baker.ts
-// Рендеринг и запекание тайпсета на Canvas с поддержкой поворота
+// Рендеринг и запекание тайпсета на Canvas с поддержкой поворота, цвета текста и контрастной обводки
 
 import type { TextBlock } from "../types"
 import { layoutBubbleTextLines } from "./layout"
@@ -106,6 +106,7 @@ export async function bakePageBlob(img: HTMLImageElement, blocks: TextBlock[]): 
     const bh = box.height * canvas.height
     const rot = box.rotation || 0
     const minHyphens = box.minHyphens !== undefined ? box.minHyphens : true
+    const isWhiteText = box.textColor === "white"
 
     const baseSize = box.fontSize || Math.max(11, Math.min(16, Math.round(11 + box.height * 24)))
     const currentFontSize = Math.round(baseSize * (canvas.height / 1200))
@@ -147,13 +148,14 @@ export async function bakePageBlob(img: HTMLImageElement, blocks: TextBlock[]): 
       const ly = startY + idx * lineHeight
 
       if (box.hasStroke) {
-        ctx.strokeStyle = "#FFFFFF"
+        // Если текст белый — обводка чёрная, если текст чёрный — обводка белая
+        ctx.strokeStyle = isWhiteText ? "#000000" : "#FFFFFF"
         ctx.lineWidth = Math.max(3, actualFontSize * 0.18)
         ctx.lineJoin = "round"
         ctx.strokeText(line, centerX, ly)
       }
 
-      ctx.fillStyle = "#000000"
+      ctx.fillStyle = isWhiteText ? "#FFFFFF" : "#000000"
       ctx.fillText(line, centerX, ly)
     })
 

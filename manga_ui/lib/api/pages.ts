@@ -70,6 +70,7 @@ export async function savePageBlocks(
     is_italic?: boolean
     is_uppercase?: boolean
     has_stroke?: boolean
+    text_color?: string
     shape?: string
     padding_mode?: string
     min_hyphens?: boolean
@@ -137,12 +138,17 @@ export async function openTranslatedFolder(pageId: number) {
   return await handleApiResponse<any>(res, "Не удалось открыть папку")
 }
 
-export async function runBrushClean(pageId: number, maskBase64: string) {
+export async function runBrushClean(
+  pageId: number,
+  maskBase64: string,
+  mode: "lama" | "white" | "black" = "lama"
+) {
   const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}/clean-brush`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       mask_base64: maskBase64,
+      mode,
     }),
   })
   return await handleApiResponse<any>(res, "Ошибка кисти восстановления")

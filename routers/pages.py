@@ -131,7 +131,7 @@ async def get_page_blocks(page_id: int):
     cursor.execute(
         """
         SELECT id, page_id, x, y, width, height, rotation, jap_text, rus_text, speaker, order_index,
-               font_size, font_family, is_bold, is_italic, is_uppercase, has_stroke,
+               font_size, font_family, is_bold, is_italic, is_uppercase, has_stroke, text_color,
                shape, padding_mode, min_hyphens, status 
         FROM text_blocks 
         WHERE page_id = ?
@@ -253,8 +253,11 @@ async def spot_clean_page(page_id: int, req: SpotCleanRequest):
 @router.post("/{page_id}/clean-brush")
 async def brush_clean_page(page_id: int, req: BrushCleanRequest):
     """
-    Точечная восстанавливающая кисть (Spot Healing Brush).
-    Принимает base64-маску штрихов кисти от фронтенда и применяет LaMa.
+    Восстанавливающая/заливочная кисть.
+    Поддерживает режимы:
+    - 'lama': нейросетевая ретушь LaMa
+    - 'white': заливка белым цветом
+    - 'black': заливка чёрным цветом
     """
     conn = get_db()
     cursor = conn.cursor()
@@ -289,8 +292,8 @@ async def brush_clean_page(page_id: int, req: BrushCleanRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ошибка обработки маски: {e}")
 
-    # Локальный инпейнтинг LaMa
-    inpaint_by_brush_mask(image, mask_img)
+    # Применяем мазок в выбранном режиме: "lama", "white" или "black"
+    inpaint_by_brush_mask(image, mask_img, mode=req.mode or "lama")
 
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
     os.makedirs(clean_dir, exist_ok=True)

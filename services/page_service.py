@@ -38,6 +38,7 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
             shape_val = b.shape if b.shape in ["rect", "ellipse"] else "rect"
             pad_mode = b.padding_mode if b.padding_mode in ["safe", "fit"] else "safe"
             min_hyphens_val = 1 if b.min_hyphens is None or b.min_hyphens else 0
+            text_color_val = "white" if b.text_color == "white" else "black"
 
             clamped_x = max(0.0, min(0.995, float(b.x)))
             clamped_y = max(0.0, min(0.995, float(b.y)))
@@ -52,16 +53,16 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
                 INSERT OR REPLACE INTO text_blocks (
                     id, page_id, x, y, width, height, rotation, jap_text, rus_text, speaker, order_index,
                     font_size, font_family, is_bold, is_italic, is_uppercase, has_stroke,
-                    shape, padding_mode, min_hyphens, status
+                    text_color, shape, padding_mode, min_hyphens, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     b.id, page_id, clamped_x, clamped_y, clamped_w, clamped_h, round(normalized_rot, 2),
                     b.jap_text, b.rus_text, b.speaker,
                     current_order, b.font_size, b.font_family, int(b.is_bold or False),
                     int(b.is_italic or False), int(b.is_uppercase or False),
-                    int(b.has_stroke or False), shape_val, pad_mode, min_hyphens_val, b.status
+                    int(b.has_stroke or False), text_color_val, shape_val, pad_mode, min_hyphens_val, b.status
                 )
             )
 
@@ -78,8 +79,6 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
         elif blocks:
             page_status = "detected"
         elif current_status in ["detected", "cleaned", "translated"]:
-            # Если блоков 0, но страница уже была обработана (например, пустой пейзаж или удален мусор),
-            # сохраняем статус 'detected', чтобы не откатывать в 'raw'
             page_status = "detected"
         else:
             page_status = "raw"
@@ -106,7 +105,6 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
     start_time = time.time()
     image = Image.open(file_path).convert("RGB")
 
-    # Детектируем баблы (уже отсортированы ансамблем с голосованием)
     raw_boxes = detect_and_filter_bubbles(image)
     boxes: List[Dict[str, Any]] = [dict(b) for b in raw_boxes]
 
@@ -118,6 +116,7 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
             b["shape"] = "rect"
             b["padding_mode"] = "safe"
             b["min_hyphens"] = True
+            b["text_color"] = "black"
             b["rotation"] = 0.0
 
             jap_text = ocr_image_region(
@@ -134,9 +133,9 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
             cur.execute(
                 """
                 INSERT OR REPLACE INTO text_blocks (
-                    id, page_id, x, y, width, height, rotation, jap_text, order_index, shape, padding_mode, min_hyphens, status
+                    id, page_id, x, y, width, height, rotation, jap_text, order_index, text_color, shape, padding_mode, min_hyphens, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, 'rect', 'safe', 1, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, 'black', 'rect', 'safe', 1, ?)
                 """,
                 (block_id, page_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"], b["status"])
             )

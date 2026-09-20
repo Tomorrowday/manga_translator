@@ -30,7 +30,7 @@ interface ImageViewerProps {
   onSelect: (id: string | null) => void
   onDrawComplete: (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => void
   onUpdateBlock?: (id: string, patch: Partial<TextBlock>) => void
-  onBrushClean?: (maskBase64: string) => Promise<void>
+  onBrushClean?: (maskBase64: string, mode: "lama" | "white" | "black") => Promise<void>
 }
 
 function normalize(a: number, b: number) {
@@ -55,8 +55,10 @@ export function ImageViewer({
   const brushCanvasRef = useRef<HTMLCanvasElement>(null)
   const cursorRef = useRef<HTMLDivElement>(null)
 
-  // Режим работы: "box" (выделение рамок) | "brush" (точечная кисть LaMa)
+  // Режим работы: "box" (выделение рамок) | "brush" (кисть ретуши и рисования)
   const [activeTool, setActiveTool] = useState<"box" | "brush">("box")
+  // Режим самой кисти: "lama" (AI ретушь) | "white" (белая заливка) | "black" (чёрная заливка)
+  const [brushMode, setBrushMode] = useState<"lama" | "white" | "black">("lama")
   const [brushSize, setBrushSize] = useState<number>(32)
   const [isBrushPainting, setIsBrushPainting] = useState<boolean>(false)
   const [isBrushProcessing, setIsBrushProcessing] = useState<boolean>(false)
@@ -126,7 +128,14 @@ export function ImageViewer({
     return () => window.removeEventListener("resize", syncBrushCanvasSize)
   }, [syncBrushCanvasSize, imageSrc])
 
-  // --- ЛОГИКА РАБОТЫ КИСТИ (SPOT HEALING BRUSH) ---
+  // Цвета для отрисовки штрихов кисти на экране
+  const getBrushStrokeStyle = () => {
+    if (brushMode === "white") return "rgba(255, 255, 255, 0.95)"
+    if (brushMode === "black") return "rgba(0, 0, 0, 0.95)"
+    return "rgba(236, 72, 153, 0.65)" // lama
+  }
+
+  // --- ЛОГИКА РАБОТЫ КИСТИ ---
   const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = brushCanvasRef.current
     if (!canvas) return { x: 0, y: 0 }
@@ -148,14 +157,14 @@ export function ImageViewer({
     setIsBrushPainting(true)
     const { x, y } = getCanvasCoords(e)
 
-    // Обновляем позицию прицела
     if (cursorRef.current) {
       cursorRef.current.style.display = "block"
       cursorRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
     }
 
-    ctx.strokeStyle = "rgba(236, 72, 153, 0.65)"
-    ctx.fillStyle = "rgba(236, 72, 153, 0.65)"
+    const color = getBrushStrokeStyle()
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
     ctx.lineWidth = brushSize
     ctx.lineCap = "round"
     ctx.lineJoin = "round"
@@ -171,7 +180,6 @@ export function ImageViewer({
   const handleBrushMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = getCanvasCoords(e)
 
-    // Прицел перемещается всегда плавно и без задержки (и при наведении, и при рисовании)
     if (cursorRef.current) {
       cursorRef.current.style.display = "block"
       cursorRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
@@ -214,31 +222,35 @@ export function ImageViewer({
       const oCtx = offscreen.getContext("2d")
 
       if (oCtx) {
-        oCtx.fillStyle = "#000000"
-        oCtx.fillRect(0, 0, offscreen.width, offscreen.height)
+        // Очищаем оффскрин в прозрачный цвет
+        oCtx.clearRect(0, 0, offscreen.width, offscreen.height)
 
         const scaleX = img.naturalWidth / screenCanvas.width
         const scaleY = img.naturalHeight / screenCanvas.height
 
         oCtx.save()
         oCtx.scale(scaleX, scaleY)
-        oCtx.globalCompositeOperation = "source-over"
         oCtx.drawImage(screenCanvas, 0, 0)
         oCtx.restore()
 
         const imgData = oCtx.getImageData(0, 0, offscreen.width, offscreen.height)
         const d = imgData.data
+
+        // Формируем бинарную маску по АЛЬФА-КАНАЛУ (прозрачности штриха)!
+        // Благодаря этому чёрный (0,0,0), белый (255,255,255) и розовый LaMa
+        // одинаково надёжно превращаются в белую маску области закраски (255,255,255).
         for (let i = 0; i < d.length; i += 4) {
-          if (d[i] > 20 || d[i + 1] > 20 || d[i + 2] > 20) {
+          if (d[i + 3] > 15) {
             d[i] = 255
             d[i + 1] = 255
             d[i + 2] = 255
+            d[i + 3] = 255
           } else {
             d[i] = 0
             d[i + 1] = 0
             d[i + 2] = 0
+            d[i + 3] = 255
           }
-          d[i + 3] = 255
         }
         oCtx.putImageData(imgData, 0, 0)
 
@@ -247,10 +259,10 @@ export function ImageViewer({
         const sCtx = screenCanvas.getContext("2d")
         sCtx?.clearRect(0, 0, screenCanvas.width, screenCanvas.height)
 
-        await onBrushClean(maskBase64)
+        await onBrushClean(maskBase64, brushMode)
       }
     } catch (err) {
-      console.error("Ошибка применения восстанавливающей кисти:", err)
+      console.error("Ошибка применения кисти:", err)
     } finally {
       setIsBrushProcessing(false)
     }
@@ -297,7 +309,11 @@ export function ImageViewer({
             </h2>
             <p className="text-xs text-slate-500">
               {activeTool === "brush"
-                ? "Закрасьте дефект кистью для AI-удаления (LaMa)"
+                ? brushMode === "lama"
+                  ? "AI-ретушь: закрасьте дефект для удаления (LaMa)"
+                  : brushMode === "white"
+                    ? "Заливка: закрасьте область чистым белым цветом"
+                    : "Заливка: закрасьте область чистым чёрным цветом"
                 : imageSrc
                   ? "Выделяйте баблы рамкой"
                   : "Выберите страницу"}
@@ -334,10 +350,57 @@ export function ImageViewer({
                     ? "bg-pink-600 text-white shadow-sm"
                     : "text-slate-400 hover:text-slate-200",
                 ].join(" ")}
-                title="Точечная восстанавливающая кисть (LaMa Inpaint)"
+                title="Кисть (LaMa, Белый или Чёрный)"
               >
                 <Paintbrush className="h-3.5 w-3.5" />
-                Healing Brush
+                Brush
+              </button>
+            </div>
+          )}
+
+          {/* РЕЖИМЫ КИСТИ: LAMA / WHITE / BLACK */}
+          {activeTool === "brush" && imageSrc && (
+            <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
+              <button
+                type="button"
+                onClick={() => setBrushMode("lama")}
+                className={[
+                  "px-2 py-1 rounded text-xs font-medium transition-colors",
+                  brushMode === "lama"
+                    ? "bg-pink-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200",
+                ].join(" ")}
+                title="Удаление нейросетью LaMa"
+              >
+                LaMa
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBrushMode("white")}
+                className={[
+                  "px-2 py-1 rounded text-xs font-semibold transition-colors",
+                  brushMode === "white"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-300 hover:text-white",
+                ].join(" ")}
+                title="Покрасить белым цветом"
+              >
+                White
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBrushMode("black")}
+                className={[
+                  "px-2 py-1 rounded text-xs font-semibold transition-colors border",
+                  brushMode === "black"
+                    ? "bg-slate-900 border-slate-600 text-white shadow-sm"
+                    : "border-transparent text-slate-400 hover:text-slate-200",
+                ].join(" ")}
+                title="Покрасить чёрным цветом"
+              >
+                Black
               </button>
             </div>
           )}
@@ -418,7 +481,7 @@ export function ImageViewer({
               className="block w-full rounded-lg border border-slate-800"
             />
 
-            {/* ХОЛСТ ВОССТАНАВЛИВАЮЩЕЙ КИСТИ (SPOT HEALING BRUSH) */}
+            {/* ХОЛСТ КИСТИ (LAMA / WHITE / BLACK) */}
             <canvas
               ref={brushCanvasRef}
               onMouseDown={handleBrushMouseDown}
@@ -431,7 +494,7 @@ export function ImageViewer({
               ].join(" ")}
             />
 
-            {/* ВЫСОКОКОНТРАСТНЫЙ КУРСОР КИСТИ (ВИДЕН ВСЕГДА, 0ms LAG) */}
+            {/* ВЫСОКОКОНТРАСТНЫЙ КУРСОР КИСТИ */}
             {activeTool === "brush" && (
               <div
                 ref={cursorRef}
@@ -442,7 +505,6 @@ export function ImageViewer({
                   display: "none",
                 }}
               >
-                {/* Центрированная точка-прицел с черной обводкой для 100% читаемости на белом и черном */}
                 <div className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.9)]" />
               </div>
             )}
@@ -452,12 +514,12 @@ export function ImageViewer({
               <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[1px] rounded-lg">
                 <div className="flex items-center gap-2 rounded-lg border border-pink-500/50 bg-slate-950/90 px-3 py-2 text-xs font-medium text-pink-300 shadow-2xl">
                   <Loader2 className="h-4 w-4 animate-spin text-pink-400" />
-                  LaMa Inpainting...
+                  {brushMode === "lama" ? "LaMa Inpainting..." : "Applying fill..."}
                 </div>
               </div>
             )}
 
-            {/* БАБЛЫ (визуализируются только в режиме Box) */}
+            {/* БАБЛЫ */}
             {activeTool === "box" &&
               boxes.map((box, index) => (
                 <BubbleOverlayItem
@@ -486,7 +548,7 @@ export function ImageViewer({
             <MousePointerSquareDashed className="h-3.5 w-3.5 text-slate-500" />
             {activeTool === "brush" ? (
               <span className="text-pink-300 font-medium">
-                Кисть LaMa: закрасьте дефект и отпустите мышь.
+                Режим кисти: {brushMode.toUpperCase()} | Закрасьте область и отпустите мышь.
               </span>
             ) : (
               <span>Resize from 8 points. Double click bubble to edit text inline.</span>
@@ -531,11 +593,11 @@ export function ImageViewer({
                   {BUBBLE_HOTKEYS.toggleHyphenation.label}
                 </kbd>{" "}
                 No-Hyph
-                <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-sky-300 border border-slate-700">
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-sky-300 border border-slate-700">
                   - / +
                 </kbd>{" "}
                 Font
-                <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-violet-300 border border-slate-700">
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-violet-300 border border-slate-700">
                   [ / ]
                 </kbd>{" "}
                 Order

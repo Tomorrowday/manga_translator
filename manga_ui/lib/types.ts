@@ -8,6 +8,8 @@ export type BlockShape = "rect" | "ellipse"
 
 export type PaddingMode = "safe" | "fit"
 
+export type TextColor = "black" | "white"
+
 export interface TextBlock {
   id: string
   x: number
@@ -26,6 +28,7 @@ export interface TextBlock {
   isItalic?: boolean
   isUppercase?: boolean
   hasStroke?: boolean
+  textColor?: TextColor
   fontFamily?: string
   shape?: BlockShape
   paddingMode?: PaddingMode

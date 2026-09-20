@@ -8,6 +8,7 @@ import {
   Maximize2,
   Shield,
   WrapText,
+  Palette,
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
@@ -21,6 +22,7 @@ export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProp
   const isEllipse = block.shape === "ellipse"
   const isFit = block.paddingMode === "fit"
   const isMinHyphens = block.minHyphens !== false
+  const isWhiteText = block.textColor === "white"
 
   return (
     <div
@@ -83,8 +85,28 @@ export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProp
           </button>
         </div>
 
-        {/* Форма, отступ, режим переносов и начертание */}
+        {/* Форма, отступ, режим переносов, цвет и начертание */}
         <div className="flex items-center gap-1">
+          {/* Переключатель цвета текста: Черный / Белый */}
+          <button
+            type="button"
+            onClick={() => onChange({ textColor: isWhiteText ? "black" : "white" })}
+            className={[
+              "flex items-center gap-1 px-1.5 h-6 rounded text-[10px] font-bold border transition-colors",
+              isWhiteText
+                ? "border-slate-300 bg-white text-slate-950 shadow-sm"
+                : "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800",
+            ].join(" ")}
+            title={
+              isWhiteText
+                ? "Цвет текста: Белый (обводка черная). Нажмите, чтобы сделать чёрным."
+                : "Цвет текста: Чёрный (обводка белая). Нажмите, чтобы сделать белым."
+            }
+          >
+            <Palette className="h-3 w-3" />
+            {isWhiteText ? "White" : "Black"}
+          </button>
+
           <button
             type="button"
             onClick={() => onChange({ shape: isEllipse ? "rect" : "ellipse" })}
@@ -175,7 +197,9 @@ export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProp
                 ? "border-amber-400 bg-amber-400/20 text-amber-300"
                 : "border-slate-800 bg-slate-900 text-slate-400",
             ].join(" ")}
-            title={`Белая обводка [${BUBBLE_HOTKEYS.toggleStroke.label}]`}
+            title={`Обводка текста [${BUBBLE_HOTKEYS.toggleStroke.label}]: ${
+              isWhiteText ? "Чёрная обводка" : "Белая обводка"
+            }`}
           >
             Stroke [{BUBBLE_HOTKEYS.toggleStroke.label}]
           </button>

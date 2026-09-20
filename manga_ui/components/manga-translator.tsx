@@ -170,6 +170,7 @@ export function MangaTranslator() {
                 japText: box.jap_text || "",
                 rusText: "",
                 orderIndex: box.order_index,
+                textColor: "black" as const,
                 shape: "rect" as const,
                 paddingMode: "safe" as const,
                 minHyphens: true,
@@ -195,12 +196,12 @@ export function MangaTranslator() {
     }
   }
 
-  // Обработчик точечной восстанавливающей кисти LaMa
+  // Обработчик кисти (LaMa / White / Black)
   const handleBrushClean = useCallback(
-    async (maskBase64: string) => {
+    async (maskBase64: string, mode: "lama" | "white" | "black" = "lama") => {
       if (!currentPage) return
       try {
-        const res = await runBrushClean(currentPage.id, maskBase64)
+        const res = await runBrushClean(currentPage.id, maskBase64, mode)
         if (res.success) {
           handlePageStatusUpdate(currentPage.id, res.page_status || "cleaned", res.clean_path)
           setViewMode("clean")

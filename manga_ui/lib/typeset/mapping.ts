@@ -151,6 +151,7 @@ export function mapDbBlockToTextBlock(b: any, cropDataUrl: string = ""): TextBlo
     isItalic: Boolean(b.is_italic),
     isUppercase: Boolean(b.is_uppercase),
     hasStroke: Boolean(b.has_stroke),
+    textColor: (b.text_color as "black" | "white") || "black",
     shape: (b.shape as TextBlock["shape"]) || "rect",
     paddingMode: (b.padding_mode as TextBlock["paddingMode"]) || "safe",
     minHyphens: b.min_hyphens !== undefined ? Boolean(b.min_hyphens) : true,

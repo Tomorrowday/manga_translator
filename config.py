@@ -36,7 +36,6 @@ if not DB_PATH.exists() and (BASE_DIR / "manga_db.sqlite").exists():
 # Веса для детектора кадров (панелей)
 YOLO_PANEL_WEIGHTS_PATH = WEIGHTS_DIR / "manga_panel_detector.pt"
 if not YOLO_PANEL_WEIGHTS_PATH.exists():
-    # Автопоиск, если файл назван иначе при скачивании
     for alt_name in ["model.pt", "best.pt", "yolo_panels.pt", "manga-panel-detector-yolo26n.pt"]:
         if (WEIGHTS_DIR / alt_name).exists():
             YOLO_PANEL_WEIGHTS_PATH = WEIGHTS_DIR / alt_name
@@ -48,6 +47,13 @@ if not YOLO_PANEL_WEIGHTS_PATH.exists():
 # API-ключи и конфигурация LLM
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_NAME = "gemini-3.5-flash-lite"
+
+# =====================================================================
+# НАСТРОЙКИ КЛИНА И INPAINTING (LAMA)
+# =====================================================================
+# False (по умолчанию): цветные вебтуны/манхва сохраняют цвет, ч/б манга обесцвечивается
+# True: ВСЕГДА принудительно обесцвечивать результат LaMa в строгое ч/б (как было ранее)
+LAMA_FORCE_GRAYSCALE = os.getenv("LAMA_FORCE_GRAYSCALE", "false").lower() in ("true", "1", "yes")
 
 
 def natural_sort_key(s: str):

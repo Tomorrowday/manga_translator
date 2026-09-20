@@ -7,6 +7,22 @@ import cv2
 import numpy as np
 from PIL import Image
 from ml.models import ml
+from config import LAMA_FORCE_GRAYSCALE
+
+
+def is_patch_monochrome(patch_bgr: np.ndarray, threshold: float = 6.0) -> bool:
+    """
+    Проверяет, является ли исходный фрагмент чёрно-белым (оттенки серого).
+    Вычисляет среднее расхождение между цветовыми каналами B, G и R.
+    Если расхождение < threshold, область считается монохромной.
+    """
+    if patch_bgr.size == 0:
+        return True
+    b = patch_bgr[:, :, 0].astype(np.int16)
+    g = patch_bgr[:, :, 1].astype(np.int16)
+    r = patch_bgr[:, :, 2].astype(np.int16)
+    diff = np.maximum(np.abs(b - g), np.maximum(np.abs(b - r), np.abs(g - r)))
+    return float(np.mean(diff)) < threshold
 
 
 def is_mostly_white_bubble(roi: np.ndarray, gray: np.ndarray) -> bool:
@@ -77,7 +93,13 @@ def clean_white_bubble_patch(roi: np.ndarray, gray: np.ndarray, shape: str = "re
 
 
 def inpaint_patch_with_lama(patch_bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Вызов нейросети LaMa для выровненного патча с маской."""
+    """
+    Вызов нейросети LaMa для выровненного патча с маской.
+    Управляется флагом LAMA_FORCE_GRAYSCALE:
+    - При LAMA_FORCE_GRAYSCALE=True: принудительно давит цвет в ч/б.
+    - При LAMA_FORCE_GRAYSCALE=False: сохраняет сочные цвета для цветной манхвы/вебтунов,
+      а для ч/б страниц автоматически подавляет хроматический шум.
+    """
     if ml.inpaint_model is None:
         return patch_bgr
 
@@ -96,8 +118,12 @@ def inpaint_patch_with_lama(patch_bgr: np.ndarray, mask: np.ndarray) -> np.ndarr
     if inpainted_bgr.shape[:2] != (h, w):
         inpainted_bgr = cv2.resize(inpainted_bgr, (w, h), interpolation=cv2.INTER_LANCZOS4)
 
-    inpainted_gray = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2GRAY)
-    return cv2.cvtColor(inpainted_gray, cv2.COLOR_GRAY2BGR)
+    # Проверка режима цвета: если включен принудительный ч/б или сам кроп монохромен
+    if LAMA_FORCE_GRAYSCALE or is_patch_monochrome(patch_bgr):
+        inpainted_gray = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2GRAY)
+        return cv2.cvtColor(inpainted_gray, cv2.COLOR_GRAY2BGR)
+
+    return inpainted_bgr
 
 
 def blend_inpainted_patch(
@@ -115,7 +141,6 @@ def blend_inpainted_patch(
     roi_orig = target_img[y1:y2, x1:x2].astype(np.float32)
     roi_inp = inpainted_patch.astype(np.float32)
 
-    # Дилатация и мягкое размытие альфа-маски для бесшовности
     k_size = (5, 5)
     dilated = cv2.dilate(clean_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, k_size), iterations=1)
     feathered = cv2.GaussianBlur(dilated.astype(np.float32) / 255.0, (5, 5), 1.2)
@@ -158,7 +183,7 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-        # 1. Белые баблы чистим векторно — это дает 100% идеальный белый цвет без мыла
+        # 1. Белые баблы чистим векторно
         if is_mostly_white_bubble(roi, gray):
             clean_white_bubble_patch(roi, gray, shape=shape)
             image_np[y1:y2, x1:x2] = roi
@@ -177,7 +202,6 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         if np.sum(text_clean_mask) < 20:
             text_clean_mask[margin:-margin, margin:-margin] = 255
 
-        # Щедрый контекстный отступ (от 48 до 140px), чтобы нейросеть понимала текстуру вокруг
         pad = max(48, min(140, int(max(bw, bh) * 0.45)))
         cx1 = max(0, x1 - pad)
         cy1 = max(0, y1 - pad)
@@ -189,14 +213,10 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         crop_mask[y1 - cy1:y1 - cy1 + roi.shape[0], x1 - cx1:x1 - cx1 + roi.shape[1]] = text_clean_mask
 
         inpainted = inpaint_patch_with_lama(crop_bgr, crop_mask)
-
-        # Бесшовное вклеивание ТОЛЬКО под маску (фон не трогаем!)
         blend_inpainted_patch(image_np, inpainted, crop_mask, cx1, cy1, cx2, cy2)
         return "inpaint"
 
-    # =========================================================================
-    # ПОВЕРНУТЫЙ БЛОК (abs(rot) >= 0.5)
-    # =========================================================================
+    # Повёрнутый бокс
     rad = math.radians(rot)
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
@@ -301,7 +321,6 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
             image_np[y1:y2, x1:x2] = roi
             return "white"
 
-        # Принудительная LaMa с безопасным блендингом
         pad = max(40, min(100, int(max(bw, bh) * 0.45)))
         cx1 = max(0, x1 - pad)
         cy1 = max(0, y1 - pad)
@@ -316,7 +335,6 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
         blend_inpainted_patch(image_np, inpainted, crop_mask, cx1, cy1, cx2, cy2)
         return "inpaint"
 
-    # Повернутый бокс
     rad = math.radians(rot)
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
@@ -379,12 +397,21 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
     return used_method
 
 
-def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray) -> np.ndarray:
+def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray, mode: str = "lama") -> np.ndarray:
     """
-    Быстрый локальный инпейнтинг произвольного мазка кисти с помощью LaMa.
-    - Ограничивает область вызовом boundingRect + щедрый запас контекста.
-    - Вставляет пиксели с мягким гауссовым переходом, сохраняя оригинальный рисунок на 100%.
+    Обработка мазка кисти:
+    - mode == "white": прямое закрашивание маски чистым белым цветом (255, 255, 255).
+    - mode == "black": прямое закрашивание маски чистым чёрным цветом (0, 0, 0).
+    - mode == "lama": локальный инпейнтинг через нейросеть LaMa с мягким блендингом.
     """
+    if mode == "white":
+        image_np[mask_gray > 127] = [255, 255, 255]
+        return image_np
+
+    if mode == "black":
+        image_np[mask_gray > 127] = [0, 0, 0]
+        return image_np
+
     if ml.inpaint_model is None:
         image_np[mask_gray > 127] = [255, 255, 255]
         return image_np
@@ -396,7 +423,6 @@ def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray) -> np.nda
     x, y, w, h = cv2.boundingRect(points)
     img_h, img_w = image_np.shape[:2]
 
-    # Достаточный запас контекста для понимания фактуры манги
     pad = max(50, min(140, int(max(w, h) * 0.50)))
     x1 = max(0, x - pad)
     y1 = max(0, y - pad)
