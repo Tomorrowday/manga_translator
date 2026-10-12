@@ -1,5 +1,5 @@
 # services/detector.py
-# Детекция речевых баблов (YOLO), их фильтрация и аккуратная подгонка внутрь контура
+# Детекция речевых баблов (YOLO), их фильтрация и деликатная подгонка к контурам
 
 from typing import List, Dict, Any, Tuple
 import cv2
@@ -28,9 +28,9 @@ def expand_box_to_bubble(
     other_boxes: List[Tuple[int, int, int, int]] = None
 ) -> Tuple[int, int, int, int]:
     """
-    Деликатное лучевое расширение к границам бабла:
-    Доходит до черных стенок бабла с безопасным запасом (2-3px)
-    и предотвращает наложение на соседние баблы.
+    Деликатное лучевое расширение:
+    Мягко раздвигает бокс в стороны до черных стенок бабла с запасом 2px.
+    Для однострочных вертикальных баблов позволяет лучу дойти до боковых стенок овала.
     """
     try:
         img_h, img_w = gray_img.shape[:2]
@@ -47,17 +47,18 @@ def expand_box_to_bubble(
             # Тёмный фон или сложный арт — не трогаем границы
             return x1, y1, x2, y2
 
-        # Защита очень длинных узких сносок на полях (например, реклама томов)
-        is_tall_strip = (bh > bw * 4.5)
+        # Только если текст тянется на треть всей страницы — это техническая сноска на полях
+        is_giant_page_strip = (bh > img_h * 0.35)
 
-        # Комфортный размах лучей: расширяем шире до стенок, но с безопасным потолком
-        if is_tall_strip:
-            max_expand_x = min(18, max(6, int(bw * 0.25)))
+        # Комфортный размах лучей:
+        # Для однострочного японского текста бабл может быть широким овалом,
+        # поэтому запас хода луча масштабируется от высоты bh (до 85px в каждую сторону)
+        if is_giant_page_strip:
+            max_expand_x = min(20, max(6, int(bw * 0.25)))
         else:
-            # Даем боксу дойти до стенок бабла (до 75px в каждую сторону)
-            max_expand_x = min(75, max(16, int(bw * 0.85)))
+            max_expand_x = min(85, max(30, int(bh * 0.38)))
 
-        max_expand_y = min(20, max(6, int(bh * 0.14)))
+        max_expand_y = min(20, max(6, int(bh * 0.12)))
 
         # Вычисляем физические пределы, чтобы не залезть на соседние баблы
         hard_limit_left = 2
@@ -66,17 +67,19 @@ def expand_box_to_bubble(
         hard_limit_bottom = img_h - 2
 
         if other_boxes:
+            cx = (x1 + x2) // 2
             for ox1, oy1, ox2, oy2 in other_boxes:
-                # Если боксы на одной высоте (пересекаются по Y)
-                if max(y1, oy1) < min(y2, oy2):
-                    if ox2 <= x1:
-                        hard_limit_left = max(hard_limit_left, ox2 + 3)
-                    elif ox1 >= x2:
-                        hard_limit_right = min(hard_limit_right, ox1 - 3)
+                # Если боксы перекрываются по вертикали более чем на 8px
+                if min(y2, oy2) - max(y1, oy1) > 8:
+                    ocx = (ox1 + ox2) // 2
+                    if ocx < cx:
+                        hard_limit_left = max(hard_limit_left, ox2 + 2)
+                    elif ocx > cx:
+                        hard_limit_right = min(hard_limit_right, ox1 - 2)
 
-        # Внутренний срез по высоте (сканируем по центральной трети текста)
-        y_slice_start = int(y1 + bh * 0.25)
-        y_slice_end = int(y2 - bh * 0.25)
+        # Внутренний срез по высоте (сканируем по центральной части текста)
+        y_slice_start = int(y1 + bh * 0.22)
+        y_slice_end = int(y2 - bh * 0.22)
         if y_slice_end <= y_slice_start:
             y_slice_start, y_slice_end = y1, y2
 
@@ -93,7 +96,7 @@ def expand_box_to_bubble(
             if cur_x <= hard_limit_left:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            # Останавливаемся у чернил контура бабла или скринтона
+            # Останавливаемся при встрече чернильного контура бабла
             if np.min(col) < 160 or np.mean(col) < 210:
                 break
             left_expand = dx
@@ -131,8 +134,7 @@ def expand_box_to_bubble(
                 break
             bottom_expand = dy
 
-        # Отступ внутрь от контура бабла делаем 2-3px (вместо прежних 5px),
-        # чтобы бокс подходил ближе к границе бабла для удобного тайпсета
+        # Отступ внутрь от найденной чернильной стенки (2px)
         pad_in = 2
         final_x1 = max(hard_limit_left, x1 - max(0, left_expand - pad_in))
         final_x2 = min(hard_limit_right, x2 + max(0, right_expand - pad_in))
@@ -193,10 +195,10 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
         # Лучевое расширение вплотную к стенкам бабла
         ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2, other_boxes)
 
-        px1 = max(0, ex1) / img_width
-        py1 = max(0, ey1) / img_height
-        px2 = min(img_width, ex2) / img_width
-        py2 = min(img_height, ey2) / img_height
+        px1 = max(0.0, ex1 / img_width)
+        py1 = max(0.0, ey1 / img_height)
+        px2 = min(1.0, ex2 / img_width)
+        py2 = min(1.0, ey2 / img_height)
 
         boxes.append({
             "x": px1,
