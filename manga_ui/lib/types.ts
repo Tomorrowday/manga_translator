@@ -59,6 +59,7 @@ export interface TitleProject {
   name: string
   folder_path: string
   description?: string
+  default_font_size?: number
   created_at: string
 }
 

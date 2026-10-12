@@ -82,7 +82,11 @@ export function cropRegion(img: HTMLImageElement, rect: CropRect): Promise<{ dat
   }
 }
 
-export async function bakePageBlob(img: HTMLImageElement, blocks: TextBlock[]): Promise<Blob | null> {
+export async function bakePageBlob(
+  img: HTMLImageElement,
+  blocks: TextBlock[],
+  defaultFontSize: number = 14
+): Promise<Blob | null> {
   if (typeof document !== "undefined" && document.fonts) {
     await document.fonts.ready
   }
@@ -108,7 +112,8 @@ export async function bakePageBlob(img: HTMLImageElement, blocks: TextBlock[]): 
     const minHyphens = box.minHyphens !== undefined ? box.minHyphens : true
     const isWhiteText = box.textColor === "white"
 
-    const baseSize = box.fontSize || Math.max(11, Math.min(16, Math.round(11 + box.height * 24)))
+    // Если у блока нет кастомного fontSize, берем базовый размер шрифта тайтла
+    const baseSize = box.fontSize || defaultFontSize
     const currentFontSize = Math.round(baseSize * (canvas.height / 1200))
     const fontName = box.fontFamily || "v_CCFaceFront"
 
@@ -148,7 +153,6 @@ export async function bakePageBlob(img: HTMLImageElement, blocks: TextBlock[]): 
       const ly = startY + idx * lineHeight
 
       if (box.hasStroke) {
-        // Если текст белый — обводка чёрная, если текст чёрный — обводка белая
         ctx.strokeStyle = isWhiteText ? "#000000" : "#FFFFFF"
         ctx.lineWidth = Math.max(3, actualFontSize * 0.18)
         ctx.lineJoin = "round"

@@ -15,12 +15,14 @@ import {
   PanelLeftOpen,
   BookMarked,
   Sparkles,
+  RefreshCw,
 } from "lucide-react"
 import type { TitleProject, ProjectTree, PageItem, PageStatus, ChapterItem } from "@/lib/types"
 import {
   getProjects,
   getProjectTree,
   scanProjectFolder,
+  rescanProject,
   addChapterToProject,
   deleteChapter,
   deleteProject,
@@ -60,6 +62,7 @@ export function Sidebar({
   const [expandedChapters, setExpandedChapters] = useState<Record<number, boolean>>({})
 
   const [loadingTree, setLoadingTree] = useState(false)
+  const [isRescanning, setIsRescanning] = useState(false)
 
   // Модалка создания нового тайтла
   const [isScanning, setIsScanning] = useState(false)
@@ -162,6 +165,20 @@ export function Sidebar({
       alert("Не удалось отсканировать папку: " + String(e))
     } finally {
       setIsScanning(false)
+    }
+  }
+
+  const handleRescanTitle = async () => {
+    if (!selectedTitleId || isRescanning) return
+    setIsRescanning(true)
+    try {
+      const res = await rescanProject(selectedTitleId)
+      alert(res.message || "Сканирование завершено!")
+      await loadTree(selectedTitleId)
+    } catch (err) {
+      alert("Ошибка повторного сканирования: " + String(err))
+    } finally {
+      setIsRescanning(false)
     }
   }
 
@@ -280,7 +297,7 @@ export function Sidebar({
         </div>
 
         {selectedTitleId && (
-          <div className="grid grid-cols-3 gap-1 pt-0.5">
+          <div className="grid grid-cols-4 gap-1 pt-0.5">
             <button
               onClick={() => {
                 setProjectModalTab("glossary")
@@ -306,6 +323,20 @@ export function Sidebar({
             </button>
 
             <button
+              onClick={handleRescanTitle}
+              disabled={isRescanning}
+              className="flex items-center justify-center gap-1 rounded border border-slate-800 bg-slate-900 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors disabled:opacity-50"
+              title="Проверить папку на новые главы (существующие не трогать)"
+            >
+              {isRescanning ? (
+                <Loader2 className="h-3 w-3 animate-spin text-sky-400" />
+              ) : (
+                <RefreshCw className="h-3 w-3 text-sky-400" />
+              )}
+              Скан
+            </button>
+
+            <button
               onClick={() => setShowAddChapterModal(true)}
               className="flex items-center justify-center gap-1 rounded border border-slate-800 bg-indigo-950/40 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-900/60 hover:text-indigo-100 transition-colors"
               title="Добавить главу в этот тайтл"
@@ -324,7 +355,7 @@ export function Sidebar({
           </div>
         ) : !projectTree || !projectTree.chapters || projectTree.chapters.length === 0 ? (
           <div className="p-4 text-center text-xs text-slate-600">
-            В этом тайтле пока нет глав. Нажмите «+ Глава», чтобы добавить.
+            В этом тайтле пока нет глав. Нажмите «+ Глава» или «Скан», чтобы добавить.
           </div>
         ) : (
           <div className="space-y-1">

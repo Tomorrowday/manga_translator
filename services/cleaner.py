@@ -10,12 +10,22 @@ from ml.models import ml
 from config import LAMA_FORCE_GRAYSCALE
 
 
+def load_image_cv2(image_path: str) -> np.ndarray:
+    """
+    Универсальная безопасная загрузка изображения в формат OpenCV BGR numpy.
+    Поддерживает JPG, PNG, WEBP, AVIF, JFIF через Pillow fallback.
+    """
+    img = cv2.imread(image_path)
+    if img is not None:
+        return img
+
+    pil_img = Image.open(image_path).convert("RGB")
+    rgb_arr = np.array(pil_img)
+    return cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2BGR)
+
+
 def is_patch_monochrome(patch_bgr: np.ndarray, threshold: float = 6.0) -> bool:
-    """
-    Проверяет, является ли исходный фрагмент чёрно-белым (оттенки серого).
-    Вычисляет среднее расхождение между цветовыми каналами B, G и R.
-    Если расхождение < threshold, область считается монохромной.
-    """
+    """Проверяет, является ли фрагмент чёрно-белым (оттенки серого)."""
     if patch_bgr.size == 0:
         return True
     b = patch_bgr[:, :, 0].astype(np.int16)
@@ -27,8 +37,7 @@ def is_patch_monochrome(patch_bgr: np.ndarray, threshold: float = 6.0) -> bool:
 
 def is_mostly_white_bubble(roi: np.ndarray, gray: np.ndarray) -> bool:
     """
-    Проверка: является ли область чистым белым баблом.
-    Если есть признаки арта, скринтона или градиента — возвращает False для ретуши через LaMa.
+    Проверка для авто-режима: является ли область обычным белым баблом.
     """
     total_pixels = gray.size
     if total_pixels == 0:
@@ -57,8 +66,7 @@ def is_mostly_white_bubble(roi: np.ndarray, gray: np.ndarray) -> bool:
 
 def clean_white_bubble_patch(roi: np.ndarray, gray: np.ndarray, shape: str = "rect"):
     """
-    Очистка белого бабла на выровненном (upright) кропе:
-    удаляет буквы, точки, знаки препинания, сохраняя границу бабла.
+    Очистка белого бабла: удаляет буквы, сохраняя границы и белый фон бабла.
     """
     h_roi, w_roi = roi.shape[:2]
     if h_roi < 3 or w_roi < 3:
@@ -81,6 +89,7 @@ def clean_white_bubble_patch(roi: np.ndarray, gray: np.ndarray, shape: str = "re
             cv2.drawContours(text_clean_mask, [cnt], -1, 255, thickness=cv2.FILLED)
 
     if np.sum(text_clean_mask) == 0:
+        roi.fill(255)
         return
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -94,17 +103,12 @@ def clean_white_bubble_patch(roi: np.ndarray, gray: np.ndarray, shape: str = "re
 
 def inpaint_patch_with_lama(patch_bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """
-    Вызов нейросети LaMa для выровненного патча с маской.
-    Управляется флагом LAMA_FORCE_GRAYSCALE:
-    - При LAMA_FORCE_GRAYSCALE=True: принудительно давит цвет в ч/б.
-    - При LAMA_FORCE_GRAYSCALE=False: сохраняет сочные цвета для цветной манхвы/вебтунов,
-      а для ч/б страниц автоматически подавляет хроматический шум.
+    Вызов нейросети LaMa с маской.
     """
     if ml.inpaint_model is None:
         return patch_bgr
 
-    # Дилатация маски для чистого покрытия краев букв
-    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dilated_mask = cv2.dilate(mask, dilate_kernel, iterations=1)
 
     crop_rgb = cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2RGB)
@@ -118,7 +122,6 @@ def inpaint_patch_with_lama(patch_bgr: np.ndarray, mask: np.ndarray) -> np.ndarr
     if inpainted_bgr.shape[:2] != (h, w):
         inpainted_bgr = cv2.resize(inpainted_bgr, (w, h), interpolation=cv2.INTER_LANCZOS4)
 
-    # Проверка режима цвета: если включен принудительный ч/б или сам кроп монохромен
     if LAMA_FORCE_GRAYSCALE or is_patch_monochrome(patch_bgr):
         inpainted_gray = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2GRAY)
         return cv2.cvtColor(inpainted_gray, cv2.COLOR_GRAY2BGR)
@@ -133,17 +136,13 @@ def blend_inpainted_patch(
     x1: int, y1: int, x2: int, y2: int
 ):
     """
-    Бесшовное альфа-смешивание (Feathering):
-    Заменяет ТОЛЬКО пиксели маски с мягким гауссовым переходом (3px).
-    Оригинальные пиксели вокруг бабла остаются нетронутыми на 100%,
-    что полностью исключает эффект «съезда линий» и ступени.
+    Бесшовное альфа-смешивание (Feathering 3-5px).
     """
     roi_orig = target_img[y1:y2, x1:x2].astype(np.float32)
     roi_inp = inpainted_patch.astype(np.float32)
 
-    k_size = (5, 5)
-    dilated = cv2.dilate(clean_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, k_size), iterations=1)
-    feathered = cv2.GaussianBlur(dilated.astype(np.float32) / 255.0, (5, 5), 1.2)
+    dilated = cv2.dilate(clean_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)), iterations=1)
+    feathered = cv2.GaussianBlur(dilated.astype(np.float32) / 255.0, (5, 5), 1.5)
     alpha = np.expand_dims(feathered, axis=2)
 
     blended = roi_orig * (1.0 - alpha) + roi_inp * alpha
@@ -151,7 +150,6 @@ def blend_inpainted_patch(
 
 
 def get_box_geometry(image_np: np.ndarray, box: dict) -> Tuple[float, float, int, int, float, str]:
-    """Извлекает абсолютные геометрические параметры бабла."""
     img_h, img_w = image_np.shape[:2]
     cx = (box["x"] + box["width"] / 2.0) * img_w
     cy = (box["y"] + box["height"] / 2.0) * img_h
@@ -164,13 +162,14 @@ def get_box_geometry(image_np: np.ndarray, box: dict) -> Tuple[float, float, int
 
 def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
     """
-    Единая точка входа для автоматической очистки бабла с поддержкой поворота
-    и гарантией отсутствия геометрических искажений фона.
+    Автоматическая очистка бабла (шаг 2. Clean):
+    - Если бабл белый -> выбеливаем текст.
+    - Если бабл на арте/скринтоне -> LaMa-ретушь с широким контекстом.
     """
     cx, cy, bw, bh, rot, shape = get_box_geometry(image_np, box)
     img_h, img_w = image_np.shape[:2]
 
-    # Если угол нулевой — быстрый и точный путь
+    # Если угол нулевой
     if abs(rot) < 0.5:
         x1 = max(0, int(cx - bw / 2.0))
         y1 = max(0, int(cy - bh / 2.0))
@@ -183,34 +182,36 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-        # 1. Белые баблы чистим векторно
         if is_mostly_white_bubble(roi, gray):
             clean_white_bubble_patch(roi, gray, shape=shape)
             image_np[y1:y2, x1:x2] = roi
             return "white"
 
-        # 2. Если требуется LaMa (скринтоны, арт, темный фон)
         if ml.inpaint_model is None:
             clean_white_bubble_patch(roi, gray, shape=shape)
             image_np[y1:y2, x1:x2] = roi
             return "white"
 
-        margin = max(2, int(min(roi.shape[0], roi.shape[1]) * 0.04))
-        _, dark_mask = cv2.threshold(gray, 175, 255, cv2.THRESH_BINARY_INV)
-        text_clean_mask = np.zeros_like(gray)
-        text_clean_mask[margin:-margin, margin:-margin] = dark_mask[margin:-margin, margin:-margin]
-        if np.sum(text_clean_mask) < 20:
-            text_clean_mask[margin:-margin, margin:-margin] = 255
+        # Формируем маску области бабла (rect / ellipse)
+        box_mask = np.zeros(roi.shape[:2], dtype=np.uint8)
+        if shape == "ellipse":
+            cv2.ellipse(box_mask, (roi.shape[1] // 2, roi.shape[0] // 2), (roi.shape[1] // 2, roi.shape[0] // 2), 0, 0, 360, 255, -1)
+        else:
+            box_mask.fill(255)
 
-        pad = max(48, min(140, int(max(bw, bh) * 0.45)))
-        cx1 = max(0, x1 - pad)
-        cy1 = max(0, y1 - pad)
-        cx2 = min(img_w, x2 + pad)
-        cy2 = min(img_h, y2 + pad)
+        # Контекстное окно для LaMa: минимум 512px вокруг для идеального распознавания фона
+        target_size = max(512, int(max(bw, bh) * 2.2))
+        pad_x = max(80, (target_size - bw) // 2)
+        pad_y = max(80, (target_size - bh) // 2)
+
+        cx1 = max(0, x1 - pad_x)
+        cy1 = max(0, y1 - pad_y)
+        cx2 = min(img_w, x2 + pad_x)
+        cy2 = min(img_h, y2 + pad_y)
 
         crop_bgr = image_np[cy1:cy2, cx1:cx2].copy()
         crop_mask = np.zeros(crop_bgr.shape[:2], dtype=np.uint8)
-        crop_mask[y1 - cy1:y1 - cy1 + roi.shape[0], x1 - cx1:x1 - cx1 + roi.shape[1]] = text_clean_mask
+        crop_mask[y1 - cy1:y1 - cy1 + roi.shape[0], x1 - cx1:x1 - cx1 + roi.shape[1]] = box_mask
 
         inpainted = inpaint_patch_with_lama(crop_bgr, crop_mask)
         blend_inpainted_patch(image_np, inpainted, crop_mask, cx1, cy1, cx2, cy2)
@@ -235,20 +236,22 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
     )
 
     gray_patch = cv2.cvtColor(upright_patch, cv2.COLOR_BGR2GRAY)
-    used_method = "white"
 
     if is_mostly_white_bubble(upright_patch, gray_patch):
         clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
         cleaned_upright = upright_patch
+        used_method = "white"
     elif ml.inpaint_model is not None:
-        pad = max(40, min(80, int(max(bw, bh) * 0.40)))
-        pw = bw + 2 * pad
-        ph = bh + 2 * pad
+        target_size = max(512, int(max(bw, bh) * 2.2))
+        pad_x = max(80, (target_size - bw) // 2)
+        pad_y = max(80, (target_size - bh) // 2)
+        pw = bw + 2 * pad_x
+        ph = bh + 2 * pad_y
 
         dst_pts_padded = np.float32([
-            [pad, pad],
-            [pad + bw, pad],
-            [pad, pad + bh]
+            [pad_x, pad_y],
+            [pad_x + bw, pad_y],
+            [pad_x, pad_y + bh]
         ])
         m_extract_padded = cv2.getAffineTransform(src_pts, dst_pts_padded)
         padded_patch = cv2.warpAffine(
@@ -256,47 +259,52 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
             flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
         )
 
-        pad_gray = cv2.cvtColor(padded_patch, cv2.COLOR_BGR2GRAY)
-        margin = max(2, int(min(bw, bh) * 0.04))
-        _, dark_mask = cv2.threshold(pad_gray, 175, 255, cv2.THRESH_BINARY_INV)
-
         clean_mask = np.zeros((ph, pw), dtype=np.uint8)
-        clean_mask[pad + margin:pad + bh - margin, pad + margin:pad + bw - margin] = \
-            dark_mask[pad + margin:pad + bh - margin, pad + margin:pad + bw - margin]
-
-        if np.sum(clean_mask) < 20:
-            clean_mask[pad + margin:pad + bh - margin, pad + margin:pad + bw - margin] = 255
+        if shape == "ellipse":
+            cv2.ellipse(clean_mask, (pad_x + bw // 2, pad_y + bh // 2), (bw // 2, bh // 2), 0, 0, 360, 255, -1)
+        else:
+            clean_mask[pad_y:pad_y + bh, pad_x:pad_x + bw] = 255
 
         inpainted_padded = inpaint_patch_with_lama(padded_patch, clean_mask)
-        cleaned_upright = inpainted_padded[pad:pad + bh, pad:pad + bw]
+        cleaned_upright = inpainted_padded[pad_y:pad_y + bh, pad_x:pad_x + bw]
         used_method = "inpaint"
     else:
         clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
         cleaned_upright = upright_patch
+        used_method = "white"
 
+    # Обратная вставка с защитой от чёрной краевой полосы
     mask_patch = np.zeros((bh, bw), dtype=np.uint8)
     if shape == "ellipse":
         cv2.ellipse(mask_patch, (bw // 2, bh // 2), (bw // 2, bh // 2), 0, 0, 360, 255, -1)
     else:
         mask_patch.fill(255)
 
+    mask_patch_feathered = cv2.GaussianBlur(mask_patch.astype(np.float32) / 255.0, (5, 5), 1.2)
+
     m_paste = cv2.getAffineTransform(dst_pts, src_pts)
     cleaned_back = cv2.warpAffine(
         cleaned_upright, m_paste, (img_w, img_h),
-        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0
+        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
     )
-    mask_back = cv2.warpAffine(
-        mask_patch, m_paste, (img_w, img_h),
-        flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0
+    alpha_back = cv2.warpAffine(
+        mask_patch_feathered, m_paste, (img_w, img_h),
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0
     )
 
-    image_np[mask_back == 255] = cleaned_back[mask_back == 255]
+    alpha_3d = np.expand_dims(alpha_back, axis=2)
+    blended = image_np.astype(np.float32) * (1.0 - alpha_3d) + cleaned_back.astype(np.float32) * alpha_3d
+    image_np[:] = np.clip(blended, 0, 255).astype(np.uint8)
+
     return used_method
 
 
 def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> str:
     """
-    Точечная очистка области поверх страницы (кнопки White / LaMa в карточке бабла).
+    Точечная очистка области:
+    - method == 'white': аккуратно заливает/выбеливает бабл белым.
+    - method == 'lama': ПОЛНОСТЬЮ стирает бабл/плашку и восстанавливает рисунок нейросетью LaMa
+                        с широким контекстом (>= 512px).
     """
     if method == "auto":
         return clean_speech_bubble(image_np, box)
@@ -304,6 +312,7 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
     cx, cy, bw, bh, rot, shape = get_box_geometry(image_np, box)
     img_h, img_w = image_np.shape[:2]
 
+    # --- НЕПОВЁРНУТЫЙ БОКС ---
     if abs(rot) < 0.5:
         x1 = max(0, int(cx - bw / 2.0))
         y1 = max(0, int(cy - bh / 2.0))
@@ -314,27 +323,40 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
         if roi.size == 0:
             return "skipped"
 
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
+        # 1. Белый клин
         if method == "white" or ml.inpaint_model is None:
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             clean_white_bubble_patch(roi, gray, shape=shape)
             image_np[y1:y2, x1:x2] = roi
             return "white"
 
-        pad = max(40, min(100, int(max(bw, bh) * 0.45)))
-        cx1 = max(0, x1 - pad)
-        cy1 = max(0, y1 - pad)
-        cx2 = min(img_w, x2 + pad)
-        cy2 = min(img_h, y2 + pad)
+        # 2. РЕЖИМ LAMA:
+        # Стираем ВЕСЬ бабл/плашку (прямоугольник или овал), чтобы вернуть арт за ним!
+        box_mask = np.zeros(roi.shape[:2], dtype=np.uint8)
+        if shape == "ellipse":
+            cv2.ellipse(box_mask, (roi.shape[1] // 2, roi.shape[0] // 2), (roi.shape[1] // 2, roi.shape[0] // 2), 0, 0, 360, 255, -1)
+        else:
+            box_mask.fill(255)
+
+        # Контекстное окно >= 512px — даёт LaMa полный обзор окружения (плечи, фон, растр)
+        target_size = max(512, int(max(bw, bh) * 2.2))
+        pad_x = max(90, (target_size - bw) // 2)
+        pad_y = max(90, (target_size - bh) // 2)
+
+        cx1 = max(0, x1 - pad_x)
+        cy1 = max(0, y1 - pad_y)
+        cx2 = min(img_w, x2 + pad_x)
+        cy2 = min(img_h, y2 + pad_y)
 
         crop_bgr = image_np[cy1:cy2, cx1:cx2].copy()
         crop_mask = np.zeros(crop_bgr.shape[:2], dtype=np.uint8)
-        crop_mask[y1 - cy1:y1 - cy1 + roi.shape[0], x1 - cx1:x1 - cx1 + roi.shape[1]] = 255
+        crop_mask[y1 - cy1:y1 - cy1 + roi.shape[0], x1 - cx1:x1 - cx1 + roi.shape[1]] = box_mask
 
         inpainted = inpaint_patch_with_lama(crop_bgr, crop_mask)
         blend_inpainted_patch(image_np, inpainted, crop_mask, cx1, cy1, cx2, cy2)
         return "inpaint"
 
+    # --- ПОВЁРНУТЫЙ БОКС ---
     rad = math.radians(rot)
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
@@ -352,18 +374,19 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
         flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
     )
 
-    gray_patch = cv2.cvtColor(upright_patch, cv2.COLOR_BGR2GRAY)
-
     if method == "white" or ml.inpaint_model is None:
+        gray_patch = cv2.cvtColor(upright_patch, cv2.COLOR_BGR2GRAY)
         clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
         cleaned_upright = upright_patch
         used_method = "white"
     else:
-        pad = max(40, min(80, int(max(bw, bh) * 0.40)))
-        pw = bw + 2 * pad
-        ph = bh + 2 * pad
+        target_size = max(512, int(max(bw, bh) * 2.2))
+        pad_x = max(90, (target_size - bw) // 2)
+        pad_y = max(90, (target_size - bh) // 2)
+        pw = bw + 2 * pad_x
+        ph = bh + 2 * pad_y
 
-        dst_pts_padded = np.float32([[pad, pad], [pad + bw, pad], [pad, pad + bh]])
+        dst_pts_padded = np.float32([[pad_x, pad_y], [pad_x + bw, pad_y], [pad_x, pad_y + bh]])
         m_extract_padded = cv2.getAffineTransform(src_pts, dst_pts_padded)
         padded_patch = cv2.warpAffine(
             image_np, m_extract_padded, (pw, ph),
@@ -371,10 +394,13 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
         )
 
         clean_mask = np.zeros((ph, pw), dtype=np.uint8)
-        clean_mask[pad:pad + bh, pad:pad + bw] = 255
+        if shape == "ellipse":
+            cv2.ellipse(clean_mask, (pad_x + bw // 2, pad_y + bh // 2), (bw // 2, bh // 2), 0, 0, 360, 255, -1)
+        else:
+            clean_mask[pad_y:pad_y + bh, pad_x:pad_x + bw] = 255
 
         inpainted_padded = inpaint_patch_with_lama(padded_patch, clean_mask)
-        cleaned_upright = inpainted_padded[pad:pad + bh, pad:pad + bw]
+        cleaned_upright = inpainted_padded[pad_y:pad_y + bh, pad_x:pad_x + bw]
         used_method = "inpaint"
 
     mask_patch = np.zeros((bh, bw), dtype=np.uint8)
@@ -383,26 +409,28 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
     else:
         mask_patch.fill(255)
 
+    mask_patch_feathered = cv2.GaussianBlur(mask_patch.astype(np.float32) / 255.0, (5, 5), 1.2)
+
     m_paste = cv2.getAffineTransform(dst_pts, src_pts)
     cleaned_back = cv2.warpAffine(
         cleaned_upright, m_paste, (img_w, img_h),
-        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=0
+        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
     )
-    mask_back = cv2.warpAffine(
-        mask_patch, m_paste, (img_w, img_h),
-        flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=0
+    alpha_back = cv2.warpAffine(
+        mask_patch_feathered, m_paste, (img_w, img_h),
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0
     )
 
-    image_np[mask_back == 255] = cleaned_back[mask_back == 255]
+    alpha_3d = np.expand_dims(alpha_back, axis=2)
+    blended = image_np.astype(np.float32) * (1.0 - alpha_3d) + cleaned_back.astype(np.float32) * alpha_3d
+    image_np[:] = np.clip(blended, 0, 255).astype(np.uint8)
+
     return used_method
 
 
 def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray, mode: str = "lama") -> np.ndarray:
     """
-    Обработка мазка кисти:
-    - mode == "white": прямое закрашивание маски чистым белым цветом (255, 255, 255).
-    - mode == "black": прямое закрашивание маски чистым чёрным цветом (0, 0, 0).
-    - mode == "lama": локальный инпейнтинг через нейросеть LaMa с мягким блендингом.
+    Обработка мазка кисти (ручной режим).
     """
     if mode == "white":
         image_np[mask_gray > 127] = [255, 255, 255]
@@ -423,11 +451,15 @@ def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray, mode: str
     x, y, w, h = cv2.boundingRect(points)
     img_h, img_w = image_np.shape[:2]
 
-    pad = max(50, min(140, int(max(w, h) * 0.50)))
-    x1 = max(0, x - pad)
-    y1 = max(0, y - pad)
-    x2 = min(img_w, x + w + pad)
-    y2 = min(img_h, y + h + pad)
+    # Для кисти также обеспечиваем минимум 512px контекста
+    target_size = max(512, int(max(w, h) * 2.0))
+    pad_x = max(70, (target_size - w) // 2)
+    pad_y = max(70, (target_size - h) // 2)
+
+    x1 = max(0, x - pad_x)
+    y1 = max(0, y - pad_y)
+    x2 = min(img_w, x + w + pad_x)
+    y2 = min(img_h, y + h + pad_y)
 
     crop_bgr = image_np[y1:y2, x1:x2].copy()
     crop_mask = mask_gray[y1:y2, x1:x2]

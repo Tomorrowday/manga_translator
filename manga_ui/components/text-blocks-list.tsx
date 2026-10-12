@@ -8,6 +8,7 @@ interface TextBlocksListProps {
   currentPage: PageItem | null
   textBlocks: TextBlock[]
   selectedId: string | null
+  defaultFontSize?: number
   onSelect: (id: string) => void
   onUpdate: (id: string, patch: Partial<TextBlock>) => void
   onDelete: (id: string) => void
@@ -20,6 +21,7 @@ export function TextBlocksList({
   currentPage,
   textBlocks,
   selectedId,
+  defaultFontSize = 14,
   onSelect,
   onUpdate,
   onDelete,
@@ -59,6 +61,7 @@ export function TextBlocksList({
           block={block}
           index={index}
           pageId={currentPage.id}
+          defaultFontSize={defaultFontSize}
           isSelected={block.id === selectedId}
           onSelect={() => onSelect(block.id)}
           onChange={(patch) => onUpdate(block.id, patch)}

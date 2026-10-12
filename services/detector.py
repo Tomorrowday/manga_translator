@@ -19,11 +19,18 @@ def manga_sort_key(box: Dict[str, float]) -> tuple:
     return row_idx, -box["x"]
 
 
-def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> Tuple[int, int, int, int]:
+def expand_box_to_bubble(
+    gray_img: np.ndarray,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    other_boxes: List[Tuple[int, int, int, int]] = None
+) -> Tuple[int, int, int, int]:
     """
-    Деликатное лучевое расширение:
-    Мягко раздвигает бокс в стороны до черных стенок бабла с запасом отступа,
-    чтобы углы описанного прямоугольника не вылезали за контур эллиптических баблов.
+    Деликатное лучевое расширение к границам бабла:
+    Доходит до черных стенок бабла с безопасным запасом (2-3px)
+    и предотвращает наложение на соседние баблы.
     """
     try:
         img_h, img_w = gray_img.shape[:2]
@@ -40,11 +47,34 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
             # Тёмный фон или сложный арт — не трогаем границы
             return x1, y1, x2, y2
 
-        # Ограничиваем максимальный размах лучей
-        max_expand_x = min(35, max(10, int(bw * 0.40)))
-        max_expand_y = min(15, max(6, int(bh * 0.12)))
+        # Защита очень длинных узких сносок на полях (например, реклама томов)
+        is_tall_strip = (bh > bw * 4.5)
 
-        # Внутренний срез по высоте (чтобы не задевать верх/низ при сканировании влево/вправо)
+        # Комфортный размах лучей: расширяем шире до стенок, но с безопасным потолком
+        if is_tall_strip:
+            max_expand_x = min(18, max(6, int(bw * 0.25)))
+        else:
+            # Даем боксу дойти до стенок бабла (до 75px в каждую сторону)
+            max_expand_x = min(75, max(16, int(bw * 0.85)))
+
+        max_expand_y = min(20, max(6, int(bh * 0.14)))
+
+        # Вычисляем физические пределы, чтобы не залезть на соседние баблы
+        hard_limit_left = 2
+        hard_limit_right = img_w - 2
+        hard_limit_top = 2
+        hard_limit_bottom = img_h - 2
+
+        if other_boxes:
+            for ox1, oy1, ox2, oy2 in other_boxes:
+                # Если боксы на одной высоте (пересекаются по Y)
+                if max(y1, oy1) < min(y2, oy2):
+                    if ox2 <= x1:
+                        hard_limit_left = max(hard_limit_left, ox2 + 3)
+                    elif ox1 >= x2:
+                        hard_limit_right = min(hard_limit_right, ox1 - 3)
+
+        # Внутренний срез по высоте (сканируем по центральной трети текста)
         y_slice_start = int(y1 + bh * 0.25)
         y_slice_end = int(y2 - bh * 0.25)
         if y_slice_end <= y_slice_start:
@@ -60,10 +90,11 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
         left_expand = 0
         for dx in range(1, max_expand_x + 1):
             cur_x = x1 - dx
-            if cur_x < 2:
+            if cur_x <= hard_limit_left:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            if np.min(col) < 165 or np.mean(col) < 210:
+            # Останавливаемся у чернил контура бабла или скринтона
+            if np.min(col) < 160 or np.mean(col) < 210:
                 break
             left_expand = dx
 
@@ -71,10 +102,10 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
         right_expand = 0
         for dx in range(1, max_expand_x + 1):
             cur_x = x2 + dx
-            if cur_x >= img_w - 2:
+            if cur_x >= hard_limit_right:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            if np.min(col) < 165 or np.mean(col) < 210:
+            if np.min(col) < 160 or np.mean(col) < 210:
                 break
             right_expand = dx
 
@@ -82,10 +113,10 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
         top_expand = 0
         for dy in range(1, max_expand_y + 1):
             cur_y = y1 - dy
-            if cur_y < 2:
+            if cur_y <= hard_limit_top:
                 break
             row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
-            if np.min(row_pix) < 165 or np.mean(row_pix) < 210:
+            if np.min(row_pix) < 160 or np.mean(row_pix) < 210:
                 break
             top_expand = dy
 
@@ -93,20 +124,20 @@ def expand_box_to_bubble(gray_img: np.ndarray, x1: int, y1: int, x2: int, y2: in
         bottom_expand = 0
         for dy in range(1, max_expand_y + 1):
             cur_y = y2 + dy
-            if cur_y >= img_h - 2:
+            if cur_y >= hard_limit_bottom:
                 break
             row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
-            if np.min(row_pix) < 165 or np.mean(row_pix) < 210:
+            if np.min(row_pix) < 160 or np.mean(row_pix) < 210:
                 break
             bottom_expand = dy
 
-        # Увеличенный внутренний отступ назад от границы бабла (5px),
-        # благодаря чему углы прямоугольника гарантированно помещаются в овал
-        pad_in = 5
-        final_x1 = max(0, x1 - max(0, left_expand - pad_in))
-        final_x2 = min(img_w, x2 + max(0, right_expand - pad_in))
-        final_y1 = max(0, y1 - max(0, top_expand - pad_in))
-        final_y2 = min(img_h, y2 + max(0, bottom_expand - pad_in))
+        # Отступ внутрь от контура бабла делаем 2-3px (вместо прежних 5px),
+        # чтобы бокс подходил ближе к границе бабла для удобного тайпсета
+        pad_in = 2
+        final_x1 = max(hard_limit_left, x1 - max(0, left_expand - pad_in))
+        final_x2 = min(hard_limit_right, x2 + max(0, right_expand - pad_in))
+        final_y1 = max(hard_limit_top, y1 - max(0, top_expand - pad_in))
+        final_y2 = min(hard_limit_bottom, y2 + max(0, bottom_expand - pad_in))
 
         return final_x1, final_y1, final_x2, final_y2
     # noinspection PyBroadException
@@ -142,41 +173,36 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
         if not is_outer:
             filtered_boxes.append(box_a)
 
-    # Подготавливаем изображение для деликатной подгонки рамок к стенкам бабла
+    # Подготавливаем изображение для подгонки рамок
     np_img = np.array(image.convert("RGB"))
     gray_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
 
-    boxes: List[Dict[str, Any]] = []
+    int_boxes: List[Tuple[int, int, int, int]] = []
     for x1, y1, x2, y2 in filtered_boxes:
         ix1 = int(max(0, x1))
         iy1 = int(max(0, y1))
         ix2 = int(min(img_width, x2))
         iy2 = int(min(img_height, y2))
+        int_boxes.append((ix1, iy1, ix2, iy2))
 
-        # Лучевое расширение с безопасным отступом от контура
-        ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2)
+    boxes: List[Dict[str, Any]] = []
+    for idx, (ix1, iy1, ix2, iy2) in enumerate(int_boxes):
+        # Список соседей для исключения взаимных коллизий
+        other_boxes = [b for j, b in enumerate(int_boxes) if j != idx]
 
-        # Небольшой внутренний inset (1.5%), чтобы углы гарантированно вписывались в овал
-        box_w = ex2 - ex1
-        box_h = ey2 - ey1
-        inset_x = int(box_w * 0.015)
-        inset_y = int(box_h * 0.015)
+        # Лучевое расширение вплотную к стенкам бабла
+        ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2, other_boxes)
 
-        ex1_clamped = min(ex2 - 4, ex1 + inset_x)
-        ex2_clamped = max(ex1 + 4, ex2 - inset_x)
-        ey1_clamped = min(ey2 - 4, ey1 + inset_y)
-        ey2_clamped = max(ey1 + 4, ey2 - inset_y)
-
-        px1 = max(0, ex1_clamped) / img_width
-        py1 = max(0, ey1_clamped) / img_height
-        px2 = min(img_width, ex2_clamped) / img_width
-        py2 = min(img_height, ey2_clamped) / img_height
+        px1 = max(0, ex1) / img_width
+        py1 = max(0, ey1) / img_height
+        px2 = min(img_width, ex2) / img_width
+        py2 = min(img_height, ey2) / img_height
 
         boxes.append({
             "x": px1,
             "y": py1,
-            "width": px2 - px1,
-            "height": py2 - py1
+            "width": max(0.005, px2 - px1),
+            "height": max(0.005, py2 - py1)
         })
 
     # Сортируем баблы в правильном японском порядке чтения

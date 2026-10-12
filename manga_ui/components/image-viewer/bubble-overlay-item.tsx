@@ -33,6 +33,7 @@ interface BubbleOverlayItemProps {
   editType: EditAction | null
   activeBox: DrawRect | null
   activeRotation: number
+  defaultFontSize?: number
   onStartTransform: (e: React.MouseEvent, box: TextBlock, action: EditAction) => void
   onSelect: (id: string) => void
   onUpdate?: (id: string, patch: Partial<TextBlock>) => void
@@ -48,6 +49,7 @@ export function BubbleOverlayItem({
   editType,
   activeBox,
   activeRotation,
+  defaultFontSize = 14,
   onStartTransform,
   onSelect,
   onUpdate,
@@ -107,14 +109,12 @@ export function BubbleOverlayItem({
   const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     e.stopPropagation()
 
-    // Ctrl+Enter или Cmd+Enter -> Сохранить и выйти
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       commitInlineEdit()
       return
     }
 
-    // Escape -> Отменить и выйти
     if (e.key === "Escape") {
       e.preventDefault()
       setLocalText(box.rusText || "")
@@ -163,11 +163,11 @@ export function BubbleOverlayItem({
     )
   }
 
-  // Расчет шрифтов и верстки для отображения
+  // Расчет шрифтов и верстки: используем базовый шрифт тайтла, если не переопределен в блоке
   const naturalH = imgElement?.naturalHeight || 1600
   const naturalW = imgElement?.naturalWidth || 1100
   const displayH = imgElement?.clientHeight || naturalH
-  const baseSize = box.fontSize || Math.max(11, Math.min(16, Math.round(11 + currentH * 24)))
+  const baseSize = box.fontSize || defaultFontSize
   const masterFontSize = Math.round(baseSize * (naturalH / 1200))
   const masterBoxPixelW = currentW * naturalW
   const masterBoxPixelH = currentH * naturalH

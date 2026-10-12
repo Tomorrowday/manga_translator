@@ -11,7 +11,7 @@ from PIL import Image
 
 from database import get_db, db_session
 from schemas import TextBlockItem
-from services.cleaner import clean_speech_bubble
+from services.cleaner import clean_speech_bubble, load_image_cv2
 from services.detector import detect_and_filter_bubbles
 from services.ocr import ocr_image_region
 from logger import logger
@@ -173,11 +173,10 @@ def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
         raise ValueError("Нет размеченных баблов для очистки")
 
     orig_path = str(page_row["file_path"])
-    raw_cv_img = cv2.imread(orig_path)
-    if raw_cv_img is None:
-        raise RuntimeError("Не удалось открыть картинку через OpenCV")
-
-    image: np.ndarray = raw_cv_img
+    try:
+        image: np.ndarray = load_image_cv2(orig_path)
+    except Exception as e:
+        raise RuntimeError(f"Не удалось открыть изображение: {e}")
 
     stats = {"white": 0, "inpaint": 0}
     for box in blocks:

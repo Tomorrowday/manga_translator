@@ -13,6 +13,7 @@ from .projects import (
     ScanProjectRequest,
     AddChapterRequest,
     UpdateTitleDescriptionRequest,
+    UpdateTitleSettingsRequest,
     GlossaryItemCreate,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "ScanProjectRequest",
     "AddChapterRequest",
     "UpdateTitleDescriptionRequest",
+    "UpdateTitleSettingsRequest",
     "GlossaryItemCreate",
 ]

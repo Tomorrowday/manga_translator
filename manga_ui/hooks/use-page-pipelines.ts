@@ -21,6 +21,7 @@ interface UsePagePipelinesProps {
   textBlocks: TextBlock[]
   setTextBlocks: React.Dispatch<React.SetStateAction<TextBlock[]>>
   textBlocksRef: React.MutableRefObject<TextBlock[]>
+  defaultFontSize?: number
   setSelectedId: (id: string | null) => void
   saveBlocks: (refreshSpeakers?: boolean) => Promise<void>
   onPageStatusUpdate: (pageId: number, status: PageStatus, cleanPath?: string) => void
@@ -35,6 +36,7 @@ export function usePagePipelines({
   textBlocks,
   setTextBlocks,
   textBlocksRef,
+  defaultFontSize = 14,
   setSelectedId,
   saveBlocks,
   onPageStatusUpdate,
@@ -54,7 +56,6 @@ export function usePagePipelines({
   const handleAutoDetect = async () => {
     if (!currentPage) return
 
-    // Защита от случайного сброса ручной работы
     if (textBlocks.length > 0 || (currentPage.status !== "raw" && currentPage.status !== "new")) {
       const ok = confirm("Пересканировать страницу с нуля? Все текущие баблы и переводы на этой странице будут заменены.")
       if (!ok) return
@@ -247,7 +248,8 @@ export function usePagePipelines({
         : getPageImageUrl(currentPage.id)
 
       const baseImg = await loadImage(baseImgUrl)
-      const blob = await bakePageBlob(baseImg, textBlocksRef.current)
+      // Передаём defaultFontSize тайтла во избежание сжатия шрифта
+      const blob = await bakePageBlob(baseImg, textBlocksRef.current, defaultFontSize)
 
       if (!blob) throw new Error("Не удалось создать Blob изображения в Canvas")
 
@@ -320,7 +322,8 @@ export function usePagePipelines({
 
       const cleanImgUrl = `${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`
       const cleanImg = await loadImage(cleanImgUrl)
-      const blob = await bakePageBlob(cleanImg, textBlocksRef.current)
+      // Передаём defaultFontSize тайтла
+      const blob = await bakePageBlob(cleanImg, textBlocksRef.current, defaultFontSize)
 
       if (blob) {
         await saveTranslatedPage(currentPage.id, blob)

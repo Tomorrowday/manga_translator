@@ -1,9 +1,30 @@
 # services/ocr.py
-# Модуль распознавания японского текста с поддержкой свободного угла поворота
+# Модуль распознавания японского текста с поддержкой свободного угла поворота,
+# динамического OCR-паддинга и нормализацией пунктуации
 
 import math
+import re
 from PIL import Image
 from ml.models import ml
+
+
+def normalize_ocr_japanese_text(text: str) -> str:
+    """
+    Пост-процессинг текста после MangaOCR:
+    - Заменяет ошибочные двоеточия (:, ：) на многоточие (…).
+    - Нормализует дублирующиеся знаки.
+    """
+    if not text:
+        return ""
+
+    cleaned = text
+    cleaned = re.sub(r'[:：]{2,}', '……', cleaned)
+    cleaned = re.sub(r'(?<!\d)[:：](?!\d)', '…', cleaned)
+    cleaned = re.sub(r'\.{2,}', '…', cleaned)
+    cleaned = re.sub(r'[.…]{2,}', '…', cleaned)
+    cleaned = re.sub(r'\s*…\s*', '…', cleaned)
+
+    return cleaned.strip()
 
 
 def ocr_image_region(
@@ -15,12 +36,8 @@ def ocr_image_region(
         rotation: float = 0.0
 ) -> str:
     """
-    Вырезает область бабла по относительным координатам (0..1) с учетом угла поворота
-    и распознает японский текст через MangaOCR.
-
-    Если угол rotation != 0 (в градусах по часовой стрелке), изображение поворачивается
-    на rotation против часовой стрелки вокруг центра бабла, выравнивая текст строго
-    вертикально/горизонтально для 100% точности распознавания MangaOCR.
+    Вырезает область бабла с динамическим контекстным паддингом (чтобы не срезать
+    крайние иероглифы, фуригану и знаки препинания) и распознает через MangaOCR.
     """
     if ml.mocr is None:
         raise RuntimeError("MangaOCR не инициализирована")
@@ -32,22 +49,26 @@ def ocr_image_region(
     bw = max(2, int(width * img_w))
     bh = max(2, int(height * img_h))
 
-    # Если угол отсутствует или ничтожно мал — стандартный быстрый crop
+    # Динамический защитный паддинг: даём MangaOCR 10-18px контекста вокруг рамки
+    pad_x = max(8, min(24, int(bw * 0.06)))
+    pad_y = max(10, min(28, int(bh * 0.07)))
+
+    # Стандартный кроп без сильного поворота
     if abs(rotation) < 0.5:
-        x1 = max(0, int(x * img_w))
-        y1 = max(0, int(y * img_h))
-        x2 = min(img_w, x1 + bw)
-        y2 = min(img_h, y1 + bh)
+        x1 = max(0, int(cx - bw / 2.0) - pad_x)
+        y1 = max(0, int(cy - bh / 2.0) - pad_y)
+        x2 = min(img_w, int(cx + bw / 2.0) + pad_x)
+        y2 = min(img_h, int(cy + bh / 2.0) + pad_y)
 
         if x2 <= x1 or y2 <= y1:
             return ""
 
         crop_img = image.crop((x1, y1, x2, y2))
-        return ml.mocr(crop_img).strip()
+        raw_text = ml.mocr(crop_img).strip()
+        return normalize_ocr_japanese_text(raw_text)
 
-    # Если задан поворот:
-    # 1. Извлекаем охватывающую область (sub-crop), описывающую окружность вокруг центра
-    radius = math.ceil(math.sqrt(bw * bw + bh * bh) / 2.0) + 4
+    # Повёрнутый бокс
+    radius = math.ceil(math.sqrt(bw * bw + bh * bh) / 2.0) + max(pad_x, pad_y) + 4
     sub_x1 = max(0, int(cx - radius))
     sub_y1 = max(0, int(cy - radius))
     sub_x2 = min(img_w, int(cx + radius))
@@ -57,13 +78,9 @@ def ocr_image_region(
         return ""
 
     sub_crop = image.crop((sub_x1, sub_y1, sub_x2, sub_y2))
-
     local_cx = cx - sub_x1
     local_cy = cy - sub_y1
 
-    # 2. Выравниваем текст: поворачиваем sub_crop вокруг (local_cx, local_cy)
-    # В PIL rotate() положительный угол крутит против часовой стрелки,
-    # что в точности компенсирует положительный CSS-поворот по часовой стрелке.
     rotated_sub = sub_crop.rotate(
         rotation,
         resample=Image.Resampling.BICUBIC,
@@ -71,14 +88,14 @@ def ocr_image_region(
         fillcolor=(255, 255, 255)
     )
 
-    # 3. Вырезаем выровненный прямоугольник размером bw x bh
-    rx1 = max(0, int(local_cx - bw / 2.0))
-    ry1 = max(0, int(local_cy - bh / 2.0))
-    rx2 = min(rotated_sub.width, rx1 + bw)
-    ry2 = min(rotated_sub.height, ry1 + bh)
+    rx1 = max(0, int(local_cx - bw / 2.0) - pad_x)
+    ry1 = max(0, int(local_cy - bh / 2.0) - pad_y)
+    rx2 = min(rotated_sub.width, int(local_cx + bw / 2.0) + pad_x)
+    ry2 = min(rotated_sub.height, int(local_cy + bh / 2.0) + pad_y)
 
     if rx2 <= rx1 or ry2 <= ry1:
         return ""
 
     final_crop = rotated_sub.crop((rx1, ry1, rx2, ry2))
-    return ml.mocr(final_crop).strip()
+    raw_text = ml.mocr(final_crop).strip()
+    return normalize_ocr_japanese_text(raw_text)

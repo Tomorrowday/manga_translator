@@ -16,6 +16,11 @@ class UpdateTitleDescriptionRequest(BaseModel):
     description: str
 
 
+class UpdateTitleSettingsRequest(BaseModel):
+    description: Optional[str] = ""
+    default_font_size: Optional[int] = 14
+
+
 class GlossaryItemCreate(BaseModel):
     jap_word: Optional[str] = ""
     rus_word: str

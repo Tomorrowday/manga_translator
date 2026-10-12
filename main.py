@@ -6,10 +6,14 @@ from typing import Any, cast
 from fastapi import FastAPI
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+import pillow_heif
 
 import database
 from ml.models import load_ml_models
 from routers import ai, projects, pages, chapters
+
+# Регистрация поддержки форматов AVIF и HEIF в Pillow
+pillow_heif.register_heif_opener()
 
 
 @asynccontextmanager

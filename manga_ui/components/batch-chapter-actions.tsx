@@ -12,14 +12,17 @@ import {
   getPageCleanImageUrl,
   getPageImageUrl,
   getPageBlocks,
-  downloadChapterScript,
+  exportChapterScriptToFolder,
   uploadChapterScript,
+  pickAndImportChapterScript,
 } from "@/lib/api"
 import { loadImage, bakePageBlob, mapDbBlockToTextBlock } from "@/lib/typeset"
 
 interface BatchChapterActionsProps {
   pages: PageItem[]
   currentPageId: number | null
+  titleDefaultFontSize?: number
+  onSaveCurrentPage?: () => Promise<void>
   onPageStatusUpdate?: (pageId: number, status: PageStatus, cleanPath?: string) => void
   onRefreshCurrent: () => void
   onCompleteBatch?: () => void
@@ -39,13 +42,15 @@ const ACTION_LABELS: Record<BatchAction, string> = {
   clean: "Smart Cleaning & Retouching (AI)",
   translate: "Translating chapter with Gemini",
   export: "Exporting pages",
-  "script-export": "Exporting JSON script...",
+  "script-export": "Exporting JSON script to folder...",
   "script-import": "Importing JSON script...",
 }
 
 export function BatchChapterActions({
   pages,
   currentPageId,
+  titleDefaultFontSize = 14,
+  onSaveCurrentPage,
   onPageStatusUpdate,
   onRefreshCurrent,
   onCompleteBatch,
@@ -83,7 +88,6 @@ export function BatchChapterActions({
     }
   }
 
-  // Сканируем только нетронутые страницы: уже размеченная или переведенная часть главы остаётся в сохранности!
   const detectAll = () =>
     runBatch("detect", async (page) => {
       if (page.status !== "raw" && page.status !== "new") {
@@ -139,7 +143,17 @@ export function BatchChapterActions({
     }
   }
 
-  const exportAll = () =>
+  const exportAll = async () => {
+    if (pages.length === 0 || isRunning) return
+
+    if (onSaveCurrentPage) {
+      try {
+        await onSaveCurrentPage()
+      } catch (err) {
+        console.warn("Не удалось сохранить текущую страницу перед Export All:", err)
+      }
+    }
+
     runBatch("export", async (page) => {
       const fresh = (await getPageDetails(page.id)) || page
       const baseImgUrl = fresh.clean_path
@@ -150,7 +164,7 @@ export function BatchChapterActions({
       const blocks: TextBlock[] = dbBlocks.map((b: any) => mapDbBlockToTextBlock(b))
 
       const baseImg = await loadImage(baseImgUrl)
-      const blob = await bakePageBlob(baseImg, blocks)
+      const blob = await bakePageBlob(baseImg, blocks, titleDefaultFontSize)
 
       if (blob) {
         const res = await saveTranslatedPage(page.id, blob)
@@ -159,15 +173,65 @@ export function BatchChapterActions({
         }
       }
     })
+  }
 
   const handleExportScript = async () => {
     if (!chapterId) return
+    setProgress({ action: "script-export", done: 0, total: 1, label: "Saving JSON to chapter folder..." })
     try {
-      await downloadChapterScript(chapterId)
+      const res = await exportChapterScriptToFolder(chapterId)
       setJustFinished("script-export")
-      setTimeout(() => setJustFinished(null), 2000)
+      setTimeout(() => setJustFinished(null), 2500)
+      alert(`Скрипт главы успешно сохранён в папку:\n${res.saved_path}`)
     } catch (e) {
-      alert("Ошибка экспорта: " + String(e))
+      alert("Ошибка сохранения скрипта: " + String(e))
+    } finally {
+      setProgress(null)
+    }
+  }
+
+  // Импорт JSON: открывает нативный диалог в папке текущей главы, либо fallback
+  const handleImportClick = async () => {
+    if (!chapterId || isRunning) return
+
+    setProgress({ action: "script-import", done: 0, total: 1, label: "Opening chapter folder..." })
+    try {
+      const res = await pickAndImportChapterScript(chapterId)
+
+      if (res.cancelled) {
+        setProgress(null)
+        return
+      }
+
+      if (res.success) {
+        pages.forEach((p) => {
+          if (p.status !== "done") {
+            onPageStatusUpdate?.(p.id, "translated")
+          }
+        })
+
+        const msg = [
+          `Файл: ${res.file_path}`,
+          `Успешно импортировано реплик: ${res.updated_count}`,
+          res.updated_speakers_count ? `Распознано спикеров: ${res.updated_speakers_count}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+
+        alert(msg)
+        setJustFinished("script-import")
+        setTimeout(() => setJustFinished(null), 2000)
+        onCompleteBatch?.()
+        onRefreshCurrent()
+      } else {
+        // Если GUI диалог на бэкенде недоступен, открываем стандартный file input браузера
+        fileInputRef.current?.click()
+      }
+    } catch (err) {
+      console.warn("Диалог бэкенда не сработал, открываем браузерный выбор файла:", err)
+      fileInputRef.current?.click()
+    } finally {
+      setProgress(null)
     }
   }
 
@@ -253,7 +317,7 @@ export function BatchChapterActions({
           onClick={handleExportScript}
           disabled={disabled || isRunning}
           className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-50"
-          title="Скачать JSON с репликами, глоссарием и промптом для Claude/ChatGPT"
+          title="Сохранить JSON скрипт главы в локальную папку главы на диске"
         >
           {justFinished === "script-export" ? (
             <Check className="h-3.5 w-3.5 text-emerald-400" />
@@ -264,10 +328,10 @@ export function BatchChapterActions({
         </button>
 
         <button
-          onClick={() => fileInputRef.current?.click()}
+          onClick={handleImportClick}
           disabled={disabled || isRunning}
           className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-50"
-          title="Загрузить переведённый JSON обратно"
+          title="Выбрать и импортировать JSON из папки текущей главы"
         >
           {progress?.action === "script-import" ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

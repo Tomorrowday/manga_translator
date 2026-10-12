@@ -1,5 +1,5 @@
 // lib/api/chapters.ts
-// Операции с главами, пакетный перевод и экспорт JSON скриптов
+// Операции с главами, пакетный перевод и экспорт/импорт JSON скриптов
 
 import { API_BASE_URL, handleApiResponse } from "./client"
 
@@ -31,6 +31,13 @@ export async function downloadChapterScript(chapterId: number) {
   window.URL.revokeObjectURL(url)
 }
 
+export async function exportChapterScriptToFolder(chapterId: number) {
+  const res = await fetch(`${API_BASE_URL}/api/chapters/${chapterId}/export-dialogue-to-folder`, {
+    method: "POST",
+  })
+  return await handleApiResponse<any>(res, "Ошибка сохранения скрипта в папку главы")
+}
+
 export async function uploadChapterScript(chapterId: number, file: File) {
   const formData = new FormData()
   formData.append("file", file)
@@ -40,4 +47,18 @@ export async function uploadChapterScript(chapterId: number, file: File) {
     body: formData,
   })
   return await handleApiResponse<any>(res, "Ошибка импорта диалогов")
+}
+
+export async function pickAndImportChapterScript(chapterId: number) {
+  const res = await fetch(`${API_BASE_URL}/api/chapters/${chapterId}/pick-and-import-dialogue`, {
+    method: "POST",
+  })
+  return await handleApiResponse<any>(res, "Ошибка выбора и импорта JSON скрипта")
+}
+
+export async function importChapterScriptFromFolder(chapterId: number) {
+  const res = await fetch(`${API_BASE_URL}/api/chapters/${chapterId}/import-dialogue-from-folder`, {
+    method: "POST",
+  })
+  return await handleApiResponse<any>(res, "Ошибка авто-импорта JSON из папки главы")
 }

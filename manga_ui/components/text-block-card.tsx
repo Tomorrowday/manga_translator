@@ -22,6 +22,7 @@ interface TextBlockCardProps {
   block: TextBlock
   index: number
   pageId?: number
+  defaultFontSize?: number
   isSelected: boolean
   onSelect: () => void
   onChange: (patch: Partial<TextBlock>) => void
@@ -43,6 +44,7 @@ export function TextBlockCard({
   block,
   index,
   pageId,
+  defaultFontSize = 14,
   isSelected,
   onSelect,
   onChange,
@@ -57,7 +59,6 @@ export function TextBlockCard({
   const [translateLoading, setTranslateLoading] = useState(false)
   const cardRef = useRef<HTMLElement>(null)
 
-  // Мгновенный быстрый скролл без тормозящей плавной анимации
   useEffect(() => {
     if (isSelected && cardRef.current) {
       cardRef.current.scrollIntoView({ behavior: "auto", block: "nearest" })
@@ -105,7 +106,7 @@ export function TextBlockCard({
         isSelected ? "border-amber-400/70 ring-1 ring-amber-400/30" : "border-slate-700 hover:border-slate-600",
       ].join(" ")}
     >
-      {/* Шапка карточки: превью, статус, сортировка, удаление */}
+      {/* Шапка карточки */}
       <div className="flex items-start gap-3">
         <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-700 bg-slate-950">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -225,7 +226,7 @@ export function TextBlockCard({
       </div>
 
       {/* Панель типографики и стилизации */}
-      <BubbleStyleControls block={block} onChange={onChange} />
+      <BubbleStyleControls block={block} defaultFontSize={defaultFontSize} onChange={onChange} />
 
       {/* Панель точечного клина */}
       <SpotCleanControls onSpotClean={onSpotClean} />

@@ -1,13 +1,24 @@
+# routers/projects.py
+
 import os
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from database import db_session, get_db
-from schemas import ScanProjectRequest, AddChapterRequest, GlossaryItemCreate, UpdateTitleDescriptionRequest
+from schemas import (
+    ScanProjectRequest,
+    AddChapterRequest,
+    GlossaryItemCreate,
+    UpdateTitleDescriptionRequest,
+    UpdateTitleSettingsRequest,
+)
 from config import natural_sort_key
 from logger import logger
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
+
+# Поддерживаемые форматы графики (включая AVIF и JFIF)
+VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".jfif", ".avif"}
 
 # Служебные папки, которые ни при каких условиях не должны распознаваться как главы манги
 EXCLUDED_DIR_NAMES = {
@@ -22,11 +33,12 @@ async def scan_project(req: ScanProjectRequest):
     if not folder.exists() or not folder.is_dir():
         return {"success": False, "error": "Папка не найдена или путь указан неверно"}
 
-    valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
-
     try:
         with db_session() as cursor:
-            cursor.execute("INSERT INTO titles (name, folder_path) VALUES (?, ?)", (req.name, str(folder)))
+            cursor.execute(
+                "INSERT INTO titles (name, folder_path, default_font_size) VALUES (?, ?, 14)",
+                (req.name, str(folder))
+            )
             title_id = cursor.lastrowid
 
             chapters_count = 0
@@ -43,7 +55,7 @@ async def scan_project(req: ScanProjectRequest):
                 if Path(root).name.lower() in EXCLUDED_DIR_NAMES:
                     continue
 
-                images = [f for f in files if Path(f).suffix.lower() in valid_extensions]
+                images = [f for f in files if Path(f).suffix.lower() in VALID_IMAGE_EXTENSIONS]
                 if images:
                     images.sort(key=natural_sort_key)
                     chapter_name = Path(root).name
@@ -73,13 +85,106 @@ async def scan_project(req: ScanProjectRequest):
         return {"success": False, "error": str(e)}
 
 
+@router.post("/{title_id}/rescan")
+async def rescan_project(title_id: int):
+    """
+    Повторный скан корневой папки тайтла на новые главы.
+    Уже существующие в базе главы не затрагиваются (разметка и переводы сохраняются).
+    Добавляются только новые найденные папки с изображениями.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, folder_path FROM titles WHERE id = ?", (title_id,))
+    title_row = cursor.fetchone()
+
+    if not title_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Тайтл не найден")
+
+    title_name = title_row["name"]
+    folder = Path(title_row["folder_path"])
+
+    if not folder.exists() or not folder.is_dir():
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Корневая папка тайтла не найдена: {folder}")
+
+    cursor.execute("SELECT chapter_number, folder_path FROM chapters WHERE title_id = ?", (title_id,))
+    existing_rows = cursor.fetchall()
+    conn.close()
+
+    existing_folders = {
+        os.path.normpath(r["folder_path"]).lower()
+        for r in existing_rows
+        if r["folder_path"]
+    }
+    existing_names = {
+        r["chapter_number"].strip().lower()
+        for r in existing_rows
+        if r["chapter_number"]
+    }
+
+    added_chapters = 0
+    added_pages = 0
+    skipped_chapters = 0
+
+    try:
+        walk_dirs = []
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIR_NAMES]
+            walk_dirs.append((root, dirs, files))
+
+        walk_dirs.sort(key=lambda item: natural_sort_key(item[0]))
+
+        with db_session() as cur:
+            for root, _, files in walk_dirs:
+                if Path(root).name.lower() in EXCLUDED_DIR_NAMES:
+                    continue
+
+                images = [f for f in files if Path(f).suffix.lower() in VALID_IMAGE_EXTENSIONS]
+                if not images:
+                    continue
+
+                norm_root = os.path.normpath(root).lower()
+                chapter_name = Path(root).name
+
+                if norm_root in existing_folders or chapter_name.strip().lower() in existing_names:
+                    skipped_chapters += 1
+                    continue
+
+                images.sort(key=natural_sort_key)
+                cur.execute(
+                    "INSERT INTO chapters (title_id, chapter_number, folder_path) VALUES (?, ?, ?)",
+                    (title_id, chapter_name, root)
+                )
+                chapter_id = cur.lastrowid
+                added_chapters += 1
+
+                for i, img in enumerate(images):
+                    img_path = os.path.join(root, img)
+                    cur.execute(
+                        "INSERT INTO pages (chapter_id, page_number, file_path) VALUES (?, ?, ?)",
+                        (chapter_id, i + 1, img_path)
+                    )
+                    added_pages += 1
+
+        logger.info(
+            f"Рескан тайтла '{title_name}' (ID {title_id}): "
+            f"добавлено глав: {added_chapters}, страниц: {added_pages}, пропущено существующих: {skipped_chapters}"
+        )
+        return {
+            "success": True,
+            "message": f"Скан завершён. Добавлено новых глав: {added_chapters} (страниц: {added_pages}). Пропущено: {skipped_chapters}.",
+            "added_chapters": added_chapters,
+            "added_pages": added_pages,
+            "skipped_chapters": skipped_chapters,
+        }
+    except Exception as e:
+        logger.error(f"Ошибка рескана проекта {title_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/{title_id}/chapters")
 async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
-    """
-    Добавляет новую главу (или пачку глав) в существующий тайтл.
-    Если в папке лежат файлы напрямую — создается одна глава.
-    Если в папке лежат подпапки с изображениями — добавляются все найденные главы.
-    """
     folder = Path(req.folder_path)
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=400, detail="Папка не найдена или путь некорректен")
@@ -93,10 +198,8 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
     if not title_row:
         raise HTTPException(status_code=404, detail="Тайтл не найден")
 
-    valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
-
     direct_files = [f for f in os.listdir(folder) if (folder / f).is_file()]
-    direct_images = [f for f in direct_files if Path(f).suffix.lower() in valid_extensions]
+    direct_images = [f for f in direct_files if Path(f).suffix.lower() in VALID_IMAGE_EXTENSIONS]
 
     added_chapters = 0
     added_pages = 0
@@ -132,7 +235,7 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
                     if Path(root).name.lower() in EXCLUDED_DIR_NAMES:
                         continue
 
-                    images = [f for f in files if Path(f).suffix.lower() in valid_extensions]
+                    images = [f for f in files if Path(f).suffix.lower() in VALID_IMAGE_EXTENSIONS]
                     if images:
                         images.sort(key=natural_sort_key)
                         chapter_name = Path(root).name
@@ -153,7 +256,10 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
                             added_pages += 1
 
         if added_chapters == 0:
-            raise HTTPException(status_code=400, detail="В указанной папке не найдено изображений (.jpg, .png, .webp)")
+            raise HTTPException(
+                status_code=400,
+                detail="В указанной папке не найдено изображений (.jpg, .png, .webp, .jfif, .avif)"
+            )
 
         logger.info(f"В тайтл '{title_row['name']}' (ID {title_id}) добавлено глав: {added_chapters}, страниц: {added_pages}")
         return {
@@ -173,7 +279,9 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
 async def get_projects():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name, folder_path, description, created_at FROM titles ORDER BY created_at DESC")
+    cursor.execute(
+        "SELECT id, name, folder_path, description, default_font_size, created_at FROM titles ORDER BY created_at DESC"
+    )
     projects = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return {"success": True, "projects": projects}
@@ -184,13 +292,18 @@ async def get_project_tree(title_id: int):
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, name, folder_path, description, created_at FROM titles WHERE id = ?", (title_id,))
+    cursor.execute(
+        "SELECT id, name, folder_path, description, default_font_size, created_at FROM titles WHERE id = ?",
+        (title_id,)
+    )
     title_row = cursor.fetchone()
     if not title_row:
         conn.close()
         return {"success": False, "error": "Тайтл не найден"}
 
     title = dict(title_row)
+    if title.get("default_font_size") is None:
+        title["default_font_size"] = 14
 
     cursor.execute("SELECT * FROM chapters WHERE title_id = ?", (title_id,))
     chapters = [dict(row) for row in cursor.fetchall()]
@@ -207,20 +320,28 @@ async def get_project_tree(title_id: int):
 
 @router.put("/{title_id}/description")
 async def update_title_description(title_id: int, req: UpdateTitleDescriptionRequest):
-    """Обновляет синопсис и стиль повествования тайтла."""
     with db_session() as cur:
         cur.execute("UPDATE titles SET description = ? WHERE id = ?", (req.description.strip(), title_id))
     logger.info(f"Обновлен синопсис для тайтла ID {title_id}")
     return {"success": True, "description": req.description.strip()}
 
 
+@router.put("/{title_id}/settings")
+async def update_title_settings(title_id: int, req: UpdateTitleSettingsRequest):
+    font_size = req.default_font_size if (req.default_font_size and 8 <= req.default_font_size <= 40) else 14
+    desc = req.description.strip() if req.description is not None else ""
+
+    with db_session() as cur:
+        cur.execute(
+            "UPDATE titles SET description = ?, default_font_size = ? WHERE id = ?",
+            (desc, font_size, title_id)
+        )
+    logger.info(f"Обновлены настройки для тайтла ID {title_id}: font_size={font_size}")
+    return {"success": True, "description": desc, "default_font_size": font_size}
+
+
 @router.get("/{title_id}/speakers")
 async def get_title_speakers(title_id: int, chapter_id: Optional[int] = Query(None)):
-    """
-    Возвращает объединенный список подсказок спикеров:
-    1. Имена из глоссария тайтла.
-    2. Имена спикеров, которые уже вводились в этой главе или тайтле.
-    """
     conn = get_db()
     cursor = conn.cursor()
 

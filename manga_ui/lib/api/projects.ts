@@ -19,6 +19,13 @@ export async function scanProjectFolder(name: string, folderPath: string) {
   return await handleApiResponse<any>(res, "Ошибка сканирования папки")
 }
 
+export async function rescanProject(titleId: number) {
+  const res = await fetch(`${API_BASE_URL}/api/projects/${titleId}/rescan`, {
+    method: "POST",
+  })
+  return await handleApiResponse<any>(res, "Ошибка повторного сканирования папки")
+}
+
 export async function addChapterToProject(titleId: number, folderPath: string, chapterNumber?: string) {
   const res = await fetch(`${API_BASE_URL}/api/projects/${titleId}/chapters`, {
     method: "POST",
@@ -45,6 +52,21 @@ export async function updateTitleDescription(titleId: number, description: strin
     body: JSON.stringify({ description }),
   })
   return await handleApiResponse<any>(res, "Ошибка обновления синопсиса")
+}
+
+export async function updateTitleSettings(
+  titleId: number,
+  settings: { description?: string; default_font_size?: number }
+) {
+  const res = await fetch(`${API_BASE_URL}/api/projects/${titleId}/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  })
+  return await handleApiResponse<{ success: boolean; description: string; default_font_size: number }>(
+    res,
+    "Ошибка обновления настроек тайтла"
+  )
 }
 
 export async function getTitleSpeakers(titleId: number, chapterId?: number): Promise<string[]> {

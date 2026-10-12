@@ -26,6 +26,7 @@ interface ImageViewerProps {
   pageNumber?: number
   hasCleanScan?: boolean
   viewMode: "original" | "clean"
+  defaultFontSize?: number
   onToggleViewMode: () => void
   onSelect: (id: string | null) => void
   onDrawComplete: (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => void
@@ -45,6 +46,7 @@ export function ImageViewer({
   pageNumber,
   hasCleanScan = false,
   viewMode,
+  defaultFontSize = 14,
   onToggleViewMode,
   onSelect,
   onDrawComplete,
@@ -55,31 +57,25 @@ export function ImageViewer({
   const brushCanvasRef = useRef<HTMLCanvasElement>(null)
   const cursorRef = useRef<HTMLDivElement>(null)
 
-  // Режим работы: "box" (выделение рамок) | "brush" (кисть ретуши и рисования)
   const [activeTool, setActiveTool] = useState<"box" | "brush">("box")
-  // Режим самой кисти: "lama" (AI ретушь) | "white" (белая заливка) | "black" (чёрная заливка)
   const [brushMode, setBrushMode] = useState<"lama" | "white" | "black">("lama")
   const [brushSize, setBrushSize] = useState<number>(32)
   const [isBrushPainting, setIsBrushPainting] = useState<boolean>(false)
   const [isBrushProcessing, setIsBrushProcessing] = useState<boolean>(false)
 
-  // Для режима рисования рамок
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState<DrawRect | null>(null)
 
-  // Переключение скана (Tab) и горячие клавиши кисти (Стрелки Вверх / Вниз)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
 
-      // Tab -> переключение Original/Cleaned
       if (e.key === "Tab" && hasCleanScan) {
         e.preventDefault()
         onToggleViewMode()
         return
       }
 
-      // Стрелки ↑ и ↓ для изменения размера кисти в режиме Brush
       if (activeTool === "brush") {
         if (e.code === "ArrowDown") {
           e.preventDefault()
@@ -104,14 +100,12 @@ export function ImageViewer({
     return { x, y }
   }, [])
 
-  // Хук трансформаций рамок
   const { isEditing, editId, editType, activeBox, activeRotation, startTransform } = useBoxTransform(
     imgRef,
     pointFromEvent,
     (rect, img, id, rot) => onDrawComplete(rect, img, id, rot)
   )
 
-  // Синхронизация размера Canvas кисти с отображаемым изображением
   const syncBrushCanvasSize = useCallback(() => {
     const canvas = brushCanvasRef.current
     const img = imgRef.current
@@ -128,14 +122,12 @@ export function ImageViewer({
     return () => window.removeEventListener("resize", syncBrushCanvasSize)
   }, [syncBrushCanvasSize, imageSrc])
 
-  // Цвета для отрисовки штрихов кисти на экране
   const getBrushStrokeStyle = () => {
     if (brushMode === "white") return "rgba(255, 255, 255, 0.95)"
     if (brushMode === "black") return "rgba(0, 0, 0, 0.95)"
-    return "rgba(236, 72, 153, 0.65)" // lama
+    return "rgba(236, 72, 153, 0.65)"
   }
 
-  // --- ЛОГИКА РАБОТЫ КИСТИ ---
   const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = brushCanvasRef.current
     if (!canvas) return { x: 0, y: 0 }
@@ -222,7 +214,6 @@ export function ImageViewer({
       const oCtx = offscreen.getContext("2d")
 
       if (oCtx) {
-        // Очищаем оффскрин в прозрачный цвет
         oCtx.clearRect(0, 0, offscreen.width, offscreen.height)
 
         const scaleX = img.naturalWidth / screenCanvas.width
@@ -236,9 +227,6 @@ export function ImageViewer({
         const imgData = oCtx.getImageData(0, 0, offscreen.width, offscreen.height)
         const d = imgData.data
 
-        // Формируем бинарную маску по АЛЬФА-КАНАЛУ (прозрачности штриха)!
-        // Благодаря этому чёрный (0,0,0), белый (255,255,255) и розовый LaMa
-        // одинаково надёжно превращаются в белую маску области закраски (255,255,255).
         for (let i = 0; i < d.length; i += 4) {
           if (d[i + 3] > 15) {
             d[i] = 255
@@ -268,7 +256,6 @@ export function ImageViewer({
     }
   }
 
-  // --- ЛОГИКА РИСОВАНИЯ РАМОК БАБЛОВ (BOX TOOL) ---
   const handleMouseDown = (e: React.MouseEvent) => {
     if (activeTool === "brush") return
     if (!imageSrc || isEditing) return
@@ -358,7 +345,7 @@ export function ImageViewer({
             </div>
           )}
 
-          {/* РЕЖИМЫ КИСТИ: LAMA / WHITE / BLACK */}
+          {/* РЕЖИМЫ КИСТИ */}
           {activeTool === "brush" && imageSrc && (
             <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
               <button
@@ -405,7 +392,7 @@ export function ImageViewer({
             </div>
           )}
 
-          {/* НАСТРОЙКА РАЗМЕРА КИСТИ */}
+          {/* РАЗМЕР КИСТИ */}
           {activeTool === "brush" && imageSrc && (
             <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs">
               <span className="text-[11px] font-medium text-slate-400">Размер (↑/↓):</span>
@@ -422,7 +409,7 @@ export function ImageViewer({
           )}
         </div>
 
-        {/* ПЕРЕКЛЮЧАТЕЛЬ СКАНОК: ORIGINAL / CLEANED */}
+        {/* ПЕРЕКЛЮЧАТЕЛЬ СКАНОК */}
         {imageSrc && (
           <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
             <button
@@ -481,7 +468,7 @@ export function ImageViewer({
               className="block w-full rounded-lg border border-slate-800"
             />
 
-            {/* ХОЛСТ КИСТИ (LAMA / WHITE / BLACK) */}
+            {/* ХОЛСТ КИСТИ */}
             <canvas
               ref={brushCanvasRef}
               onMouseDown={handleBrushMouseDown}
@@ -494,7 +481,7 @@ export function ImageViewer({
               ].join(" ")}
             />
 
-            {/* ВЫСОКОКОНТРАСТНЫЙ КУРСОР КИСТИ */}
+            {/* КУРСОР КИСТИ */}
             {activeTool === "brush" && (
               <div
                 ref={cursorRef}
@@ -509,7 +496,7 @@ export function ImageViewer({
               </div>
             )}
 
-            {/* ИНДИКАТОР ОБРАБОТКИ КИСТИ */}
+            {/* ИНДИКАТОР ОБРАБОТКИ */}
             {isBrushProcessing && (
               <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[1px] rounded-lg">
                 <div className="flex items-center gap-2 rounded-lg border border-pink-500/50 bg-slate-950/90 px-3 py-2 text-xs font-medium text-pink-300 shadow-2xl">
@@ -533,6 +520,7 @@ export function ImageViewer({
                   editType={editType}
                   activeBox={activeBox}
                   activeRotation={activeRotation}
+                  defaultFontSize={defaultFontSize}
                   onStartTransform={startTransform}
                   onSelect={onSelect}
                   onUpdate={onUpdateBlock}

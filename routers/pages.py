@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from database import get_db, db_session
 from schemas import SavePageBlocksRequest, SpotCleanRequest
 from schemas.blocks import BrushCleanRequest
-from services.cleaner import spot_clean_region, inpaint_by_brush_mask
+from services.cleaner import spot_clean_region, inpaint_by_brush_mask, load_image_cv2
 from services.page_service import (
     save_page_blocks_service,
     detect_page_bubbles_service,
@@ -217,9 +217,10 @@ async def spot_clean_page(page_id: int, req: SpotCleanRequest):
     if not os.path.exists(source_path):
         raise HTTPException(status_code=404, detail="Исходный файл страницы не найден")
 
-    image = cv2.imread(source_path)
-    if image is None:
-        raise HTTPException(status_code=500, detail="Не удалось открыть изображение")
+    try:
+        image = load_image_cv2(source_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось открыть изображение: {e}")
 
     box_dict = {
         "x": req.x,
@@ -271,9 +272,10 @@ async def brush_clean_page(page_id: int, req: BrushCleanRequest):
     orig_path = str(page_row["file_path"])
     source_path = str(page_row["clean_path"]) if page_row["clean_path"] and os.path.exists(page_row["clean_path"]) else orig_path
 
-    image = cv2.imread(source_path)
-    if image is None:
-        raise HTTPException(status_code=500, detail="Не удалось открыть изображение")
+    try:
+        image = load_image_cv2(source_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось открыть изображение: {e}")
 
     try:
         raw_b64 = req.mask_base64

@@ -5,7 +5,7 @@ import { createPortal } from "react-dom"
 import {
   BookMarked,
   BarChart3,
-  FileText,
+  Sliders,
   Plus,
   Trash2,
   X,
@@ -13,6 +13,7 @@ import {
   Sparkles,
   Save,
   Check,
+  Type,
 } from "lucide-react"
 import type { GlossaryItem, ProjectStats } from "@/lib/types"
 import {
@@ -21,7 +22,7 @@ import {
   deleteGlossaryItem,
   getProjectStats,
   getProjectTree,
-  updateTitleDescription,
+  updateTitleSettings,
 } from "@/lib/api"
 
 interface ProjectModalProps {
@@ -29,7 +30,7 @@ interface ProjectModalProps {
   titleName: string
   initialTab?: "glossary" | "synopsis" | "stats"
   onClose: () => void
-  onDescriptionUpdated?: (newDescription: string) => void
+  onSettingsUpdated?: (newDescription: string, newFontSize: number) => void
 }
 
 export function ProjectModal({
@@ -37,16 +38,17 @@ export function ProjectModal({
   titleName,
   initialTab = "glossary",
   onClose,
-  onDescriptionUpdated,
+  onSettingsUpdated,
 }: ProjectModalProps) {
   const [mounted, setMounted] = useState(false)
   const [activeTab, setActiveTab] = useState<"glossary" | "synopsis" | "stats">(initialTab)
 
-  // Синопсис и стиль
+  // Синопсис и базовый размер шрифта
   const [description, setDescription] = useState("")
+  const [defaultFontSize, setDefaultFontSize] = useState<number>(14)
   const [loadingDesc, setLoadingDesc] = useState(false)
-  const [isSavingDesc, setIsSavingDesc] = useState(false)
-  const [descSavedSuccess, setDescSavedSuccess] = useState(false)
+  const [isSavingSettings, setIsSavingSettings] = useState(false)
+  const [settingsSavedSuccess, setSettingsSavedSuccess] = useState(false)
 
   // Глоссарий
   const [glossary, setGlossary] = useState<GlossaryItem[]>([])
@@ -64,7 +66,6 @@ export function ProjectModal({
     setMounted(true)
   }, [])
 
-  // Закрытие по Escape
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
@@ -77,8 +78,9 @@ export function ProjectModal({
     setLoadingDesc(true)
     try {
       const data = await getProjectTree(titleId)
-      if (data && data.description !== undefined) {
-        setDescription(data.description || "")
+      if (data) {
+        if (data.description !== undefined) setDescription(data.description || "")
+        if (data.default_font_size !== undefined) setDefaultFontSize(data.default_font_size || 14)
       }
     } finally {
       setLoadingDesc(false)
@@ -115,16 +117,21 @@ export function ProjectModal({
     if (activeTab === "synopsis") loadProjectInfo()
   }, [activeTab, loadGlossary, loadStats, loadProjectInfo])
 
-  const handleSaveDescription = async (e?: React.FormEvent) => {
+  const handleSaveSettings = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    setIsSavingDesc(true)
+    setIsSavingSettings(true)
     try {
-      await updateTitleDescription(titleId, description)
-      setDescSavedSuccess(true)
-      onDescriptionUpdated?.(description)
-      setTimeout(() => setDescSavedSuccess(false), 2000)
+      const res = await updateTitleSettings(titleId, {
+        description: description.trim(),
+        default_font_size: defaultFontSize,
+      })
+      if (res.success) {
+        setSettingsSavedSuccess(true)
+        onSettingsUpdated?.(res.description, res.default_font_size)
+        setTimeout(() => setSettingsSavedSuccess(false), 2000)
+      }
     } finally {
-      setIsSavingDesc(false)
+      setIsSavingSettings(false)
     }
   }
 
@@ -164,7 +171,7 @@ export function ProjectModal({
       }}
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
     >
-      <div className="flex h-[600px] w-full max-w-3xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="flex h-[620px] w-full max-w-3xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
 
         {/* Шапка модалки */}
         <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-6 py-4">
@@ -198,8 +205,8 @@ export function ProjectModal({
                     : "text-slate-400 hover:text-slate-200",
                 ].join(" ")}
               >
-                <FileText className="h-3.5 w-3.5" />
-                Синопсис и Стиль
+                <Sliders className="h-3.5 w-3.5" />
+                Стиль и Настройки
               </button>
 
               <button
@@ -330,29 +337,65 @@ export function ProjectModal({
             </div>
           )}
 
-          {/* ВКЛАДКА 2: СИНОПСИС И СТИЛЬ ПОВЕСТВОВАНИЯ */}
+          {/* ВКЛАДКА 2: СИНОПСИС И НАСТРОЙКИ ТАЙТЛА */}
           {activeTab === "synopsis" && (
             <div className="space-y-4">
-              <div className="flex items-start gap-2.5 rounded-xl border border-indigo-950 bg-indigo-950/30 p-3.5 text-xs text-indigo-200">
-                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-400" />
-                <p>
-                  Этот синопсис и описание характеров напрямую передаются в Gemini при каждом переводе главы или страницы,
-                  а также попадают в JSON-скрипт для Claude/ChatGPT. Опишите здесь ключевые особенности речи героев!
-                </p>
+              {/* Блок настройки базового шрифта манги */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      <Type className="h-3.5 w-3.5 text-indigo-400" />
+                      Базовый размер шрифта по умолчанию
+                    </label>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Применяется ко всем баблам во всех главах этого тайтла (если размер не переопределён вручную).
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDefaultFontSize((prev) => Math.max(8, prev - 1))}
+                      className="h-7 w-7 rounded bg-slate-800 text-xs font-bold text-slate-300 hover:bg-slate-700 hover:text-white"
+                      title="Уменьшить на 1"
+                    >
+                      -
+                    </button>
+                    <input
+                      type="number"
+                      min={8}
+                      max={40}
+                      value={defaultFontSize}
+                      onChange={(e) => setDefaultFontSize(Math.max(8, Math.min(40, Number(e.target.value) || 14)))}
+                      className="h-7 w-14 rounded border border-slate-700 bg-slate-900 text-center font-mono text-xs font-bold text-indigo-300 focus:border-indigo-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setDefaultFontSize((prev) => Math.min(40, prev + 1))}
+                      className="h-7 w-7 rounded bg-slate-800 text-xs font-bold text-slate-300 hover:bg-slate-700 hover:text-white"
+                      title="Увеличить на 1"
+                    >
+                      +
+                    </button>
+                    <span className="text-xs text-slate-400 font-mono">px</span>
+                  </div>
+                </div>
               </div>
 
+              {/* Блок синопсиса и стиля речи */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3">
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Синопсис, атмосфера и правила речи персонажей
                 </label>
 
                 {loadingDesc ? (
-                  <div className="flex h-36 items-center justify-center text-xs text-slate-500">
+                  <div className="flex h-32 items-center justify-center text-xs text-slate-500">
                     <Loader2 className="mr-2 h-4 w-4 animate-spin text-slate-400" /> Загрузка...
                   </div>
                 ) : (
                   <textarea
-                    rows={8}
+                    rows={7}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Например:
@@ -371,23 +414,23 @@ export function ProjectModal({
                   </span>
 
                   <button
-                    onClick={() => handleSaveDescription()}
-                    disabled={isSavingDesc}
+                    onClick={() => handleSaveSettings()}
+                    disabled={isSavingSettings}
                     className={[
                       "flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium text-white transition-all shadow-md",
-                      descSavedSuccess
+                      settingsSavedSuccess
                         ? "bg-emerald-600"
                         : "bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50",
                     ].join(" ")}
                   >
-                    {isSavingDesc ? (
+                    {isSavingSettings ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : descSavedSuccess ? (
+                    ) : settingsSavedSuccess ? (
                       <Check className="h-3.5 w-3.5" />
                     ) : (
                       <Save className="h-3.5 w-3.5" />
                     )}
-                    {descSavedSuccess ? "Сохранено!" : "Сохранить синопсис"}
+                    {settingsSavedSuccess ? "Сохранено!" : "Сохранить настройки"}
                   </button>
                 </div>
               </div>
@@ -445,7 +488,6 @@ export function ProjectModal({
                     </p>
                   </div>
 
-                  {/* СТАДИИ В НОВОМ ПОРЯДКЕ: Raw -> Detected -> Cleaned -> Translated -> Done */}
                   <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
                     <p className="text-xs font-semibold text-slate-300">Распределение страниц по стадиям</p>
                     <div className="mt-3 grid grid-cols-5 gap-2.5 text-center text-xs">

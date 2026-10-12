@@ -8,6 +8,7 @@ import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
 interface UseMangaHotkeysProps {
   selectedId: string | null
   textBlocks: TextBlock[]
+  defaultFontSize?: number
   onPrevPage: () => void
   onNextPage: () => void
   onSave: () => void
@@ -20,6 +21,7 @@ interface UseMangaHotkeysProps {
 export function useMangaHotkeys({
   selectedId,
   textBlocks,
+  defaultFontSize = 14,
   onPrevPage,
   onNextPage,
   onSave,
@@ -63,7 +65,6 @@ export function useMangaHotkeys({
       if (!activeBlock) return
 
       // 3. Точечный клин (Spot Clean)
-      // W / Shift+W (White / White & Del)
       if (code === BUBBLE_HOTKEYS.spotWhite.code && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault()
         if (onSpotClean) {
@@ -72,7 +73,6 @@ export function useMangaHotkeys({
         return
       }
 
-      // L / Shift+L (LaMa / LaMa & Del)
       if (code === BUBBLE_HOTKEYS.spotLama.code && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault()
         if (onSpotClean) {
@@ -100,17 +100,17 @@ export function useMangaHotkeys({
         return
       }
 
-      // 6. Размер шрифта (- / +)
+      // 6. Размер шрифта (- / +) — отсчитываем строго от базового размера шрифта тайтла!
+      const currentEffectiveFont = activeBlock.fontSize ?? defaultFontSize
+
       if (key === "-" || key === "_" || code === "NumpadSubtract") {
         e.preventDefault()
-        const curFont = activeBlock.fontSize || Math.max(11, Math.min(16, Math.round(11 + (activeBlock.height || 0.1) * 22)))
-        onUpdateBlock(selectedId, { fontSize: Math.max(8, curFont - 1) })
+        onUpdateBlock(selectedId, { fontSize: Math.max(8, currentEffectiveFont - 1) })
         return
       }
       if (key === "+" || key === "=" || code === "NumpadAdd") {
         e.preventDefault()
-        const curFont = activeBlock.fontSize || Math.max(11, Math.min(16, Math.round(11 + (activeBlock.height || 0.1) * 22)))
-        onUpdateBlock(selectedId, { fontSize: Math.min(36, curFont + 1) })
+        onUpdateBlock(selectedId, { fontSize: Math.min(48, currentEffectiveFont + 1) })
         return
       }
 
@@ -121,7 +121,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 8. Белая обводка текста (S)
+      // 8. Обводка текста (S)
       if (code === BUBBLE_HOTKEYS.toggleStroke.code && !e.ctrlKey && !e.metaKey) {
         e.preventDefault()
         onUpdateBlock(selectedId, { hasStroke: !activeBlock.hasStroke })
@@ -167,5 +167,16 @@ export function useMangaHotkeys({
 
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selectedId, textBlocks, onPrevPage, onNextPage, onSave, onDeleteBlock, onMoveBlock, onUpdateBlock, onSpotClean])
+  }, [
+    selectedId,
+    textBlocks,
+    defaultFontSize,
+    onPrevPage,
+    onNextPage,
+    onSave,
+    onDeleteBlock,
+    onMoveBlock,
+    onUpdateBlock,
+    onSpotClean,
+  ])
 }

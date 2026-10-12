@@ -22,6 +22,7 @@ import {
   openTranslatedFolder,
   runBrushClean,
 } from "@/lib/api/pages"
+import { getProjectTree } from "@/lib/api/projects"
 
 export function MangaTranslator() {
   const [currentPage, setCurrentPage] = useState<PageItem | null>(null)
@@ -30,6 +31,9 @@ export function MangaTranslator() {
   const [cleanCacheBuster, setCleanCacheBuster] = useState<number>(Date.now())
   const [showTypeset, setShowTypeset] = useState(false)
 
+  // Базовый размер шрифта для текущей выбранной манги (тайтла)
+  const [titleDefaultFontSize, setTitleDefaultFontSize] = useState<number>(14)
+
   const [knownSpeakers, setKnownSpeakers] = useState<string[]>([])
   const [activePageUpdate, setActivePageUpdate] = useState<{ id: number; status: PageStatus; clean_path?: string } | null>(null)
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
@@ -37,7 +41,6 @@ export function MangaTranslator() {
   const chapterPagesRef = useRef<PageItem[]>([])
   chapterPagesRef.current = chapterPages
 
-  // Мьютекс против гонки переключения страниц
   const isSwitchingPageRef = useRef(false)
 
   const refreshSpeakersList = useCallback(async (pageId: number) => {
@@ -61,7 +64,6 @@ export function MangaTranslator() {
     }
   }, [])
 
-  // Хук управления состоянием текстовых блоков
   const {
     textBlocks,
     setTextBlocks,
@@ -81,13 +83,13 @@ export function MangaTranslator() {
     addOrUpdateDrawnBlock,
   } = usePageBlocks(currentPage, handlePageStatusUpdate, refreshSpeakersList)
 
-  // Хук выполнения конвейеров (Auto, OCR, Translate, Clean, Export)
   const pipelines = usePagePipelines({
     currentPage,
     setCurrentPage,
     textBlocks,
     setTextBlocks,
     textBlocksRef,
+    defaultFontSize: titleDefaultFontSize,
     setSelectedId,
     saveBlocks,
     onPageStatusUpdate: handlePageStatusUpdate,
@@ -96,7 +98,6 @@ export function MangaTranslator() {
     cleanCacheBuster,
   })
 
-  // Очистка состояния при удалении главы из сайдбара
   const handleChapterDeleted = useCallback((deletedChapterId: number) => {
     if (currentPage?.chapter_id === deletedChapterId) {
       clearBlocks()
@@ -105,13 +106,11 @@ export function MangaTranslator() {
     }
   }, [currentPage?.chapter_id, clearBlocks])
 
-  // Безопасное атомарное переключение страниц
   const handleSelectPage = async (page: PageItem, skipSave = false) => {
     if (isSwitchingPageRef.current) return
     isSwitchingPageRef.current = true
 
     try {
-      // 1. Сохраняем предыдущую страницу ТОЛЬКО ЕСЛИ на ней реально менялись данные
       if (!skipSave && currentPage && isDirtyRef.current) {
         try {
           await saveBlocksExplicit(currentPage.id, textBlocksRef.current, false)
@@ -120,15 +119,25 @@ export function MangaTranslator() {
         }
       }
 
-      // 2. Мгновенно зачищаем блоки в памяти, чтобы старые данные физически не утекли на новую страницу
       clearBlocks()
 
-      // 3. Загружаем свежие метаданные новой страницы
       const freshPage = (await getPageDetails(page.id)) || page
       setCurrentPage(freshPage)
       setViewMode(freshPage.clean_path ? "clean" : "original")
       setCleanCacheBuster(Date.now())
       refreshSpeakersList(freshPage.id)
+
+      // Загружаем базовый размер шрифта для тайтла страницы
+      if (freshPage.title_id) {
+        try {
+          const tree = await getProjectTree(freshPage.title_id)
+          if (tree?.default_font_size) {
+            setTitleDefaultFontSize(tree.default_font_size)
+          }
+        } catch (err) {
+          console.warn("Не удалось загрузить настройки тайтла:", err)
+        }
+      }
 
       const rawUrl = getPageImageUrl(page.id)
       const dbBlocks = await getPageBlocks(page.id)
@@ -196,7 +205,6 @@ export function MangaTranslator() {
     }
   }
 
-  // Обработчик кисти (LaMa / White / Black)
   const handleBrushClean = useCallback(
     async (maskBase64: string, mode: "lama" | "white" | "black" = "lama") => {
       if (!currentPage) return
@@ -236,6 +244,7 @@ export function MangaTranslator() {
   useMangaHotkeys({
     selectedId,
     textBlocks,
+    defaultFontSize: titleDefaultFontSize,
     onPrevPage: handlePrevPage,
     onNextPage: handleNextPage,
     onSave: () => saveBlocks(true),
@@ -282,6 +291,8 @@ export function MangaTranslator() {
       <BatchChapterActions
         pages={chapterPages}
         currentPageId={currentPage?.id ?? null}
+        titleDefaultFontSize={titleDefaultFontSize}
+        onSaveCurrentPage={() => saveBlocks(true)}
         onPageStatusUpdate={handlePageStatusUpdate}
         onCompleteBatch={() => setSidebarRefreshTrigger((prev) => prev + 1)}
         onRefreshCurrent={() => {
@@ -307,6 +318,7 @@ export function MangaTranslator() {
           pageNumber={currentPage?.page_number}
           hasCleanScan={Boolean(currentPage?.clean_path)}
           viewMode={viewMode}
+          defaultFontSize={titleDefaultFontSize}
           onToggleViewMode={() => setViewMode((prev) => (prev === "original" ? "clean" : "original"))}
           onSelect={setSelectedId}
           onDrawComplete={addOrUpdateDrawnBlock}
@@ -339,6 +351,7 @@ export function MangaTranslator() {
             currentPage={currentPage}
             textBlocks={textBlocks}
             selectedId={selectedId}
+            defaultFontSize={titleDefaultFontSize}
             onSelect={setSelectedId}
             onUpdate={updateBlock}
             onDelete={deleteBlock}

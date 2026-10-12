@@ -5,8 +5,8 @@ import os
 import json
 import re
 import uuid
-from typing import Dict, Any, Tuple
-from urllib.parse import quote
+from pathlib import Path
+from typing import Dict, Any, Tuple, Optional
 from PIL import Image
 
 from database import get_db, db_session
@@ -79,7 +79,6 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
             blocks = [dict(r) for r in cur.fetchall()]
             img = None
 
-            # Автодетект запускается только если на странице нет блоков И страница ещё не была размечена/проверена
             if not blocks and os.path.exists(img_path) and page_status in ["raw", "new"]:
                 img = Image.open(img_path).convert("RGB")
                 detected_boxes = detect_and_filter_bubbles(img)
@@ -157,14 +156,17 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
     return len(translations)
 
 
-def export_chapter_dialogue_payload(chapter_id: int) -> Tuple[str, str]:
-    """Формирует JSON-скрипт главы с системным промптом и возвращает (json_str, filename)."""
+def build_chapter_export_payload(chapter_id: int) -> Tuple[dict, str, str, Optional[str]]:
+    """
+    Внутренний сбор структуры JSON скрипта главы.
+    Возвращает (payload_dict, json_content, filename, chapter_folder_path).
+    """
     conn = get_db()
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        SELECT c.chapter_number, t.id as title_id, t.name as title_name, t.description as title_description
+        SELECT c.chapter_number, c.folder_path as chapter_folder, t.id as title_id, t.name as title_name, t.description as title_description
         FROM chapters c
         JOIN titles t ON t.id = c.title_id
         WHERE c.id = ?
@@ -180,6 +182,7 @@ def export_chapter_dialogue_payload(chapter_id: int) -> Tuple[str, str]:
     title_name = ch_row["title_name"]
     title_description = ch_row["title_description"] or ""
     chapter_num = ch_row["chapter_number"]
+    chapter_folder = ch_row["chapter_folder"]
 
     cursor.execute("SELECT jap_word, rus_word, context FROM glossary WHERE title_id = ?", (title_id,))
     glossary_items = [
@@ -189,7 +192,7 @@ def export_chapter_dialogue_payload(chapter_id: int) -> Tuple[str, str]:
 
     cursor.execute(
         """
-        SELECT tb.id, tb.speaker, tb.jap_text, tb.rus_text, tb.order_index, p.page_number
+        SELECT tb.id, tb.speaker, tb.jap_text, tb.rus_text, tb.order_index, p.page_number, p.file_path
         FROM text_blocks tb
         JOIN pages p ON p.id = tb.page_id
         WHERE p.chapter_id = ?
@@ -198,6 +201,12 @@ def export_chapter_dialogue_payload(chapter_id: int) -> Tuple[str, str]:
         (chapter_id,)
     )
     blocks = [dict(r) for r in cursor.fetchall()]
+
+    if (not chapter_folder or not os.path.exists(chapter_folder)) and blocks:
+        first_img = blocks[0].get("file_path")
+        if first_img and os.path.exists(first_img):
+            chapter_folder = os.path.dirname(first_img)
+
     conn.close()
 
     dialogues = [
@@ -221,9 +230,84 @@ def export_chapter_dialogue_payload(chapter_id: int) -> Tuple[str, str]:
         "dialogues": dialogues
     }
 
+    clean_title = re.sub(r'[\\/*?:"<>|]', "", title_name).replace(" ", "_")
+    clean_chap = re.sub(r'[\\/*?:"<>|]', "", str(chapter_num)).replace(" ", "_")
+    filename = f"{clean_title}_{clean_chap}_dialogue.json"
     json_content = json.dumps(payload, ensure_ascii=False, indent=2)
-    filename = f"{title_name}_chapter_{chapter_num}_dialogue.json"
+
+    return payload, json_content, filename, chapter_folder
+
+
+def export_chapter_dialogue_payload(chapter_id: int) -> Tuple[str, str]:
+    """
+    Формирует JSON-скрипт главы и сохраняет дубликат в папку главы, если она доступна.
+    Возвращает (json_str, filename).
+    """
+    _, json_content, filename, chapter_folder = build_chapter_export_payload(chapter_id)
+
+    if chapter_folder and os.path.exists(chapter_folder):
+        try:
+            target_path = Path(chapter_folder) / filename
+            target_path.write_text(json_content, encoding="utf-8")
+            logger.info(f"JSON скрипт главы сохранён на диск: {target_path}")
+        except Exception as e:
+            logger.warning(f"Не удалось записать файл скрипта в папку {chapter_folder}: {e}")
+
     return json_content, filename
+
+
+def export_chapter_dialogue_to_folder(chapter_id: int) -> Dict[str, Any]:
+    """
+    Явный экспорт JSON-скрипта главы в локальную папку этой главы на диске.
+    """
+    _, json_content, filename, chapter_folder = build_chapter_export_payload(chapter_id)
+
+    if not chapter_folder or not os.path.exists(chapter_folder):
+        raise ValueError("Папка главы на диске не найдена")
+
+    target_path = Path(chapter_folder) / filename
+    target_path.write_text(json_content, encoding="utf-8")
+    logger.info(f"JSON скрипт главы успешно сохранён в папку главы: {target_path}")
+
+    return {
+        "success": True,
+        "filename": filename,
+        "saved_path": str(target_path),
+        "folder": str(chapter_folder)
+    }
+
+
+def get_chapter_folder_path(chapter_id: int) -> Optional[str]:
+    """Возвращает путь к папке главы на диске."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT folder_path FROM chapters WHERE id = ?", (chapter_id,))
+    row = cur.fetchone()
+    folder = row["folder_path"] if row and row["folder_path"] else None
+
+    if (not folder or not os.path.exists(folder)):
+        cur.execute("SELECT file_path FROM pages WHERE chapter_id = ? LIMIT 1", (chapter_id,))
+        p_row = cur.fetchone()
+        if p_row and p_row["file_path"] and os.path.exists(p_row["file_path"]):
+            folder = os.path.dirname(p_row["file_path"])
+
+    conn.close()
+    return folder
+
+
+def find_latest_dialogue_json_in_folder(chapter_id: int) -> Optional[str]:
+    """Находит самый свежий JSON файл скрипта диалогов в папке главы."""
+    folder = get_chapter_folder_path(chapter_id)
+    if not folder or not os.path.exists(folder):
+        return None
+
+    json_files = list(Path(folder).glob("*.json"))
+    if not json_files:
+        return None
+
+    # Сортируем по времени модификации (самый свежий первый)
+    json_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    return str(json_files[0])
 
 
 def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[str, int]:

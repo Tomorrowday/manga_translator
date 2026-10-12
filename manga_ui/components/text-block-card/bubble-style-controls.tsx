@@ -15,14 +15,21 @@ import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
 
 interface BubbleStyleControlsProps {
   block: TextBlock
+  defaultFontSize?: number
   onChange: (patch: Partial<TextBlock>) => void
 }
 
-export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProps) {
+export function BubbleStyleControls({
+  block,
+  defaultFontSize = 14,
+  onChange,
+}: BubbleStyleControlsProps) {
   const isEllipse = block.shape === "ellipse"
   const isFit = block.paddingMode === "fit"
   const isMinHyphens = block.minHyphens !== false
   const isWhiteText = block.textColor === "white"
+
+  const currentEffectiveSize = block.fontSize ?? defaultFontSize
 
   return (
     <div
@@ -53,8 +60,7 @@ export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProp
           <button
             type="button"
             onClick={() => {
-              const current = block.fontSize || Math.max(11, Math.min(16, Math.round(11 + (block.height || 0.1) * 22)))
-              onChange({ fontSize: Math.max(8, current - 1) })
+              onChange({ fontSize: Math.max(8, currentEffectiveSize - 1) })
             }}
             className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
             title="Уменьшить шрифт [-]"
@@ -66,17 +72,16 @@ export function BubbleStyleControls({ block, onChange }: BubbleStyleControlsProp
             onClick={() => onChange({ fontSize: undefined })}
             className={[
               "px-1.5 h-6 rounded text-[10px] font-bold transition-colors",
-              !block.fontSize ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200",
+              block.fontSize === undefined ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200",
             ].join(" ")}
-            title="Автоматический размер шрифта"
+            title={`Автоматический размер по умолчанию (${defaultFontSize}px)`}
           >
-            Auto
+            Auto ({defaultFontSize})
           </button>
           <button
             type="button"
             onClick={() => {
-              const current = block.fontSize || Math.max(11, Math.min(16, Math.round(11 + (block.height || 0.1) * 22)))
-              onChange({ fontSize: Math.min(36, current + 1) })
+              onChange({ fontSize: Math.min(48, currentEffectiveSize + 1) })
             }}
             className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
             title="Увеличить шрифт [+]"

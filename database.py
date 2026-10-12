@@ -33,6 +33,7 @@ def init_db():
                 name TEXT NOT NULL,
                 folder_path TEXT NOT NULL,
                 description TEXT DEFAULT '',
+                default_font_size INTEGER DEFAULT 14,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -97,12 +98,15 @@ def init_db():
             )
         ''')
 
-        # Проверка и миграция описания в titles
+        # Проверка и миграции titles
         cursor.execute("PRAGMA table_info(titles)")
         title_cols = [row["name"] for row in cursor.fetchall()]
         if "description" not in title_cols:
             cursor.execute("ALTER TABLE titles ADD COLUMN description TEXT DEFAULT ''")
             print("Миграция: добавлена колонка 'description' в titles")
+        if "default_font_size" not in title_cols:
+            cursor.execute("ALTER TABLE titles ADD COLUMN default_font_size INTEGER DEFAULT 14")
+            print("Миграция: добавлена колонка 'default_font_size' в titles")
 
         # Проверка и миграция panels_json в pages
         cursor.execute("PRAGMA table_info(pages)")
