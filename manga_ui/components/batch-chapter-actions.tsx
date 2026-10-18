@@ -63,8 +63,22 @@ export function BatchChapterActions({
   const percent = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
   const chapterId = pages[0]?.chapter_id
 
+  // Защита несохраненных данных текущей страницы перед любым массовым действием
+  const ensureCurrentPageSaved = async () => {
+    if (onSaveCurrentPage) {
+      try {
+        await onSaveCurrentPage()
+      } catch (err) {
+        console.warn("Не удалось сохранить текущую страницу перед пакетным действием:", err)
+      }
+    }
+  }
+
   const runBatch = async (action: BatchAction, worker: (page: PageItem, index: number) => Promise<void>) => {
     if (pages.length === 0 || isRunning) return
+
+    await ensureCurrentPageSaved()
+
     setJustFinished(null)
     setProgress({ action, done: 0, total: pages.length, label: ACTION_LABELS[action] })
 
@@ -110,6 +124,8 @@ export function BatchChapterActions({
   const translateChapter = async () => {
     if (!chapterId || isRunning) return
 
+    await ensureCurrentPageSaved()
+
     setJustFinished(null)
     setProgress({
       action: "translate",
@@ -146,13 +162,7 @@ export function BatchChapterActions({
   const exportAll = async () => {
     if (pages.length === 0 || isRunning) return
 
-    if (onSaveCurrentPage) {
-      try {
-        await onSaveCurrentPage()
-      } catch (err) {
-        console.warn("Не удалось сохранить текущую страницу перед Export All:", err)
-      }
-    }
+    await ensureCurrentPageSaved()
 
     runBatch("export", async (page) => {
       const fresh = (await getPageDetails(page.id)) || page
@@ -177,6 +187,8 @@ export function BatchChapterActions({
 
   const handleExportScript = async () => {
     if (!chapterId) return
+    await ensureCurrentPageSaved()
+
     setProgress({ action: "script-export", done: 0, total: 1, label: "Saving JSON to chapter folder..." })
     try {
       const res = await exportChapterScriptToFolder(chapterId)
@@ -193,6 +205,7 @@ export function BatchChapterActions({
   // Импорт JSON: открывает нативный диалог в папке текущей главы, либо fallback
   const handleImportClick = async () => {
     if (!chapterId || isRunning) return
+    await ensureCurrentPageSaved()
 
     setProgress({ action: "script-import", done: 0, total: 1, label: "Opening chapter folder..." })
     try {
@@ -224,7 +237,6 @@ export function BatchChapterActions({
         onCompleteBatch?.()
         onRefreshCurrent()
       } else {
-        // Если GUI диалог на бэкенде недоступен, открываем стандартный file input браузера
         fileInputRef.current?.click()
       }
     } catch (err) {
@@ -238,6 +250,8 @@ export function BatchChapterActions({
   const handleImportScriptFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file || !chapterId) return
+
+    await ensureCurrentPageSaved()
 
     setProgress({ action: "script-import", done: 0, total: 1, label: "Importing translations & speakers..." })
     try {

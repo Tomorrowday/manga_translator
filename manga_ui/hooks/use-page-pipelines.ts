@@ -169,6 +169,9 @@ export function usePagePipelines({
     if (!currentPage || textBlocks.length === 0) return
     setIsBatchTranslating(true)
     try {
+      // Сохраняем актуальное состояние страницы перед запросом перевода
+      await saveBlocks(true)
+
       const currentBlocks = [...textBlocks]
       for (let i = 0; i < currentBlocks.length; i++) {
         const b = currentBlocks[i]
@@ -248,7 +251,6 @@ export function usePagePipelines({
         : getPageImageUrl(currentPage.id)
 
       const baseImg = await loadImage(baseImgUrl)
-      // Передаём defaultFontSize тайтла во избежание сжатия шрифта
       const blob = await bakePageBlob(baseImg, textBlocksRef.current, defaultFontSize)
 
       if (!blob) throw new Error("Не удалось создать Blob изображения в Canvas")
@@ -273,6 +275,9 @@ export function usePagePipelines({
     if (!currentPage) return
     setIsFullAuto(true)
     try {
+      // Сохраняем текущее состояние
+      await saveBlocks(true)
+
       let currentBlocks = [...textBlocks]
       if (currentBlocks.length === 0 && (currentPage.status === "raw" || currentPage.status === "new")) {
         await handleAutoDetect()
@@ -322,7 +327,6 @@ export function usePagePipelines({
 
       const cleanImgUrl = `${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`
       const cleanImg = await loadImage(cleanImgUrl)
-      // Передаём defaultFontSize тайтла
       const blob = await bakePageBlob(cleanImg, textBlocksRef.current, defaultFontSize)
 
       if (blob) {

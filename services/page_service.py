@@ -11,7 +11,7 @@ from PIL import Image
 
 from database import get_db, db_session
 from schemas import TextBlockItem
-from services.cleaner import clean_speech_bubble, load_image_cv2
+from services.cleaner import clean_speech_bubble, load_image_cv2, release_vram
 from services.detector import detect_and_filter_bubbles
 from services.ocr import ocr_image_region
 from logger import logger
@@ -152,7 +152,7 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
 
 
 def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
-    """Очищает баблы на странице (белый клин + LaМа inpainting)."""
+    """Очищает баблы на странице (белый клин + LaМа inpainting) со сбросом VRAM после цикла."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
@@ -179,10 +179,14 @@ def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
         raise RuntimeError(f"Не удалось открыть изображение: {e}")
 
     stats = {"white": 0, "inpaint": 0}
-    for box in blocks:
-        method = clean_speech_bubble(image, box)
-        if method in stats:
-            stats[method] += 1
+    try:
+        for box in blocks:
+            method = clean_speech_bubble(image, box)
+            if method in stats:
+                stats[method] += 1
+    finally:
+        # Освобождаем память после прогона всей страницы
+        release_vram()
 
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
     os.makedirs(clean_dir, exist_ok=True)

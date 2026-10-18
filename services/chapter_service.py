@@ -158,7 +158,7 @@ def translate_entire_chapter_service(chapter_id: int) -> int:
 
 def build_chapter_export_payload(chapter_id: int) -> Tuple[dict, str, str, Optional[str]]:
     """
-    Внутренний сбор структуры JSON скрипта главы.
+    Внутренний сбор структуры JSON скрипта главы с компактным форматом 'id': '{page}-{bubble}'.
     Возвращает (payload_dict, json_content, filename, chapter_folder_path).
     """
     conn = get_db()
@@ -209,17 +209,22 @@ def build_chapter_export_payload(chapter_id: int) -> Tuple[dict, str, str, Optio
 
     conn.close()
 
-    dialogues = [
-        {
-            "id": b["id"],
-            "page": b["page_number"],
-            "bubble": b["order_index"] or (idx + 1),
+    # Сжатый формат элементов диалогов: id = "{page_number}-{bubble_order}"
+    dialogues = []
+    # Счётчик для страниц без заданного order_index
+    page_bubble_counters: Dict[int, int] = {}
+
+    for b in blocks:
+        p_num = b["page_number"]
+        page_bubble_counters[p_num] = page_bubble_counters.get(p_num, 0) + 1
+        bubble_order = b["order_index"] if (b.get("order_index") and b["order_index"] > 0) else page_bubble_counters[p_num]
+
+        dialogues.append({
+            "id": f"{p_num}-{bubble_order}",
             "speaker": b["speaker"] or "",
             "raw": b["jap_text"] or "",
             "ru": b["rus_text"] or ""
-        }
-        for idx, b in enumerate(blocks)
-    ]
+        })
 
     payload = {
         "instructions_for_ai": CLAUDE_CHATGPT_EXPORT_INSTRUCTIONS,
@@ -285,7 +290,7 @@ def get_chapter_folder_path(chapter_id: int) -> Optional[str]:
     row = cur.fetchone()
     folder = row["folder_path"] if row and row["folder_path"] else None
 
-    if (not folder or not os.path.exists(folder)):
+    if not folder or not os.path.exists(folder):
         cur.execute("SELECT file_path FROM pages WHERE chapter_id = ? LIMIT 1", (chapter_id,))
         p_row = cur.fetchone()
         if p_row and p_row["file_path"] and os.path.exists(p_row["file_path"]):
@@ -305,13 +310,15 @@ def find_latest_dialogue_json_in_folder(chapter_id: int) -> Optional[str]:
     if not json_files:
         return None
 
-    # Сортируем по времени модификации (самый свежий первый)
     json_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
     return str(json_files[0])
 
 
 def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[str, int]:
-    """Парсит переведенный JSON файл, сохраняет реплики и распознанных спикеров."""
+    """
+    Парсит JSON файл скрипта, сопоставляя как новый формат '12-3',
+    так и старый формат сырого UUID. Сохраняет переводы и спикеров.
+    """
     text = file_bytes.decode("utf-8").strip()
 
     if "```" in text:
@@ -324,38 +331,85 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
     if not dialogues or not isinstance(dialogues, list):
         raise ValueError("В JSON отсутствует список 'dialogues'")
 
+    # Загружаем существующие блоки главы для сопоставления
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT tb.id, tb.rus_text, tb.speaker, tb.order_index, p.page_number
+        FROM text_blocks tb
+        JOIN pages p ON p.id = tb.page_id
+        WHERE p.chapter_id = ?
+        ORDER BY p.page_number ASC, tb.order_index ASC
+        """,
+        (chapter_id,)
+    )
+    existing_blocks = [dict(r) for r in cur.fetchall()]
+    conn.close()
+
+    # Быстрые словари поиска:
+    # 1. По UUID (для старых файлов)
+    by_uuid: Dict[str, dict] = {b["id"]: b for b in existing_blocks}
+    # 2. По ключу "Page-Order" (для нового формата "12-3")
+    by_page_order: Dict[str, dict] = {f"{b['page_number']}-{b['order_index']}": b for b in existing_blocks}
+
+    # Вспомогательный индекс по порядковому номеру на странице (если order_index был 0)
+    page_blocks_list: Dict[int, list] = {}
+    for b in existing_blocks:
+        page_blocks_list.setdefault(b["page_number"], []).append(b)
+
     updated_count = 0
     updated_speakers_count = 0
 
-    with db_session() as cur:
+    with db_session() as cur_session:
         for item in dialogues:
-            b_id = item.get("id")
+            key_id = str(item.get("id", "")).strip()
             ru_text = item.get("ru", "").strip()
             imported_speaker = item.get("speaker", "").strip()
 
-            if not b_id or (not ru_text and not imported_speaker):
+            if not key_id or (not ru_text and not imported_speaker):
                 continue
 
-            cur.execute("SELECT rus_text, speaker FROM text_blocks WHERE id = ?", (b_id,))
-            current = cur.fetchone()
-            if not current:
+            target_block = None
+
+            # 1. Попытка сопоставить по новому формату "Page-Bubble" (например: "12-3")
+            if "-" in key_id and not len(key_id) > 30:
+                parts = key_id.split("-")
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    p_num = int(parts[0])
+                    b_num = int(parts[1])
+
+                    target_block = by_page_order.get(f"{p_num}-{b_num}")
+                    if not target_block and p_num in page_blocks_list:
+                        # Fallback на индекс в массиве страницы (1-based)
+                        p_list = page_blocks_list[p_num]
+                        if 1 <= b_num <= len(p_list):
+                            target_block = p_list[b_num - 1]
+
+            # 2. Попытка сопоставить по прямому UUID (обратная совместимость)
+            if not target_block and key_id in by_uuid:
+                target_block = by_uuid[key_id]
+
+            if not target_block:
                 continue
 
-            final_ru = ru_text if ru_text else current["rus_text"]
-            final_spk = current["speaker"]
-            if imported_speaker and (not current["speaker"] or current["speaker"] != imported_speaker):
+            real_block_id = target_block["id"]
+            final_ru = ru_text if ru_text else target_block["rus_text"]
+            final_spk = target_block["speaker"]
+
+            if imported_speaker and (not target_block["speaker"] or target_block["speaker"] != imported_speaker):
                 final_spk = imported_speaker
                 updated_speakers_count += 1
 
             new_status = "translated" if final_ru else "ocr-done"
 
-            cur.execute(
+            cur_session.execute(
                 "UPDATE text_blocks SET rus_text = ?, speaker = ?, status = ? WHERE id = ?",
-                (final_ru, final_spk, new_status, b_id)
+                (final_ru, final_spk, new_status, real_block_id)
             )
             updated_count += 1
 
-        cur.execute(
+        cur_session.execute(
             """
             UPDATE pages 
             SET status = 'translated' 

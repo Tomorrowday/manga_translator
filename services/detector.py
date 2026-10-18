@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Tuple
 import cv2
 import numpy as np
 from PIL import Image
+import torch
 from ml.models import ml
 
 
@@ -50,9 +51,6 @@ def expand_box_to_bubble(
         # Только если текст тянется на треть всей страницы — это техническая сноска на полях
         is_giant_page_strip = (bh > img_h * 0.35)
 
-        # Комфортный размах лучей:
-        # Для однострочного японского текста бабл может быть широким овалом,
-        # поэтому запас хода луча масштабируется от высоты bh (до 85px в каждую сторону)
         if is_giant_page_strip:
             max_expand_x = min(20, max(6, int(bw * 0.25)))
         else:
@@ -60,7 +58,7 @@ def expand_box_to_bubble(
 
         max_expand_y = min(20, max(6, int(bh * 0.12)))
 
-        # Вычисляем физические пределы, чтобы не залезть на соседние баблы
+        # Физические пределы
         hard_limit_left = 2
         hard_limit_right = img_w - 2
         hard_limit_top = 2
@@ -69,7 +67,6 @@ def expand_box_to_bubble(
         if other_boxes:
             cx = (x1 + x2) // 2
             for ox1, oy1, ox2, oy2 in other_boxes:
-                # Если боксы перекрываются по вертикали более чем на 8px
                 if min(y2, oy2) - max(y1, oy1) > 8:
                     ocx = (ox1 + ox2) // 2
                     if ocx < cx:
@@ -77,13 +74,11 @@ def expand_box_to_bubble(
                     elif ocx > cx:
                         hard_limit_right = min(hard_limit_right, ox1 - 2)
 
-        # Внутренний срез по высоте (сканируем по центральной части текста)
         y_slice_start = int(y1 + bh * 0.22)
         y_slice_end = int(y2 - bh * 0.22)
         if y_slice_end <= y_slice_start:
             y_slice_start, y_slice_end = y1, y2
 
-        # Внутренний срез по ширине (для сканирования вверх/вниз)
         x_slice_start = int(x1 + bw * 0.25)
         x_slice_end = int(x2 - bw * 0.25)
         if x_slice_end <= x_slice_start:
@@ -96,7 +91,6 @@ def expand_box_to_bubble(
             if cur_x <= hard_limit_left:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            # Останавливаемся при встрече чернильного контура бабла
             if np.min(col) < 160 or np.mean(col) < 210:
                 break
             left_expand = dx
@@ -134,7 +128,6 @@ def expand_box_to_bubble(
                 break
             bottom_expand = dy
 
-        # Отступ внутрь от найденной чернильной стенки (2px)
         pad_in = 2
         final_x1 = max(hard_limit_left, x1 - max(0, left_expand - pad_in))
         final_x2 = min(hard_limit_right, x2 + max(0, right_expand - pad_in))
@@ -142,7 +135,6 @@ def expand_box_to_bubble(
         final_y2 = min(hard_limit_bottom, y2 + max(0, bottom_expand - pad_in))
 
         return final_x1, final_y1, final_x2, final_y2
-    # noinspection PyBroadException
     except Exception:
         return x1, y1, x2, y2
 
@@ -152,9 +144,13 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
         raise RuntimeError("Модель YOLO не загружена")
 
     img_width, img_height = image.size
-    results = ml.yolo_model.predict(image, conf=0.25)
 
-    raw_boxes = [box.xyxy[0].tolist() for box in results[0].boxes]
+    with torch.inference_mode():
+        results = ml.yolo_model.predict(image, conf=0.25, verbose=False)
+        raw_boxes = [box.xyxy[0].tolist() for box in results[0].boxes]
+
+    # Явное удаление объекта результатов для немедленного освобождения буферов CUDA
+    del results
 
     # Геометрический фильтр: исключаем дублирующие внешние рамки
     filtered_boxes = []
@@ -175,7 +171,6 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
         if not is_outer:
             filtered_boxes.append(box_a)
 
-    # Подготавливаем изображение для подгонки рамок
     np_img = np.array(image.convert("RGB"))
     gray_img = cv2.cvtColor(np_img, cv2.COLOR_RGB2GRAY)
 
@@ -189,10 +184,7 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
 
     boxes: List[Dict[str, Any]] = []
     for idx, (ix1, iy1, ix2, iy2) in enumerate(int_boxes):
-        # Список соседей для исключения взаимных коллизий
         other_boxes = [b for j, b in enumerate(int_boxes) if j != idx]
-
-        # Лучевое расширение вплотную к стенкам бабла
         ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2, other_boxes)
 
         px1 = max(0.0, ex1 / img_width)
@@ -207,7 +199,6 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
             "height": max(0.005, py2 - py1)
         })
 
-    # Сортируем баблы в правильном японском порядке чтения
     boxes.sort(key=manga_sort_key)
 
     for idx, b in enumerate(boxes):

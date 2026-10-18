@@ -5,6 +5,7 @@
 import math
 import re
 from PIL import Image
+import torch
 from ml.models import ml
 
 
@@ -36,8 +37,8 @@ def ocr_image_region(
         rotation: float = 0.0
 ) -> str:
     """
-    Вырезает область бабла с динамическим контекстным паддингом (чтобы не срезать
-    крайние иероглифы, фуригану и знаки препинания) и распознает через MangaOCR.
+    Вырезает область бабла с динамическим контекстным паддингом и распознает через MangaOCR
+    внутри безопасного контекста torch.inference_mode().
     """
     if ml.mocr is None:
         raise RuntimeError("MangaOCR не инициализирована")
@@ -64,7 +65,8 @@ def ocr_image_region(
             return ""
 
         crop_img = image.crop((x1, y1, x2, y2))
-        raw_text = ml.mocr(crop_img).strip()
+        with torch.inference_mode():
+            raw_text = ml.mocr(crop_img).strip()
         return normalize_ocr_japanese_text(raw_text)
 
     # Повёрнутый бокс
@@ -97,5 +99,6 @@ def ocr_image_region(
         return ""
 
     final_crop = rotated_sub.crop((rx1, ry1, rx2, ry2))
-    raw_text = ml.mocr(final_crop).strip()
+    with torch.inference_mode():
+        raw_text = ml.mocr(final_crop).strip()
     return normalize_ocr_japanese_text(raw_text)

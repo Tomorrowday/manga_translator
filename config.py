@@ -6,12 +6,17 @@ import re
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Настройка аллокатора PyTorch CUDA строго ДО загрузки torch/нейросетей
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:128")
+
 # Загружаем переменные из .env
 load_dotenv()
 
-# Оффлайн-режим для huggingface/transformers
+# Оффлайн-режим для huggingface/transformers и отключение телеметрии
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["YOLO_VERBOSE"] = "False"
+os.environ["ULTRALYTICS_AUTOINSTALL"] = "False"
 
 # Базовые пути
 BASE_DIR = Path(__file__).resolve().parent
@@ -52,8 +57,11 @@ GEMINI_MODEL_NAME = "gemini-3.5-flash-lite"
 # НАСТРОЙКИ КЛИНА И INPAINTING (LAMA)
 # =====================================================================
 # False (по умолчанию): цветные вебтуны/манхва сохраняют цвет, ч/б манга обесцвечивается
-# True: ВСЕГДА принудительно обесцвечивать результат LaMa в строгое ч/б (как было ранее)
+# True: ВСЕГДА принудительно обесцвечивать результат LaMa в строгое ч/б
 LAMA_FORCE_GRAYSCALE = os.getenv("LAMA_FORCE_GRAYSCALE", "false").lower() in ("true", "1", "yes")
+
+# Максимальная сторона кропа, подаваемая в нейросеть LaMa (защита от OOM при огромных мазках кисти)
+MAX_LAMA_DIM = int(os.getenv("MAX_LAMA_DIM", "2048"))
 
 
 def natural_sort_key(s: str):

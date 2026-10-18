@@ -1,8 +1,10 @@
 // lib/typeset/hyphenation.ts
-// Алгоритм русской слогоразбивки и переносов для верстки в баблах
+// Алгоритм русской слогоразбивки и переносов по правилам русской орфографии (ПАС)
 
 const RUS_VOWELS = new Set("аеёиоуыэюяАЕЁИОУЫЭЮЯ")
+const RUS_CONSONANTS = new Set("бвгджзклмнпрстфхцчшщБВГДЖЗКЛМНПРСТФХЦЧШЩ")
 const RUS_SIGNS = new Set("ьъйЬЪЙ")
+const RUS_SONORANTS = new Set("рлмнйРЛМНЙ")
 
 export function appendHyphenSafe(str: string): string {
   if (!str) return str
@@ -16,23 +18,32 @@ export function appendHyphenSafe(str: string): string {
 
 export function cleanLeadingPunct(str: string): string {
   if (!str) return str
-  // Если строка состоит только из дефисов, тире, минусов или пробелов (например, отдельное "—" или "-"), не стираем её!
+  // Если строка состоит только из дефисов, тире или пробелов (например, отдельное "—"), не стираем её
   if (/^[-—–−\s]+$/.test(str)) {
     return str.trim()
   }
   return str.replace(/^[-—–−\s]+/, "")
 }
 
+function hasVowel(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (RUS_VOWELS.has(s[i])) return true
+  }
+  return false
+}
+
 export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffix: string }> {
+  // 1. Если в слове уже есть дефис (например: "где-то", "темно-синий") — делим по нему
   if (word.includes("-")) {
     const dashIdx = word.indexOf("-")
     const pfx = word.slice(0, dashIdx + 1)
     const sfx = cleanLeadingPunct(word.slice(dashIdx + 1))
-    if (pfx && sfx) {
+    if (pfx && sfx && pfx.length >= 2 && sfx.length >= 2) {
       return [{ prefix: pfx, suffix: sfx }]
     }
   }
 
+  // Выделяем ведущую пунктуацию, корневую буквенную часть и хвостовую пунктуацию
   const match = word.match(/^([.«"(\[…\s]*)([а-яА-ЯёЁa-zA-Z]+)(.*)$/)
   if (!match) return []
 
@@ -40,30 +51,73 @@ export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffi
   const core = match[2]
   const trailPunct = match[3]
 
+  // По правилам переноса: минимум 4 буквы в слове (по 2 буквы с каждой стороны)
   if (core.length < 4) return []
 
   const splits: Array<{ prefix: string; suffix: string }> = []
-  let vowelsBefore = 0
+  const n = core.length
 
-  for (let i = 0; i < core.length; i++) {
-    if (RUS_VOWELS.has(core[i])) vowelsBefore++
+  for (let i = 1; i <= n - 2; i++) {
+    const leftPart = core.slice(0, i)
+    const rightPart = core.slice(i)
 
-    if (i < 1 || i >= core.length - 2) continue
-    if (vowelsBefore === 0) continue
+    // Правило 1: Нельзя оставлять или переносить 1 букву
+    if (leftPart.length < 2 || rightPart.length < 2) continue
 
-    const nextChar = core[i + 1]
-    if (RUS_SIGNS.has(nextChar)) continue
+    // Правило 2: В обеих частях слова обязательно должна быть хотя бы одна гласная
+    if (!hasVowel(leftPart) || !hasVowel(rightPart)) continue
 
-    let vowelsAfter = 0
-    for (let j = i + 1; j < core.length; j++) {
-      if (RUS_VOWELS.has(core[j])) vowelsAfter++
+    const charBefore = core[i - 1]
+    const charAfter = core[i]
+
+    // Правило 3: Знаки ь, ъ, й никогда не отрываются от предшествующей буквы
+    if (RUS_SIGNS.has(charAfter)) continue
+
+    // Правило 4: Не отрывать согласную от следующей за ней гласной, если перед ней гласная (гла-за, а не гл-аза)
+    if (RUS_VOWELS.has(charBefore) && RUS_VOWELS.has(charAfter)) {
+      // Перенос между двумя гласными допустим (ха-ос, на-ука)
+      const prefix = appendHyphenSafe(leadPunct + leftPart)
+      const suffix = cleanLeadingPunct(rightPart + trailPunct)
+      splits.push({ prefix, suffix })
+      continue
     }
-    if (vowelsAfter === 0) continue
 
-    const prefix = appendHyphenSafe(leadPunct + core.slice(0, i + 1))
-    const suffix = cleanLeadingPunct(core.slice(i + 1) + trailPunct)
-    splits.push({ prefix, suffix })
+    // Правило 5: Стык удвоенных согласных разрывается (мас-са, рус-ский)
+    if (
+      charBefore.toLowerCase() === charAfter.toLowerCase() &&
+      RUS_CONSONANTS.has(charBefore)
+    ) {
+      const prefix = appendHyphenSafe(leadPunct + leftPart)
+      const suffix = cleanLeadingPunct(rightPart + trailPunct)
+      splits.push({ prefix, suffix })
+      continue
+    }
+
+    // Правило 6: Сонорная согласная (р, л, м, н, й) перед шумной согласной отходит влево (пар-та, пол-ка, бан-ка)
+    if (RUS_SONORANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
+      const prefix = appendHyphenSafe(leadPunct + leftPart)
+      const suffix = cleanLeadingPunct(rightPart + trailPunct)
+      splits.push({ prefix, suffix })
+      continue
+    }
+
+    // Правило 7: Базовый слогораздел — после гласной перед согласной (ко-ро-ва)
+    if (RUS_VOWELS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
+      const prefix = appendHyphenSafe(leadPunct + leftPart)
+      const suffix = cleanLeadingPunct(rightPart + trailPunct)
+      splits.push({ prefix, suffix })
+      continue
+    }
+
+    // Правило 8: Перенос между группой шумных согласных (сес-тра или се-стра)
+    if (RUS_CONSONANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
+      const prefix = appendHyphenSafe(leadPunct + leftPart)
+      const suffix = cleanLeadingPunct(rightPart + trailPunct)
+      splits.push({ prefix, suffix })
+      continue
+    }
   }
 
+  // Возвращаем варианты от самых длинных префиксов к коротким
   return splits.reverse()
 }

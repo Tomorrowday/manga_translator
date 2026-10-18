@@ -1,6 +1,6 @@
 // lib/typeset/layout.ts
-// Автоматический перенос строк, поддержка ручных переносов (\n)
-// и подбор размера шрифта под геометрию бабла с режимом минимизации дефисов
+// Автоматический перенос строк, поддержка ручных переносов (\n),
+// подбор размера шрифта под геометрию бабла и строгое оптическое центрирование (устранение влияния пробелов)
 
 import { cleanLeadingPunct, getWordHyphenSplits, appendHyphenSafe } from "./hyphenation"
 
@@ -10,6 +10,29 @@ export function getEllipseWidthAtY(yOffset: number, rx: number, ry: number): num
   }
   const val = Math.max(0, 1 - (yOffset / ry) ** 2)
   return Math.max(rx * 0.58, 2 * rx * Math.sqrt(val))
+}
+
+function cleanAndTrimLines(rawLines: string[]): string[] {
+  const result: string[] = []
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const trimmed = rawLines[i].trim()
+    result.push(trimmed)
+  }
+
+  // Удаляем висячую пунктуацию на отдельных строках (точки, запятые, многоточия)
+  for (let i = result.length - 1; i > 0; i--) {
+    const cur = result[i]
+    if (/^[.,!?:;…«»"'\s]+$/.test(cur)) {
+      result[i - 1] = (result[i - 1] + cur).trim()
+      result.splice(i, 1)
+    } else if (/^[-—–−]+$/.test(cur)) {
+      result[i - 1] = (result[i - 1] + " " + cur).trim()
+      result.splice(i, 1)
+    }
+  }
+
+  return result
 }
 
 export function layoutBubbleTextLines(
@@ -42,7 +65,6 @@ export function layoutBubbleTextLines(
       const rx = (boxW / 2) * widthRatio
       const ry = (boxH / 2) * widthRatio
 
-      // Оценка числа строк с учетом ручных переносов
       const estLines = Math.max(
         1,
         Math.min(
@@ -59,7 +81,6 @@ export function layoutBubbleTextLines(
       for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
         const paragraph = paragraphs[pIdx].trim()
         if (!paragraph) {
-          // Пустая строка от двойного Enter
           if (lines.length < 35) lines.push("")
           continue
         }
@@ -79,7 +100,7 @@ export function layoutBubbleTextLines(
               remainingWords.shift()
               continue
             }
-            const testLine = curLine ? `${curLine} ${w}` : w
+            const testLine = curLine ? `${curLine} ${w}`.trim() : w.trim()
 
             if (ctx.measureText(testLine).width <= allowedW) {
               curLine = testLine
@@ -87,18 +108,17 @@ export function layoutBubbleTextLines(
               continue
             }
 
-            // Слово не влезло в текущую строку:
-            // Если включен режим minHyphens и строка уже не пустая — переносим слово целиком на следующую строку!
+            // Не влезло: если включен режим minHyphens и строка не пуста — переносим всё слово
             if (minHyphens && curLine.length > 0) {
               break
             }
 
-            // Если minHyphens выключен, либо строка еще пуста (слово шире всей строки) — пробуем дефисный перенос
+            // Иначе пробуем дефисный перенос
             let hyphenated = false
             const splits = getWordHyphenSplits(w)
 
             for (const split of splits) {
-              const hyphenTest = curLine ? `${curLine} ${split.prefix}` : split.prefix
+              const hyphenTest = curLine ? `${curLine} ${split.prefix}`.trim() : split.prefix.trim()
               if (ctx.measureText(hyphenTest).width <= allowedW) {
                 curLine = hyphenTest
                 remainingWords[0] = cleanLeadingPunct(split.suffix)
@@ -113,7 +133,7 @@ export function layoutBubbleTextLines(
             if (curLine) {
               break
             } else {
-              // Слово не влезает даже в пустую строку целиком: принудительный разрыв
+              // Слово не влезает даже в пустую строку: принудительный слог
               let splitIdx = -1
               let part = ""
               for (let cIdx = 0; cIdx < w.length; cIdx++) {
@@ -128,11 +148,11 @@ export function layoutBubbleTextLines(
 
               hadHyphenation = true
               if (splitIdx !== -1) {
-                lines.push(appendHyphenSafe(part))
+                lines.push(appendHyphenSafe(part).trim())
                 curLine = ""
                 remainingWords[0] = cleanLeadingPunct(w.slice(splitIdx))
               } else {
-                lines.push(w)
+                lines.push(w.trim())
                 curLine = ""
                 remainingWords.shift()
               }
@@ -140,7 +160,7 @@ export function layoutBubbleTextLines(
             }
           }
 
-          if (curLine) lines.push(curLine)
+          if (curLine) lines.push(curLine.trim())
         }
       }
     } else {
@@ -163,27 +183,25 @@ export function layoutBubbleTextLines(
             remainingWords.shift()
             continue
           }
-          const testLine = curLine ? `${curLine} ${w}` : w
+          const testLine = curLine ? `${curLine} ${w}`.trim() : w.trim()
 
           if (ctx.measureText(testLine).width <= maxW) {
             curLine = testLine
             remainingWords.shift()
           } else {
-            // Если minHyphens активен и уже есть слова в строке — переносим всё слово целиком
             if (minHyphens && curLine.length > 0) {
-              lines.push(curLine)
+              lines.push(curLine.trim())
               curLine = ""
               continue
             }
 
-            // Иначе пробуем дефис
             let hyphenated = false
             const splits = getWordHyphenSplits(w)
 
             for (const split of splits) {
-              const hyphenTest = curLine ? `${curLine} ${split.prefix}` : split.prefix
+              const hyphenTest = curLine ? `${curLine} ${split.prefix}`.trim() : split.prefix.trim()
               if (ctx.measureText(hyphenTest).width <= maxW) {
-                lines.push(hyphenTest)
+                lines.push(hyphenTest.trim())
                 curLine = ""
                 remainingWords[0] = cleanLeadingPunct(split.suffix)
                 hyphenated = true
@@ -194,7 +212,7 @@ export function layoutBubbleTextLines(
 
             if (!hyphenated) {
               if (curLine) {
-                lines.push(curLine)
+                lines.push(curLine.trim())
                 curLine = ""
               } else {
                 let splitIdx = -1
@@ -211,11 +229,11 @@ export function layoutBubbleTextLines(
 
                 hadHyphenation = true
                 if (splitIdx !== -1) {
-                  lines.push(appendHyphenSafe(part))
+                  lines.push(appendHyphenSafe(part).trim())
                   curLine = ""
                   remainingWords[0] = cleanLeadingPunct(w.slice(splitIdx))
                 } else {
-                  lines.push(w)
+                  lines.push(w.trim())
                   curLine = ""
                   remainingWords.shift()
                 }
@@ -223,45 +241,34 @@ export function layoutBubbleTextLines(
             }
           }
         }
-        if (curLine) lines.push(curLine)
+        if (curLine) lines.push(curLine.trim())
       }
     }
 
-    // Удаляем висячую пунктуацию на отдельных строках (точки, запятые и т.д.)
-    for (let i = lines.length - 1; i > 0; i--) {
-      const trimmedLine = lines[i].trim()
-      // Если это только пунктуация закрытия строки/предложения
-      if (/^[.,!?:;…«»"'\s]+$/.test(trimmedLine)) {
-        lines[i - 1] = lines[i - 1].trimEnd() + trimmedLine
-        lines.splice(i, 1)
-      } else if (/^[-—–−]+$/.test(trimmedLine)) {
-        // Если тире оказалось одно на новой строке, подтягиваем его к предыдущей с пробелом
-        lines[i - 1] = lines[i - 1].trimEnd() + " " + trimmedLine
-        lines.splice(i, 1)
-      }
-    }
+    // Полный тримминг всех строк перед замером и рендерингом (устранение сдвига от пробела)
+    const cleanedLines = cleanAndTrimLines(lines)
 
     const targetW = isEllipse ? boxW * 0.9 : boxW * widthRatio
-    const allLinesFitWidth = lines.every((line) => ctx.measureText(line).width <= targetW * 1.02)
-    const totalHeight = lines.length * lineHeight
+    const allLinesFitWidth = cleanedLines.every((line) => ctx.measureText(line.trim()).width <= targetW * 1.02)
+    const totalHeight = cleanedLines.length * lineHeight
     const fitsHeight = totalHeight <= boxH * 0.96
 
-    // Если всё поместилось:
     if (allLinesFitWidth && fitsHeight) {
       if (minHyphens && hadHyphenation && curSize > 10) {
         curSize = curSize - 1
         continue
       }
-      return { lines, actualFontSize: curSize, lineHeight }
+      return { lines: cleanedLines, actualFontSize: curSize, lineHeight }
     }
 
     if (curSize <= 8) {
-      return { lines, actualFontSize: curSize, lineHeight }
+      return { lines: cleanedLines, actualFontSize: curSize, lineHeight }
     }
 
     curSize = Math.max(8, curSize - 1)
   }
 
   const finalLineHeight = Math.round(curSize * 1.15)
-  return { lines: text.split(/\r?\n/), actualFontSize: curSize, lineHeight: finalLineHeight }
+  const fallbackLines = paragraphs.map((p) => p.trim())
+  return { lines: fallbackLines, actualFontSize: curSize, lineHeight: finalLineHeight }
 }
