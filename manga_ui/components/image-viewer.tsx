@@ -558,6 +558,15 @@ export function ImageViewer({
               </>
             ) : (
               <>
+                <span>Порядок:</span>
+                <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono font-bold text-violet-300 border border-slate-700">
+                  {BUBBLE_HOTKEYS.moveOrderUp.label}
+                </kbd>{" "}
+                /{" "}
+                <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono font-bold text-violet-300 border border-slate-700">
+                  {BUBBLE_HOTKEYS.moveOrderDown.label}
+                </kbd>
+                <span className="mx-1 text-slate-700">|</span>
                 <span>Spot:</span>
                 <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-slate-200 border border-slate-700">
                   {BUBBLE_HOTKEYS.spotWhite.label}
@@ -585,10 +594,6 @@ export function ImageViewer({
                   - / +
                 </kbd>{" "}
                 Font
-                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-violet-300 border border-slate-700">
-                  [ / ]
-                </kbd>{" "}
-                Order
               </>
             )}
             <span className="mx-1 text-slate-700">|</span>

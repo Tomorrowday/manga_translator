@@ -88,19 +88,41 @@ export function useMangaHotkeys({
         return
       }
 
-      // 5. Изменение порядка чтения ([ / ])
-      if (code === BUBBLE_HOTKEYS.moveOrderUp.code || (e.altKey && code === "ArrowUp")) {
+      // 5. Изменение порядка чтения баблов: A (выше) / D (ниже)
+      if (
+        (code === BUBBLE_HOTKEYS.moveOrderUp.code || key.toLowerCase() === "a" || key.toLowerCase() === "ф") &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
         e.preventDefault()
         onMoveBlock(selectedId, "up")
         return
       }
-      if (code === BUBBLE_HOTKEYS.moveOrderDown.code || (e.altKey && code === "ArrowDown")) {
+      if (
+        (code === BUBBLE_HOTKEYS.moveOrderDown.code || key.toLowerCase() === "d" || key.toLowerCase() === "в") &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
         e.preventDefault()
         onMoveBlock(selectedId, "down")
         return
       }
 
-      // 6. Размер шрифта (- / +) — отсчитываем строго от базового размера шрифта тайтла!
+      // Альтернативные стрелочки для изменения порядка (Alt+Up / Alt+Down)
+      if (e.altKey && code === "ArrowUp") {
+        e.preventDefault()
+        onMoveBlock(selectedId, "up")
+        return
+      }
+      if (e.altKey && code === "ArrowDown") {
+        e.preventDefault()
+        onMoveBlock(selectedId, "down")
+        return
+      }
+
+      // 6. Размер шрифта (- / +) — отсчитываем строго от базового размера шрифта тайтла
       const currentEffectiveFont = activeBlock.fontSize ?? defaultFontSize
 
       if (key === "-" || key === "_" || code === "NumpadSubtract") {

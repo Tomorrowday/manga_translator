@@ -22,43 +22,41 @@ def manga_sort_key(box: Dict[str, float]) -> tuple:
 
 def expand_box_to_bubble(
     gray_img: np.ndarray,
-    x1: int,
-    y1: int,
-    x2: int,
-    y2: int,
+    orig_x1: int,
+    orig_y1: int,
+    orig_x2: int,
+    orig_y2: int,
     other_boxes: List[Tuple[int, int, int, int]] = None
 ) -> Tuple[int, int, int, int]:
     """
     Деликатное лучевое расширение:
-    Мягко раздвигает бокс в стороны до черных стенок бабла с запасом 2px.
-    Для однострочных вертикальных баблов позволяет лучу дойти до боковых стенок овала.
+    Мягко раздвигает бокс в стороны до черных стенок бабла.
+    ГАРАНТИЯ: Итоговый бокс НИКОГДА не может стать уже или меньше исходного бокса от нейросети.
     """
     try:
         img_h, img_w = gray_img.shape[:2]
 
+        x1 = max(0, min(img_w - 2, orig_x1))
+        y1 = max(0, min(img_h - 2, orig_y1))
+        x2 = max(x1 + 2, min(img_w, orig_x2))
+        y2 = max(y1 + 2, min(img_h, orig_y2))
+
         bw = x2 - x1
         bh = y2 - y1
 
-        if bw <= 0 or bh <= 0:
-            return x1, y1, x2, y2
+        if bw <= 4 or bh <= 4:
+            return orig_x1, orig_y1, orig_x2, orig_y2
 
-        # Проверяем среднюю яркость внутри бокса
-        roi = gray_img[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)]
-        if roi.size == 0 or np.mean(roi > 200) < 0.40:
-            # Тёмный фон или сложный арт — не трогаем границы
-            return x1, y1, x2, y2
+        roi = gray_img[y1:y2, x1:x2]
+        if roi.size == 0 or np.mean(roi > 190) < 0.35:
+            # Слишком тёмный фон или сложный арт — оставляем честный бокс YOLO
+            return orig_x1, orig_y1, orig_x2, orig_y2
 
-        # Только если текст тянется на треть всей страницы — это техническая сноска на полях
-        is_giant_page_strip = (bh > img_h * 0.35)
+        is_giant_page_strip = (bh > img_h * 0.40)
+        max_expand_x = min(20, max(6, int(bw * 0.25))) if is_giant_page_strip else min(70, max(25, int(bh * 0.35)))
+        max_expand_y = min(18, max(6, int(bh * 0.10)))
 
-        if is_giant_page_strip:
-            max_expand_x = min(20, max(6, int(bw * 0.25)))
-        else:
-            max_expand_x = min(85, max(30, int(bh * 0.38)))
-
-        max_expand_y = min(20, max(6, int(bh * 0.12)))
-
-        # Физические пределы
+        # Защитные пределы от соседей
         hard_limit_left = 2
         hard_limit_right = img_w - 2
         hard_limit_top = 2
@@ -67,15 +65,16 @@ def expand_box_to_bubble(
         if other_boxes:
             cx = (x1 + x2) // 2
             for ox1, oy1, ox2, oy2 in other_boxes:
-                if min(y2, oy2) - max(y1, oy1) > 8:
+                # Если соседние боксы перекрываются по вертикали
+                if min(y2, oy2) - max(y1, oy1) > 10:
                     ocx = (ox1 + ox2) // 2
-                    if ocx < cx:
+                    if ocx < cx and ox2 < x1:
                         hard_limit_left = max(hard_limit_left, ox2 + 2)
-                    elif ocx > cx:
+                    elif ocx > cx and ox1 > x2:
                         hard_limit_right = min(hard_limit_right, ox1 - 2)
 
-        y_slice_start = int(y1 + bh * 0.22)
-        y_slice_end = int(y2 - bh * 0.22)
+        y_slice_start = int(y1 + bh * 0.25)
+        y_slice_end = int(y2 - bh * 0.25)
         if y_slice_end <= y_slice_start:
             y_slice_start, y_slice_end = y1, y2
 
@@ -91,7 +90,8 @@ def expand_box_to_bubble(
             if cur_x <= hard_limit_left:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            if np.min(col) < 160 or np.mean(col) < 210:
+            # Чернильная граница бабла: устойчивое падение средней яркости
+            if np.mean(col < 130) > 0.25 or np.mean(col) < 185:
                 break
             left_expand = dx
 
@@ -102,7 +102,7 @@ def expand_box_to_bubble(
             if cur_x >= hard_limit_right:
                 break
             col = gray_img[y_slice_start:y_slice_end, cur_x]
-            if np.min(col) < 160 or np.mean(col) < 210:
+            if np.mean(col < 130) > 0.25 or np.mean(col) < 185:
                 break
             right_expand = dx
 
@@ -113,7 +113,7 @@ def expand_box_to_bubble(
             if cur_y <= hard_limit_top:
                 break
             row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
-            if np.min(row_pix) < 160 or np.mean(row_pix) < 210:
+            if np.mean(row_pix < 130) > 0.25 or np.mean(row_pix) < 185:
                 break
             top_expand = dy
 
@@ -124,19 +124,29 @@ def expand_box_to_bubble(
             if cur_y >= hard_limit_bottom:
                 break
             row_pix = gray_img[cur_y, x_slice_start:x_slice_end]
-            if np.min(row_pix) < 160 or np.mean(row_pix) < 210:
+            if np.mean(row_pix < 130) > 0.25 or np.mean(row_pix) < 185:
                 break
             bottom_expand = dy
 
         pad_in = 2
-        final_x1 = max(hard_limit_left, x1 - max(0, left_expand - pad_in))
-        final_x2 = min(hard_limit_right, x2 + max(0, right_expand - pad_in))
-        final_y1 = max(hard_limit_top, y1 - max(0, top_expand - pad_in))
-        final_y2 = min(hard_limit_bottom, y2 + max(0, bottom_expand - pad_in))
+        exp_x1 = max(hard_limit_left, x1 - max(0, left_expand - pad_in))
+        exp_x2 = min(hard_limit_right, x2 + max(0, right_expand - pad_in))
+        exp_y1 = max(hard_limit_top, y1 - max(0, top_expand - pad_in))
+        exp_y2 = min(hard_limit_bottom, y2 + max(0, bottom_expand - pad_in))
+
+        # ЖЕЛЕЗНАЯ ЗАЩИТА: бокс может только расширяться, но не схлопываться внутрь
+        final_x1 = min(orig_x1, exp_x1)
+        final_x2 = max(orig_x2, exp_x2)
+        final_y1 = min(orig_y1, exp_y1)
+        final_y2 = max(orig_y2, exp_y2)
+
+        # Если после всего ширина меньше 20px при высоте больше 100px — это аномалия, возвращаем оригинал
+        if (final_x2 - final_x1) < 24 and (final_y2 - final_y1) > 80:
+            return orig_x1, orig_y1, orig_x2, orig_y2
 
         return final_x1, final_y1, final_x2, final_y2
     except Exception:
-        return x1, y1, x2, y2
+        return orig_x1, orig_y1, orig_x2, orig_y2
 
 
 def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
@@ -149,10 +159,9 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
         results = ml.yolo_model.predict(image, conf=0.25, verbose=False)
         raw_boxes = [box.xyxy[0].tolist() for box in results[0].boxes]
 
-    # Явное удаление объекта результатов для немедленного освобождения буферов CUDA
     del results
 
-    # Геометрический фильтр: исключаем дублирующие внешние рамки
+    # Фильтр: исключаем дублирующие внешние рамки
     filtered_boxes = []
     for i, box_a in enumerate(raw_boxes):
         x1_a, y1_a, x2_a, y2_a = box_a
@@ -180,7 +189,8 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
         iy1 = int(max(0, y1))
         ix2 = int(min(img_width, x2))
         iy2 = int(min(img_height, y2))
-        int_boxes.append((ix1, iy1, ix2, iy2))
+        if ix2 > ix1 + 4 and iy2 > iy1 + 4:
+            int_boxes.append((ix1, iy1, ix2, iy2))
 
     boxes: List[Dict[str, Any]] = []
     for idx, (ix1, iy1, ix2, iy2) in enumerate(int_boxes):
@@ -195,8 +205,8 @@ def detect_and_filter_bubbles(image: Image.Image) -> List[Dict[str, Any]]:
         boxes.append({
             "x": px1,
             "y": py1,
-            "width": max(0.005, px2 - px1),
-            "height": max(0.005, py2 - py1)
+            "width": max(0.01, px2 - px1),
+            "height": max(0.01, py2 - py1)
         })
 
     boxes.sort(key=manga_sort_key)

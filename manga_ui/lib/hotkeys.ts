@@ -2,6 +2,18 @@
 // ЕДИНЫЙ ЦЕНТР УПРАВЛЕНИЯ ГОРЯЧИМИ КЛАВИШАМИ
 
 export const BUBBLE_HOTKEYS = {
+  // Поднять бабл выше по списку чтения (A / русская Ф)
+  moveOrderUp: {
+    code: "KeyA",
+    label: "A",
+    name: "Move Up",
+  },
+  // Опустить бабл ниже по списку чтения (D / русская В)
+  moveOrderDown: {
+    code: "KeyD",
+    label: "D",
+    name: "Move Down",
+  },
   // Форма бабла: Овал / Прямоугольник (R / русская К)
   toggleShape: {
     code: "KeyR",
@@ -43,18 +55,6 @@ export const BUBBLE_HOTKEYS = {
     code: "KeyU",
     label: "U",
     name: "Uppercase",
-  },
-  // Поднять бабл выше по списку ([ / русская Х)
-  moveOrderUp: {
-    code: "BracketLeft",
-    label: "[",
-    name: "Move Up",
-  },
-  // Опустить бабл ниже по списку (] / русская Ъ)
-  moveOrderDown: {
-    code: "BracketRight",
-    label: "]",
-    name: "Move Down",
   },
   // Точечный клин: Белый (W / русская Ц)
   spotWhite: {

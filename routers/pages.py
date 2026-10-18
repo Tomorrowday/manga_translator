@@ -7,9 +7,11 @@ import shutil
 import cv2
 import time
 import base64
+import mimetypes
+from pathlib import Path
 import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from database import get_db, db_session
 from schemas import SavePageBlocksRequest, SpotCleanRequest
@@ -23,6 +25,35 @@ from services.page_service import (
 )
 
 router = APIRouter(prefix="/api/pages", tags=["Pages"])
+
+
+def serve_image_file_safely(file_path: str) -> Response:
+    """
+    Безопасная отдача изображения клиенту:
+    Считывает байты перед отправкой, что полностью исключает ошибку
+    h11.LocalProtocolError: 'Too little data for declared Content-Length'
+    при быстром перелистывании страниц или одновременной перезаписи файла.
+    """
+    if not file_path or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Файл изображения не найден на диске")
+
+    try:
+        data = Path(file_path).read_bytes()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось прочитать файл: {e}")
+
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "image/png" if file_path.lower().endswith(".png") else "image/jpeg"
+
+    return Response(
+        content=data,
+        media_type=mime_type,
+        headers={
+            "Content-Length": str(len(data)),
+            "Cache-Control": "public, max-age=3600",
+        }
+    )
 
 
 @router.get("/{page_id}")
@@ -106,7 +137,8 @@ async def get_page_image(page_id: int):
 
     if not row or not os.path.exists(row["file_path"]):
         raise HTTPException(status_code=404, detail="Файл страницы не найден на диске")
-    return FileResponse(row["file_path"])
+
+    return serve_image_file_safely(row["file_path"])
 
 
 @router.get("/{page_id}/clean-image")
@@ -121,7 +153,7 @@ async def get_page_clean_image(page_id: int):
         raise HTTPException(status_code=404, detail="Страница не найдена")
 
     target = row["clean_path"] if row["clean_path"] and os.path.exists(row["clean_path"]) else row["file_path"]
-    return FileResponse(target)
+    return serve_image_file_safely(target)
 
 
 @router.get("/{page_id}/blocks")
@@ -294,7 +326,6 @@ async def brush_clean_page(page_id: int, req: BrushCleanRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ошибка обработки маски: {e}")
 
-    # Применяем мазок в выбранном режиме: "lama", "white" или "black"
     inpaint_by_brush_mask(image, mask_img, mode=req.mode or "lama")
 
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
