@@ -1,3 +1,6 @@
+// manga_ui/components/manga-translator.tsx
+// Главный контейнер рабочего пространства с защитой от рассинхронизации страниц
+
 "use client"
 
 import { useState, useCallback, useRef } from "react"
@@ -8,6 +11,7 @@ import { BatchChapterActions } from "@/components/batch-chapter-actions"
 import { TranslatorHeader } from "@/components/translator-header"
 import { TranslationToolbar } from "@/components/translation-toolbar"
 import { TextBlocksList } from "@/components/text-blocks-list"
+import { HotkeysModal } from "@/components/hotkeys-modal"
 import { cropRegion, mapDbBlockToTextBlock } from "@/lib/typeset"
 import { useMangaHotkeys } from "@/hooks/use-manga-hotkeys"
 import { usePageBlocks } from "@/hooks/use-page-blocks"
@@ -30,17 +34,18 @@ export function MangaTranslator() {
   const [viewMode, setViewMode] = useState<"original" | "clean">("original")
   const [cleanCacheBuster, setCleanCacheBuster] = useState<number>(Date.now())
   const [showTypeset, setShowTypeset] = useState(false)
+  const [brushSize, setBrushSize] = useState<number>(32)
 
-  // Базовый размер шрифта для текущей выбранной манги (тайтла)
+  // Базовый размер шрифта тайтла
   const [titleDefaultFontSize, setTitleDefaultFontSize] = useState<number>(14)
 
   const [knownSpeakers, setKnownSpeakers] = useState<string[]>([])
   const [activePageUpdate, setActivePageUpdate] = useState<{ id: number; status: PageStatus; clean_path?: string } | null>(null)
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
+  const [showHotkeysModal, setShowHotkeysModal] = useState(false)
 
   const chapterPagesRef = useRef<PageItem[]>([])
   chapterPagesRef.current = chapterPages
-
   const isSwitchingPageRef = useRef(false)
 
   const refreshSpeakersList = useCallback(async (pageId: number) => {
@@ -111,6 +116,7 @@ export function MangaTranslator() {
     isSwitchingPageRef.current = true
 
     try {
+      // Сохраняем предыдущую страницу перед переходом
       if (!skipSave && currentPage && isDirtyRef.current) {
         try {
           await saveBlocksExplicit(currentPage.id, textBlocksRef.current, false)
@@ -127,7 +133,6 @@ export function MangaTranslator() {
       setCleanCacheBuster(Date.now())
       refreshSpeakersList(freshPage.id)
 
-      // Загружаем базовый размер шрифта для тайтла страницы
       if (freshPage.title_id) {
         try {
           const tree = await getProjectTree(freshPage.title_id)
@@ -241,6 +246,16 @@ export function MangaTranslator() {
     }
   }, [currentPageIdx])
 
+  const handleBrushResize = useCallback((delta: number) => {
+    setBrushSize((prev) => Math.max(6, Math.min(160, prev + delta)))
+  }, [])
+
+  const handleToggleViewMode = useCallback(() => {
+    if (currentPage?.clean_path) {
+      setViewMode((prev) => (prev === "original" ? "clean" : "original"))
+    }
+  }, [currentPage?.clean_path])
+
   useMangaHotkeys({
     selectedId,
     textBlocks,
@@ -248,10 +263,12 @@ export function MangaTranslator() {
     onPrevPage: handlePrevPage,
     onNextPage: handleNextPage,
     onSave: () => saveBlocks(true),
+    onToggleViewMode: handleToggleViewMode,
     onDeleteBlock: deleteBlock,
     onMoveBlock: moveBlock,
     onUpdateBlock: updateBlock,
     onSpotClean: spotCleanBlock,
+    onBrushResize: handleBrushResize,
   })
 
   const translatedCount = textBlocks.filter((b) => b.status === "translated").length
@@ -286,6 +303,7 @@ export function MangaTranslator() {
         onSaveBlocks={() => saveBlocks(true)}
         onPrevPage={handlePrevPage}
         onNextPage={handleNextPage}
+        onOpenHotkeys={() => setShowHotkeysModal(true)}
       />
 
       <BatchChapterActions
@@ -319,7 +337,9 @@ export function MangaTranslator() {
           hasCleanScan={Boolean(currentPage?.clean_path)}
           viewMode={viewMode}
           defaultFontSize={titleDefaultFontSize}
-          onToggleViewMode={() => setViewMode((prev) => (prev === "original" ? "clean" : "original"))}
+          brushSize={brushSize}
+          onBrushResize={handleBrushResize}
+          onToggleViewMode={handleToggleViewMode}
           onSelect={setSelectedId}
           onDrawComplete={addOrUpdateDrawnBlock}
           onUpdateBlock={updateBlock}
@@ -361,6 +381,8 @@ export function MangaTranslator() {
           />
         </section>
       </div>
+
+      {showHotkeysModal && <HotkeysModal onClose={() => setShowHotkeysModal(false)} />}
     </div>
   )
 }

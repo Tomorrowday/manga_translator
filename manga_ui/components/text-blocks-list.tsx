@@ -1,5 +1,8 @@
+// manga_ui/components/text-blocks-list.tsx
+
 "use client"
 
+import { useCallback } from "react"
 import { BookText, Layers } from "lucide-react"
 import type { TextBlock, PageItem } from "@/lib/types"
 import { TextBlockCard } from "@/components/text-block-card"
@@ -29,6 +32,13 @@ export function TextBlocksList({
   onMoveDown,
   onSpotClean,
 }: TextBlocksListProps) {
+  const handleSpotClean = useCallback(
+    (block: TextBlock, method: "auto" | "lama" | "white", deleteAfter?: boolean) => {
+      return onSpotClean(block, method, deleteAfter)
+    },
+    [onSpotClean]
+  )
+
   if (!currentPage) {
     return (
       <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center text-slate-600">
@@ -70,7 +80,7 @@ export function TextBlocksList({
           onMoveDown={() => onMoveDown(block.id)}
           canMoveUp={index > 0}
           canMoveDown={index < textBlocks.length - 1}
-          onSpotClean={(method, deleteAfter) => onSpotClean(block, method, deleteAfter)}
+          onSpotClean={(method, deleteAfter) => handleSpotClean(block, method, deleteAfter)}
         />
       ))}
     </div>

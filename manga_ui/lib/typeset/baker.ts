@@ -1,4 +1,4 @@
-// lib/typeset/baker.ts
+// manga_ui/lib/typeset/baker.ts
 // Рендеринг и запекание тайпсета на Canvas с поддержкой поворота, цвета текста и контрастной обводки
 
 import type { TextBlock } from "../types"
@@ -10,6 +10,17 @@ export interface CropRect {
   width: number
   height: number
   rotation?: number
+}
+
+// Переиспользуемый offscreen canvas для устранения утечек памяти DOM-узлов
+let sharedCropCanvas: HTMLCanvasElement | null = null
+
+function getSharedCropCanvas(): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null
+  if (!sharedCropCanvas) {
+    sharedCropCanvas = document.createElement("canvas")
+  }
+  return sharedCropCanvas
 }
 
 export function loadImage(src: string): Promise<HTMLImageElement> {
@@ -31,15 +42,21 @@ export function cropRegion(img: HTMLImageElement, rect: CropRect): Promise<{ dat
     return Promise.resolve({ dataUrl: "" })
   }
 
+  const canvas = getSharedCropCanvas()
+  if (!canvas) return Promise.resolve({ dataUrl: "" })
+
   const nw = img.naturalWidth
   const nh = img.naturalHeight
-  const canvas = document.createElement("canvas")
-  canvas.width = Math.max(1, Math.round(rect.width * nw))
-  canvas.height = Math.max(1, Math.round(rect.height * nh))
+  const targetW = Math.max(1, Math.round(rect.width * nw))
+  const targetH = Math.max(1, Math.round(rect.height * nh))
+
+  canvas.width = targetW
+  canvas.height = targetH
   const ctx = canvas.getContext("2d")
 
   if (ctx) {
     try {
+      ctx.clearRect(0, 0, targetW, targetH)
       const rot = rect.rotation || 0
       if (Math.abs(rot) >= 0.5) {
         ctx.save()
@@ -112,7 +129,6 @@ export async function bakePageBlob(
     const minHyphens = box.minHyphens !== undefined ? box.minHyphens : true
     const isWhiteText = box.textColor === "white"
 
-    // Если у блока нет кастомного fontSize, берем базовый размер шрифта тайтла
     const baseSize = box.fontSize || defaultFontSize
     const currentFontSize = Math.round(baseSize * (canvas.height / 1200))
     const fontName = box.fontFamily || "v_CCFaceFront"

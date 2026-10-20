@@ -1,6 +1,9 @@
+// manga_ui/components/image-viewer/bubble-overlay-item.tsx
+// Рендеринг бабла на скане с React.memo и useMemo для верстки текста
+
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import React, { useState, useRef, useEffect, useMemo, memo } from "react"
 import { RotateCw } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { layoutBubbleTextLines } from "@/lib/typeset"
@@ -39,7 +42,7 @@ interface BubbleOverlayItemProps {
   onUpdate?: (id: string, patch: Partial<TextBlock>) => void
 }
 
-export function BubbleOverlayItem({
+export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   box,
   index,
   isSelected,
@@ -108,13 +111,11 @@ export function BubbleOverlayItem({
 
   const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     e.stopPropagation()
-
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       commitInlineEdit()
       return
     }
-
     if (e.key === "Escape") {
       e.preventDefault()
       setLocalText(box.rusText || "")
@@ -123,47 +124,7 @@ export function BubbleOverlayItem({
     }
   }
 
-  const renderHandles = () => {
-    if (!isSelected || isInlineEditing) return null
-    return (
-      <>
-        {/* Верхний маркер вращения */}
-        <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-auto z-40">
-          <div
-            onMouseDown={(e) => handleMouseDown(e, "rotate")}
-            className="h-3.5 w-3.5 rounded-full border-2 border-slate-950 bg-amber-400 shadow-md cursor-grab active:cursor-grabbing hover:scale-125 transition-transform flex items-center justify-center"
-            title={`Повернуть бабл (Текущий: ${Math.round(currentRot)}°)`}
-          >
-            <RotateCw className="h-2 w-2 text-slate-900" />
-          </div>
-          <div className="h-3 w-[1.5px] bg-amber-400 shadow-sm" />
-        </div>
-
-        {/* 8 точек изменения размера */}
-        {RESIZE_HANDLES.map(({ dir, cursor, className }) => (
-          <div
-            key={dir}
-            onMouseDown={(e) => handleMouseDown(e, dir)}
-            className={[
-              "absolute z-30 h-2.5 w-2.5 rounded-sm border border-slate-900 bg-amber-400 shadow-sm transition-transform hover:scale-125",
-              cursor,
-              className,
-            ].join(" ")}
-            title={`Изменить размер (${dir.toUpperCase()})`}
-          />
-        ))}
-
-        {/* Бейдж градусов при вращении */}
-        {isEditingCurrent && editType === "rotate" && (
-          <div className="absolute -top-12 left-1/2 -translate-x-1/2 rounded bg-slate-950/90 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-300 border border-amber-500/50 shadow pointer-events-none whitespace-nowrap z-50">
-            {Math.round(currentRot)}°
-          </div>
-        )}
-      </>
-    )
-  }
-
-  // Расчет шрифтов и верстки: используем базовый шрифт тайтла, если не переопределен в блоке
+  // Расчет шрифтов и предпросмотра с мемоизацией верстки
   const naturalH = imgElement?.naturalHeight || 1600
   const naturalW = imgElement?.naturalWidth || 1100
   const displayH = imgElement?.clientHeight || naturalH
@@ -176,16 +137,16 @@ export function BubbleOverlayItem({
   if (!previewCanvas && typeof document !== "undefined") {
     previewCanvas = document.createElement("canvas")
   }
-  const ctx = previewCanvas?.getContext("2d")
-
-  let screenLines: string[] = []
-  let masterActualFontSize = masterFontSize
-  let masterLineHeight = Math.round(masterFontSize * 1.15)
 
   const rawDisplayText = isInlineEditing ? localText : box.rusText || ""
   const displayText = box.isUppercase ? rawDisplayText.toUpperCase() : rawDisplayText
 
-  if (ctx && displayText.trim()) {
+  const { screenLines, masterActualFontSize, masterLineHeight } = useMemo(() => {
+    const ctx = previewCanvas?.getContext("2d")
+    if (!ctx || !displayText.trim()) {
+      return { screenLines: [], masterActualFontSize: masterFontSize, masterLineHeight: Math.round(masterFontSize * 1.15) }
+    }
+
     const res = layoutBubbleTextLines(
       ctx,
       displayText,
@@ -199,16 +160,65 @@ export function BubbleOverlayItem({
       box.isItalic,
       isMinHyphens
     )
-    screenLines = res.lines
-    masterActualFontSize = res.actualFontSize
-    masterLineHeight = res.lineHeight
-  }
+    return {
+      screenLines: res.lines,
+      masterActualFontSize: res.actualFontSize,
+      masterLineHeight: res.lineHeight,
+    }
+  }, [
+    displayText,
+    masterBoxPixelW,
+    masterBoxPixelH,
+    masterFontSize,
+    currentFont,
+    box.shape,
+    padMode,
+    box.isBold,
+    box.isItalic,
+    isMinHyphens,
+  ])
 
   const scale = displayH / naturalH
   const finalScreenFontSize = Math.max(7, Math.round(masterActualFontSize * scale))
   const finalScreenLineHeight = Math.max(8, Math.round(masterLineHeight * scale))
 
-  // ИНЛАЙН-РЕДАКТИРОВАНИЕ ПРЯМО НА СКАНЕ
+  const renderHandles = () => {
+    if (!isSelected || isInlineEditing) return null
+    return (
+      <>
+        <div className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-auto z-40">
+          <div
+            onMouseDown={(e) => handleMouseDown(e, "rotate")}
+            className="h-3.5 w-3.5 rounded-full border-2 border-slate-950 bg-amber-400 shadow-md cursor-grab active:cursor-grabbing hover:scale-125 transition-transform flex items-center justify-center"
+            title={`Повернуть бабл (${Math.round(currentRot)}°)`}
+          >
+            <RotateCw className="h-2 w-2 text-slate-900" />
+          </div>
+          <div className="h-3 w-[1.5px] bg-amber-400 shadow-sm" />
+        </div>
+
+        {RESIZE_HANDLES.map(({ dir, cursor, className }) => (
+          <div
+            key={dir}
+            onMouseDown={(e) => handleMouseDown(e, dir)}
+            className={[
+              "absolute z-30 h-2.5 w-2.5 rounded-sm border border-slate-900 bg-amber-400 shadow-sm transition-transform hover:scale-125",
+              cursor,
+              className,
+            ].join(" ")}
+            title={`Изменить размер (${dir.toUpperCase()})`}
+          />
+        ))}
+
+        {isEditingCurrent && editType === "rotate" && (
+          <div className="absolute -top-12 left-1/2 -translate-x-1/2 rounded bg-slate-950/90 px-1.5 py-0.5 text-[10px] font-mono font-bold text-amber-300 border border-amber-500/50 shadow pointer-events-none whitespace-nowrap z-50">
+            {Math.round(currentRot)}°
+          </div>
+        )}
+      </>
+    )
+  }
+
   if (isInlineEditing) {
     return (
       <div
@@ -253,7 +263,6 @@ export function BubbleOverlayItem({
     )
   }
 
-  // РЕЖИМ 1: ПРЕДПРОСМОТР ТАЙПСЕТА (ТЕКСТ НА СКАНИРОВАНИИ)
   if (showTypeset && !isDraft && hasTranslation) {
     return (
       <div
@@ -321,7 +330,6 @@ export function BubbleOverlayItem({
     )
   }
 
-  // РЕЖИМ 2: СТАНДАРТНАЯ РАЗМЕТКА РАМОК И БАБЛОВ
   return (
     <div
       id={`box-${box.id}`}
@@ -386,4 +394,4 @@ export function BubbleOverlayItem({
       )}
     </div>
   )
-}
+})

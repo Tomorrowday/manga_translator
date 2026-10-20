@@ -1,3 +1,6 @@
+// manga_ui/components/image-viewer.tsx
+// Инструменты разметки баблов и кисти с чистой передачей событий
+
 "use client"
 
 import type React from "react"
@@ -14,7 +17,7 @@ import {
   ArrowDown,
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
-import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
+import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 import { useBoxTransform, type DrawRect } from "@/hooks/use-box-transform"
 import { BubbleOverlayItem } from "@/components/image-viewer/bubble-overlay-item"
 
@@ -27,6 +30,8 @@ interface ImageViewerProps {
   hasCleanScan?: boolean
   viewMode: "original" | "clean"
   defaultFontSize?: number
+  brushSize: number
+  onBrushResize: (delta: number) => void
   onToggleViewMode: () => void
   onSelect: (id: string | null) => void
   onDrawComplete: (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => void
@@ -47,6 +52,8 @@ export function ImageViewer({
   hasCleanScan = false,
   viewMode,
   defaultFontSize = 14,
+  brushSize,
+  onBrushResize,
   onToggleViewMode,
   onSelect,
   onDrawComplete,
@@ -56,40 +63,15 @@ export function ImageViewer({
   const imgRef = useRef<HTMLImageElement>(null)
   const brushCanvasRef = useRef<HTMLCanvasElement>(null)
   const cursorRef = useRef<HTMLDivElement>(null)
+  const { hotkeys } = useHotkeysConfig()
 
   const [activeTool, setActiveTool] = useState<"box" | "brush">("box")
   const [brushMode, setBrushMode] = useState<"lama" | "white" | "black">("lama")
-  const [brushSize, setBrushSize] = useState<number>(32)
   const [isBrushPainting, setIsBrushPainting] = useState<boolean>(false)
   const [isBrushProcessing, setIsBrushProcessing] = useState<boolean>(false)
 
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState<DrawRect | null>(null)
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
-
-      if (e.key === "Tab" && hasCleanScan) {
-        e.preventDefault()
-        onToggleViewMode()
-        return
-      }
-
-      if (activeTool === "brush") {
-        if (e.code === "ArrowDown") {
-          e.preventDefault()
-          setBrushSize((prev) => Math.max(6, prev - 4))
-        } else if (e.code === "ArrowUp") {
-          e.preventDefault()
-          setBrushSize((prev) => Math.min(160, prev + 4))
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [hasCleanScan, onToggleViewMode, activeTool])
 
   const pointFromEvent = useCallback((e: React.MouseEvent | MouseEvent) => {
     const img = imgRef.current
@@ -215,7 +197,6 @@ export function ImageViewer({
 
       if (oCtx) {
         oCtx.clearRect(0, 0, offscreen.width, offscreen.height)
-
         const scaleX = img.naturalWidth / screenCanvas.width
         const scaleY = img.naturalHeight / screenCanvas.height
 
@@ -243,7 +224,6 @@ export function ImageViewer({
         oCtx.putImageData(imgData, 0, 0)
 
         const maskBase64 = offscreen.toDataURL("image/png")
-
         const sCtx = screenCanvas.getContext("2d")
         sCtx?.clearRect(0, 0, screenCanvas.width, screenCanvas.height)
 
@@ -307,7 +287,6 @@ export function ImageViewer({
             </p>
           </div>
 
-          {/* ПЕРЕКЛЮЧАТЕЛЬ ИНСТРУМЕНТОВ: BOX / BRUSH */}
           {imageSrc && (
             <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950 p-1 ml-2">
               <button
@@ -345,7 +324,6 @@ export function ImageViewer({
             </div>
           )}
 
-          {/* РЕЖИМЫ КИСТИ */}
           {activeTool === "brush" && imageSrc && (
             <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
               <button
@@ -392,16 +370,17 @@ export function ImageViewer({
             </div>
           )}
 
-          {/* РАЗМЕР КИСТИ */}
           {activeTool === "brush" && imageSrc && (
             <div className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs">
-              <span className="text-[11px] font-medium text-slate-400">Размер (↑/↓):</span>
+              <span className="text-[11px] font-medium text-slate-400">
+                Размер ({hotkeys.brushSizeUp.label}/{hotkeys.brushSizeDown.label}):
+              </span>
               <input
                 type="range"
                 min="6"
                 max="140"
                 value={brushSize}
-                onChange={(e) => setBrushSize(Number(e.target.value))}
+                onChange={(e) => onBrushResize(Number(e.target.value) - brushSize)}
                 className="h-1.5 w-20 cursor-pointer accent-pink-500"
               />
               <span className="w-6 text-[11px] font-mono text-pink-300">{brushSize}px</span>
@@ -409,7 +388,6 @@ export function ImageViewer({
           )}
         </div>
 
-        {/* ПЕРЕКЛЮЧАТЕЛЬ СКАНОК */}
         {imageSrc && (
           <div className="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1">
             <button
@@ -419,7 +397,7 @@ export function ImageViewer({
                 "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-all",
                 viewMode === "original" ? "bg-slate-800 text-white shadow-sm" : "text-slate-400 hover:text-slate-200",
               ].join(" ")}
-              title="Показать исходный скан (Хоткей: Tab)"
+              title={`Показать исходный скан (${hotkeys.toggleViewMode.label})`}
             >
               <ImageIcon className="h-3.5 w-3.5 text-slate-400" />
               Original
@@ -432,7 +410,7 @@ export function ImageViewer({
                 "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-all disabled:opacity-40",
                 viewMode === "clean" ? "bg-purple-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200",
               ].join(" ")}
-              title={hasCleanScan ? "Показать заклиненный скан (Хоткей: Tab)" : "Сначала выполните клин"}
+              title={hasCleanScan ? `Показать заклиненный скан (${hotkeys.toggleViewMode.label})` : "Сначала выполните клин"}
             >
               <Sparkles className="h-3.5 w-3.5 text-purple-300" />
               Cleaned
@@ -468,7 +446,6 @@ export function ImageViewer({
               className="block w-full rounded-lg border border-slate-800"
             />
 
-            {/* ХОЛСТ КИСТИ */}
             <canvas
               ref={brushCanvasRef}
               onMouseDown={handleBrushMouseDown}
@@ -481,7 +458,6 @@ export function ImageViewer({
               ].join(" ")}
             />
 
-            {/* КУРСОР КИСТИ */}
             {activeTool === "brush" && (
               <div
                 ref={cursorRef}
@@ -496,7 +472,6 @@ export function ImageViewer({
               </div>
             )}
 
-            {/* ИНДИКАТОР ОБРАБОТКИ */}
             {isBrushProcessing && (
               <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[1px] rounded-lg">
                 <div className="flex items-center gap-2 rounded-lg border border-pink-500/50 bg-slate-950/90 px-3 py-2 text-xs font-medium text-pink-300 shadow-2xl">
@@ -506,7 +481,6 @@ export function ImageViewer({
               </div>
             )}
 
-            {/* БАБЛЫ */}
             {activeTool === "box" &&
               boxes.map((box, index) => (
                 <BubbleOverlayItem
@@ -539,7 +513,7 @@ export function ImageViewer({
                 Режим кисти: {brushMode.toUpperCase()} | Закрасьте область и отпустите мышь.
               </span>
             ) : (
-              <span>Resize from 8 points. Double click bubble to edit text inline.</span>
+              <span>8 точек для размера. Двойной клик — редактирование текста.</span>
             )}
           </div>
 
@@ -548,57 +522,51 @@ export function ImageViewer({
               <>
                 <span className="text-slate-400">Размер кисти:</span>
                 <kbd className="inline-flex items-center gap-0.5 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-pink-300 border border-slate-700">
-                  <ArrowUp className="h-2.5 w-2.5" />
+                  {hotkeys.brushSizeUp.label}
                 </kbd>
                 больше
                 <kbd className="inline-flex items-center gap-0.5 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-pink-300 border border-slate-700">
-                  <ArrowDown className="h-2.5 w-2.5" />
+                  {hotkeys.brushSizeDown.label}
                 </kbd>
                 меньше
               </>
             ) : (
               <>
+                <span className="text-amber-400 font-medium">1-7 Font</span>
+                <span className="mx-1 text-slate-700">|</span>
                 <span>Порядок:</span>
                 <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono font-bold text-violet-300 border border-slate-700">
-                  {BUBBLE_HOTKEYS.moveOrderUp.label}
+                  {hotkeys.moveOrderUp.label}
                 </kbd>{" "}
                 /{" "}
                 <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono font-bold text-violet-300 border border-slate-700">
-                  {BUBBLE_HOTKEYS.moveOrderDown.label}
+                  {hotkeys.moveOrderDown.label}
                 </kbd>
                 <span className="mx-1 text-slate-700">|</span>
                 <span>Spot:</span>
                 <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-slate-200 border border-slate-700">
-                  {BUBBLE_HOTKEYS.spotWhite.label}
+                  {hotkeys.spotWhite.label}
                 </kbd>{" "}
                 White
                 <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-purple-300 border border-slate-700">
-                  {BUBBLE_HOTKEYS.spotLama.label}
+                  {hotkeys.spotLama.label}
                 </kbd>{" "}
                 LaMa
-                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-rose-300 border border-slate-700">
-                  {BUBBLE_HOTKEYS.spotLamaDel.label}
-                </kbd>{" "}
-                Del
                 <span className="mx-1 text-slate-700">|</span>
                 <span>Бабл:</span>
                 <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-indigo-300 border border-slate-700">
-                  {BUBBLE_HOTKEYS.toggleShape.label}
+                  {hotkeys.toggleShape.label}
                 </kbd>{" "}
                 Oval
-                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-teal-300 border border-slate-700">
-                  {BUBBLE_HOTKEYS.toggleHyphenation.label}
-                </kbd>{" "}
-                No-Hyph
                 <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-sky-300 border border-slate-700">
-                  - / +
+                  {hotkeys.fontSizeDown.label} / {hotkeys.fontSizeUp.label}
                 </kbd>{" "}
                 Font
               </>
             )}
             <span className="mx-1 text-slate-700">|</span>
             <kbd className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-slate-300 border border-slate-700">
-              Tab
+              {hotkeys.toggleViewMode.label}
             </kbd>{" "}
             Scan
           </div>

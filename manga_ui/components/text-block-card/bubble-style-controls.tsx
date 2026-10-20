@@ -1,3 +1,6 @@
+// manga_ui/components/text-block-card/bubble-style-controls.tsx
+// Динамический селектор шрифтов и кнопки с лейблами хоткеев
+
 "use client"
 
 import {
@@ -11,7 +14,8 @@ import {
   Palette,
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
-import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
+import { MANGA_FONTS } from "@/lib/hotkeys"
+import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 
 interface BubbleStyleControlsProps {
   block: TextBlock
@@ -24,11 +28,12 @@ export function BubbleStyleControls({
   defaultFontSize = 14,
   onChange,
 }: BubbleStyleControlsProps) {
+  const { hotkeys } = useHotkeysConfig()
+
   const isEllipse = block.shape === "ellipse"
   const isFit = block.paddingMode === "fit"
   const isMinHyphens = block.minHyphens !== false
   const isWhiteText = block.textColor === "white"
-
   const currentEffectiveSize = block.fontSize ?? defaultFontSize
 
   return (
@@ -36,7 +41,7 @@ export function BubbleStyleControls({
       onClick={(e) => e.stopPropagation()}
       className="mt-2 space-y-1.5 rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-xs"
     >
-      {/* Селектор шрифта */}
+      {/* Динамический селектор шрифтов из реестра MANGA_FONTS */}
       <div className="flex items-center gap-1.5">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Font:</span>
         <select
@@ -44,13 +49,14 @@ export function BubbleStyleControls({
           onChange={(e) => onChange({ fontFamily: e.target.value })}
           className="w-full rounded border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 outline-none focus:border-indigo-500"
         >
-          <option value="v_CCFaceFront">v_CCFaceFront (Основной)</option>
-          <option value="v_Augie">v_Augie Regular</option>
-          <option value="v_Blambot Casual">v_Blambot Casual Regular</option>
-          <option value="v_CCYadaYadaYadaInt">v_CCYadaYadaYadaInt Regular</option>
-          <option value="v_Mighty Zeo 2.0">v_Mighty Zeo 2.0 Regular</option>
-          <option value="Betina Script">Betina Script</option>
-          <option value="BirchCTT">BirchCTT Normal</option>
+          {MANGA_FONTS.map((f) => {
+            const fontHotkeyLabel = hotkeys[`font${f.index}` as keyof typeof hotkeys]?.label || String(f.index)
+            return (
+              <option key={f.id} value={f.id}>
+                [{fontHotkeyLabel}] {f.label}
+              </option>
+            )
+          })}
         </select>
       </div>
 
@@ -59,13 +65,11 @@ export function BubbleStyleControls({
         <div className="flex items-center gap-1 text-slate-400">
           <button
             type="button"
-            onClick={() => {
-              onChange({ fontSize: Math.max(8, currentEffectiveSize - 1) })
-            }}
-            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-            title="Уменьшить шрифт [-]"
+            onClick={() => onChange({ fontSize: Math.max(8, currentEffectiveSize - 1) })}
+            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors font-mono"
+            title={`Уменьшить шрифт [${hotkeys.fontSizeDown.label}]`}
           >
-            A-
+            -
           </button>
           <button
             type="button"
@@ -80,19 +84,16 @@ export function BubbleStyleControls({
           </button>
           <button
             type="button"
-            onClick={() => {
-              onChange({ fontSize: Math.min(48, currentEffectiveSize + 1) })
-            }}
-            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-            title="Увеличить шрифт [+]"
+            onClick={() => onChange({ fontSize: Math.min(48, currentEffectiveSize + 1) })}
+            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors font-mono"
+            title={`Увеличить шрифт [${hotkeys.fontSizeUp.label}]`}
           >
-            A+
+            +
           </button>
         </div>
 
         {/* Форма, отступ, режим переносов, цвет и начертание */}
         <div className="flex items-center gap-1">
-          {/* Переключатель цвета текста: Черный / Белый */}
           <button
             type="button"
             onClick={() => onChange({ textColor: isWhiteText ? "black" : "white" })}
@@ -104,8 +105,8 @@ export function BubbleStyleControls({
             ].join(" ")}
             title={
               isWhiteText
-                ? "Цвет текста: Белый (обводка черная). Нажмите, чтобы сделать чёрным."
-                : "Цвет текста: Чёрный (обводка белая). Нажмите, чтобы сделать белым."
+                ? "Цвет текста: Белый (обводка черная)"
+                : "Цвет текста: Чёрный (обводка белая)"
             }
           >
             <Palette className="h-3 w-3" />
@@ -121,10 +122,10 @@ export function BubbleStyleControls({
                 ? "border-indigo-500 bg-indigo-600/30 text-indigo-200"
                 : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200",
             ].join(" ")}
-            title={`Форма [${BUBBLE_HOTKEYS.toggleShape.label}]: Овал / Прямоугольник`}
+            title={`Форма [${hotkeys.toggleShape.label}]: Овал / Прямоугольник`}
           >
             {isEllipse ? <CircleDot className="h-3 w-3 text-indigo-400" /> : <Square className="h-3 w-3" />}
-            {isEllipse ? `Oval [${BUBBLE_HOTKEYS.toggleShape.label}]` : `Rect [${BUBBLE_HOTKEYS.toggleShape.label}]`}
+            {isEllipse ? `Oval [${hotkeys.toggleShape.label}]` : `Rect [${hotkeys.toggleShape.label}]`}
           </button>
 
           <button
@@ -136,10 +137,10 @@ export function BubbleStyleControls({
                 ? "border-emerald-500 bg-emerald-600/30 text-emerald-200"
                 : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200",
             ].join(" ")}
-            title={`Режим отступа [${BUBBLE_HOTKEYS.togglePadding.label}]: Fit (в край) / Safe (запас)`}
+            title={`Режим отступа [${hotkeys.togglePadding.label}]: Fit / Safe`}
           >
             {isFit ? <Maximize2 className="h-3 w-3 text-emerald-400" /> : <Shield className="h-3 w-3" />}
-            {isFit ? `Fit [${BUBBLE_HOTKEYS.togglePadding.label}]` : `Safe [${BUBBLE_HOTKEYS.togglePadding.label}]`}
+            {isFit ? `Fit [${hotkeys.togglePadding.label}]` : `Safe [${hotkeys.togglePadding.label}]`}
           </button>
 
           <button
@@ -151,10 +152,10 @@ export function BubbleStyleControls({
                 ? "border-teal-500 bg-teal-600/30 text-teal-200"
                 : "border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200",
             ].join(" ")}
-            title={`Минимум переносов [${BUBBLE_HOTKEYS.toggleHyphenation.label}]: Вкл (переносить целые слова) / Выкл (активно дефисировать)`}
+            title={`Переносы [${hotkeys.toggleHyphenation.label}]`}
           >
             <WrapText className="h-3 w-3" />
-            {isMinHyphens ? `No-Hyph [${BUBBLE_HOTKEYS.toggleHyphenation.label}]` : `Hyph [${BUBBLE_HOTKEYS.toggleHyphenation.label}]`}
+            {isMinHyphens ? `No-Hyph [${hotkeys.toggleHyphenation.label}]` : `Hyph [${hotkeys.toggleHyphenation.label}]`}
           </button>
 
           <button
@@ -164,7 +165,7 @@ export function BubbleStyleControls({
               "p-1 rounded transition-colors",
               block.isBold ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-slate-800",
             ].join(" ")}
-            title={`Жирный [${BUBBLE_HOTKEYS.toggleBold.label}]`}
+            title={`Жирный [${hotkeys.toggleBold.label}]`}
           >
             <Bold className="h-3.5 w-3.5" />
           </button>
@@ -176,7 +177,7 @@ export function BubbleStyleControls({
               "p-1 rounded transition-colors",
               block.isItalic ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-slate-800",
             ].join(" ")}
-            title={`Курсив [${BUBBLE_HOTKEYS.toggleItalic.label}]`}
+            title={`Курсив [${hotkeys.toggleItalic.label}]`}
           >
             <Italic className="h-3.5 w-3.5" />
           </button>
@@ -188,7 +189,7 @@ export function BubbleStyleControls({
               "px-1 h-6 rounded text-[11px] font-extrabold transition-colors",
               block.isUppercase ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-slate-800",
             ].join(" ")}
-            title={`Все заглавные [${BUBBLE_HOTKEYS.toggleUppercase.label}]`}
+            title={`Все заглавные [${hotkeys.toggleUppercase.label}]`}
           >
             TT
           </button>
@@ -202,11 +203,9 @@ export function BubbleStyleControls({
                 ? "border-amber-400 bg-amber-400/20 text-amber-300"
                 : "border-slate-800 bg-slate-900 text-slate-400",
             ].join(" ")}
-            title={`Обводка текста [${BUBBLE_HOTKEYS.toggleStroke.label}]: ${
-              isWhiteText ? "Чёрная обводка" : "Белая обводка"
-            }`}
+            title={`Обводка текста [${hotkeys.toggleStroke.label}]`}
           >
-            Stroke [{BUBBLE_HOTKEYS.toggleStroke.label}]
+            Stroke [{hotkeys.toggleStroke.label}]
           </button>
         </div>
       </div>

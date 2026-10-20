@@ -1,83 +1,211 @@
-// lib/hotkeys.ts
-// ЕДИНЫЙ ЦЕНТР УПРАВЛЕНИЯ ГОРЯЧИМИ КЛАВИШАМИ
+// manga_ui/lib/hotkeys.ts
+// ЕДИНЫЙ ЦЕНТР УПРАВЛЕНИЯ ШРИФТАМИ, БИНДАМИ И ХОТКЕЯМИ
 
-export const BUBBLE_HOTKEYS = {
-  // Поднять бабл выше по списку чтения (A / русская Ф)
-  moveOrderUp: {
-    code: "KeyA",
-    label: "A",
-    name: "Move Up",
+export interface MangaFontOption {
+  id: string
+  label: string
+  index: number
+}
+
+export const MANGA_FONTS: MangaFontOption[] = [
+  { id: "v_CCFaceFront", label: "v_CCFaceFront (Основной)", index: 1 },
+  { id: "v_Augie", label: "v_Augie Regular", index: 2 },
+  { id: "v_Blambot Casual", label: "v_Blambot Casual Regular", index: 3 },
+  { id: "v_CCYadaYadaYadaInt", label: "v_CCYadaYadaYadaInt Regular", index: 4 },
+  { id: "v_Mighty Zeo 2.0", label: "v_Mighty Zeo 2.0 Regular", index: 5 },
+  { id: "Betina Script", label: "Betina Script", index: 6 },
+  { id: "BirchCTT", label: "BirchCTT Normal", index: 7 },
+]
+
+export type HotkeyCategory = "navigation" | "bubble" | "font" | "cleaning" | "tools"
+
+export type HotkeyActionId =
+  | "prevPage"
+  | "nextPage"
+  | "savePage"
+  | "toggleViewMode"
+  | "font1"
+  | "font2"
+  | "font3"
+  | "font4"
+  | "font5"
+  | "font6"
+  | "font7"
+  | "fontSizeUp"
+  | "fontSizeDown"
+  | "deleteBlock"
+  | "moveOrderUp"
+  | "moveOrderDown"
+  | "toggleShape"
+  | "toggleStroke"
+  | "togglePadding"
+  | "toggleHyphenation"
+  | "toggleBold"
+  | "toggleItalic"
+  | "toggleUppercase"
+  | "spotWhite"
+  | "spotLama"
+  | "spotWhiteDel"
+  | "spotLamaDel"
+  | "brushSizeUp"
+  | "brushSizeDown"
+
+export interface HotkeyBinding {
+  code: string
+  shift?: boolean
+  ctrl?: boolean
+  alt?: boolean
+  label: string
+  name: string
+  category: HotkeyCategory
+}
+
+export type HotkeyConfig = Record<HotkeyActionId, HotkeyBinding>
+
+export const DEFAULT_HOTKEYS: HotkeyConfig = {
+  // Навигация
+  prevPage: { code: "KeyQ", label: "Q", name: "Предыдущая страница", category: "navigation" },
+  nextPage: { code: "KeyE", label: "E", name: "Следующая страница", category: "navigation" },
+  savePage: { code: "KeyS", ctrl: true, label: "Ctrl+S", name: "Сохранить страницу", category: "navigation" },
+  toggleViewMode: { code: "Tab", label: "Tab", name: "Оригинал / Клин", category: "navigation" },
+
+  // Быстрый выбор шрифтов 1..7
+  font1: { code: "Digit1", label: "1", name: "Шрифт: CCFaceFront", category: "font" },
+  font2: { code: "Digit2", label: "2", name: "Шрифт: Augie", category: "font" },
+  font3: { code: "Digit3", label: "3", name: "Шрифт: Blambot Casual", category: "font" },
+  font4: { code: "Digit4", label: "4", name: "Шрифт: CCYadaYadaYadaInt", category: "font" },
+  font5: { code: "Digit5", label: "5", name: "Шрифт: Mighty Zeo 2.0", category: "font" },
+  font6: { code: "Digit6", label: "6", name: "Шрифт: Betina Script", category: "font" },
+  font7: { code: "Digit7", label: "7", name: "Шрифт: BirchCTT", category: "font" },
+  fontSizeUp: { code: "Equal", label: "+", name: "Увеличить шрифт", category: "font" },
+  fontSizeDown: { code: "Minus", label: "-", name: "Уменьшить шрифт", category: "font" },
+
+  // Стили и управление баблом
+  deleteBlock: { code: "Delete", label: "Delete", name: "Удалить бабл", category: "bubble" },
+  moveOrderUp: { code: "KeyA", label: "A", name: "Порядок: выше", category: "bubble" },
+  moveOrderDown: { code: "KeyD", label: "D", name: "Порядок: ниже", category: "bubble" },
+  toggleShape: { code: "KeyR", label: "R", name: "Форма: Овал/Прямоугольник", category: "bubble" },
+  toggleStroke: { code: "KeyS", label: "S", name: "Обводка текста", category: "bubble" },
+  togglePadding: { code: "KeyF", label: "F", name: "Отступ: Safe/Fit", category: "bubble" },
+  toggleHyphenation: { code: "KeyH", label: "H", name: "Мин. переносов", category: "bubble" },
+  toggleBold: { code: "KeyB", label: "B", name: "Жирный шрифт", category: "bubble" },
+  toggleItalic: { code: "KeyI", label: "I", name: "Курсив", category: "bubble" },
+  toggleUppercase: { code: "KeyU", label: "U", name: "Все заглавные", category: "bubble" },
+
+  // Клин и инструменты
+  spotWhite: { code: "KeyW", label: "W", name: "Точечный клин: Белый", category: "cleaning" },
+  spotLama: { code: "KeyL", label: "L", name: "Точечный клин: LaMa", category: "cleaning" },
+  spotWhiteDel: { code: "KeyW", shift: true, label: "Shift+W", name: "Белый + Удалить", category: "cleaning" },
+  spotLamaDel: { code: "KeyL", shift: true, label: "Shift+L", name: "LaMa + Удалить", category: "cleaning" },
+  brushSizeUp: { code: "ArrowUp", label: "↑", name: "Кисть: увеличить", category: "tools" },
+  brushSizeDown: { code: "ArrowDown", label: "↓", name: "Кисть: уменьшить", category: "tools" },
+}
+
+export const HOTKEYS_STORAGE_KEY = "manga_translator_hotkeys_v1"
+export const HOTKEYS_UPDATED_EVENT = "hotkeys-updated"
+
+/**
+ * Проверяет соответствие нажатия клавиатуры и бинда
+ */
+export function matchHotkey(e: KeyboardEvent, binding: HotkeyBinding): boolean {
+  const reqCtrl = Boolean(binding.ctrl)
+  const reqShift = Boolean(binding.shift)
+  const reqAlt = Boolean(binding.alt)
+
+  const isCtrl = e.ctrlKey || e.metaKey
+  const isShift = e.shiftKey
+  const isAlt = e.altKey
+
+  if (reqCtrl !== isCtrl || reqShift !== isShift || reqAlt !== isAlt) {
+    return false
+  }
+
+  // Точное совпадение физического кода клавиши
+  if (e.code === binding.code) return true
+
+  // Поддержка дублирующих клавиш для Numpad и знаков препинания
+  if (binding.code.startsWith("Digit")) {
+    const digitChar = binding.code.replace("Digit", "")
+    if (e.code === `Numpad${digitChar}`) return true
+  }
+
+  if (binding.code === "Equal" && (e.code === "NumpadAdd" || e.key === "+")) return true
+  if (binding.code === "Minus" && (e.code === "NumpadSubtract" || e.key === "-")) return true
+  if (binding.code === "Delete" && e.code === "Backspace") return true
+
+  return false
+}
+
+/**
+ * Форматирует физическое нажатие клавиши для записи в бинд
+ */
+export function formatKeyEvent(e: KeyboardEvent): {
+  code: string
+  shift: boolean
+  ctrl: boolean
+  alt: boolean
+  label: string
+} | null {
+  // Игнорируем нажатия чистых модификаторов
+  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+    return null
+  }
+
+  const ctrl = e.ctrlKey || e.metaKey
+  const shift = e.shiftKey
+  const alt = e.altKey
+
+  let keyName = e.code
+  if (keyName.startsWith("Key")) keyName = keyName.replace("Key", "")
+  else if (keyName.startsWith("Digit")) keyName = keyName.replace("Digit", "")
+  else if (keyName === "Equal") keyName = "+"
+  else if (keyName === "Minus") keyName = "-"
+  else if (keyName === "ArrowUp") keyName = "↑"
+  else if (keyName === "ArrowDown") keyName = "↓"
+  else if (keyName === "ArrowLeft") keyName = "←"
+  else if (keyName === "ArrowRight") keyName = "→"
+
+  const parts: string[] = []
+  if (ctrl) parts.push("Ctrl")
+  if (alt) parts.push("Alt")
+  if (shift) parts.push("Shift")
+  parts.push(keyName)
+
+  return {
+    code: e.code,
+    ctrl,
+    shift,
+    alt,
+    label: parts.join("+"),
+  }
+}
+
+export function loadHotkeys(): HotkeyConfig {
+  if (typeof window === "undefined") return { ...DEFAULT_HOTKEYS }
+  try {
+    const raw = localStorage.getItem(HOTKEYS_STORAGE_KEY)
+    if (!raw) return { ...DEFAULT_HOTKEYS }
+    const parsed = JSON.parse(raw)
+    return { ...DEFAULT_HOTKEYS, ...parsed }
+  } catch {
+    return { ...DEFAULT_HOTKEYS }
+  }
+}
+
+export function saveHotkeys(config: HotkeyConfig) {
+  if (typeof window === "undefined") return
+  try {
+    localStorage.setItem(HOTKEYS_STORAGE_KEY, JSON.stringify(config))
+    window.dispatchEvent(new Event(HOTKEYS_UPDATED_EVENT))
+  } catch (err) {
+    console.error("Ошибка сохранения хоткеев:", err)
+  }
+}
+
+// Для обратной совместимости экспортируем прокси-объект
+export const BUBBLE_HOTKEYS = new Proxy({} as HotkeyConfig, {
+  get: (_, prop: string) => {
+    const config = loadHotkeys()
+    return config[prop as HotkeyActionId] || DEFAULT_HOTKEYS[prop as HotkeyActionId]
   },
-  // Опустить бабл ниже по списку чтения (D / русская В)
-  moveOrderDown: {
-    code: "KeyD",
-    label: "D",
-    name: "Move Down",
-  },
-  // Форма бабла: Овал / Прямоугольник (R / русская К)
-  toggleShape: {
-    code: "KeyR",
-    label: "R",
-    name: "Oval / Rect",
-  },
-  // Белая обводка текста (S / русская Ы)
-  toggleStroke: {
-    code: "KeyS",
-    label: "S",
-    name: "Stroke",
-  },
-  // Режим отступа: Fit / Safe (F / русская А)
-  togglePadding: {
-    code: "KeyF",
-    label: "F",
-    name: "Fit / Safe",
-  },
-  // Минимизация переносов: Целые слова / Дефисы (H / русская Р)
-  toggleHyphenation: {
-    code: "KeyH",
-    label: "H",
-    name: "Min Hyphens",
-  },
-  // Жирный шрифт (B / русская И)
-  toggleBold: {
-    code: "KeyB",
-    label: "B",
-    name: "Bold",
-  },
-  // Курсив (I / русская Ш)
-  toggleItalic: {
-    code: "KeyI",
-    label: "I",
-    name: "Italic",
-  },
-  // Все заглавные буквы (U / русская Г)
-  toggleUppercase: {
-    code: "KeyU",
-    label: "U",
-    name: "Uppercase",
-  },
-  // Точечный клин: Белый (W / русская Ц)
-  spotWhite: {
-    code: "KeyW",
-    label: "W",
-    name: "Spot White",
-  },
-  // Точечный клин: LaMa (L / русская Д)
-  spotLama: {
-    code: "KeyL",
-    label: "L",
-    name: "Spot LaMa",
-  },
-  // Точечный клин: Белый + Удалить рамку (Shift + W)
-  spotWhiteDel: {
-    code: "KeyW",
-    label: "Shift+W",
-    name: "Spot White & Del",
-  },
-  // Точечный клин: LaMa + Удалить рамку (Shift + L)
-  spotLamaDel: {
-    code: "KeyL",
-    label: "Shift+L",
-    name: "Spot LaMa & Del",
-  },
-} as const
+})

@@ -1,3 +1,6 @@
+// manga_ui/components/translator-header.tsx
+// Шапка редактора с кнопкой вызова настроек хоткеев и динамическими тултипами
+
 "use client"
 
 import {
@@ -11,8 +14,10 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  Keyboard,
 } from "lucide-react"
 import type { PageItem } from "@/lib/types"
+import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 
 interface TranslatorHeaderProps {
   currentPage: PageItem | null
@@ -28,6 +33,7 @@ interface TranslatorHeaderProps {
   onSaveBlocks: () => void
   onPrevPage?: () => void
   onNextPage?: () => void
+  onOpenHotkeys?: () => void
 }
 
 export function TranslatorHeader({
@@ -44,7 +50,9 @@ export function TranslatorHeader({
   onSaveBlocks,
   onPrevPage,
   onNextPage,
+  onOpenHotkeys,
 }: TranslatorHeaderProps) {
+  const { hotkeys } = useHotkeysConfig()
   const hasPrev = currentIndex > 0
   const hasNext = currentIndex >= 0 && currentIndex < totalPages - 1
 
@@ -64,13 +72,12 @@ export function TranslatorHeader({
                   {totalPages > 0 && <span className="text-slate-500 font-normal"> / {totalPages}</span>}
                 </span>
 
-                {/* КНОПКИ БЫСТРОЙ НАВИГАЦИИ ПО СТРАНИЦАМ */}
                 <div className="flex items-center rounded border border-slate-800 bg-slate-900 p-0.5">
                   <button
                     onClick={onPrevPage}
                     disabled={!hasPrev}
                     className="flex h-5 w-5 items-center justify-center rounded text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
-                    title="Предыдущая страница (PageUp или Alt+Left)"
+                    title={`Предыдущая страница (${hotkeys.prevPage.label})`}
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
                   </button>
@@ -78,7 +85,7 @@ export function TranslatorHeader({
                     onClick={onNextPage}
                     disabled={!hasNext}
                     className="flex h-5 w-5 items-center justify-center rounded text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
-                    title="Следующая страница (PageDown или Alt+Right)"
+                    title={`Следующая страница (${hotkeys.nextPage.label})`}
                   >
                     <ChevronRight className="h-3.5 w-3.5" />
                   </button>
@@ -96,6 +103,15 @@ export function TranslatorHeader({
       </div>
 
       <div className="flex items-center gap-3 text-xs text-slate-400">
+        <button
+          onClick={onOpenHotkeys}
+          className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          title="Настройка горячих клавиш"
+        >
+          <Keyboard className="h-3.5 w-3.5 text-indigo-400" />
+          Хоткеи
+        </button>
+
         {currentPage && (
           <>
             <button
@@ -132,7 +148,7 @@ export function TranslatorHeader({
               onClick={onSaveBlocks}
               disabled={isSaving}
               className="flex items-center gap-1.5 rounded-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
-              title="Save (Ctrl+S)"
+              title={`Save (${hotkeys.savePage.label})`}
             >
               {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
               Save

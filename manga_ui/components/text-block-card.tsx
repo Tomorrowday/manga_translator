@@ -1,6 +1,9 @@
+// manga_ui/components/text-block-card.tsx
+// Карточка бабла с React.memo и актуальными биндами
+
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import React, { useState, useRef, useEffect, memo } from "react"
 import {
   ScanText,
   Languages,
@@ -14,7 +17,7 @@ import {
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { runOcr, runTranslate } from "@/lib/api"
-import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
+import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 import { BubbleStyleControls } from "@/components/text-block-card/bubble-style-controls"
 import { SpotCleanControls } from "@/components/text-block-card/spot-clean-controls"
 
@@ -40,7 +43,7 @@ const STATUS_LABELS: Record<TextBlock["status"], { label: string; className: str
   translated: { label: "Translated", className: "bg-emerald-500/20 text-emerald-300" },
 }
 
-export function TextBlockCard({
+export const TextBlockCard = memo(function TextBlockCard({
   block,
   index,
   pageId,
@@ -58,6 +61,7 @@ export function TextBlockCard({
   const [ocrLoading, setOcrLoading] = useState(false)
   const [translateLoading, setTranslateLoading] = useState(false)
   const cardRef = useRef<HTMLElement>(null)
+  const { hotkeys } = useHotkeysConfig()
 
   useEffect(() => {
     if (isSelected && cardRef.current) {
@@ -106,7 +110,6 @@ export function TextBlockCard({
         isSelected ? "border-amber-400/70 ring-1 ring-amber-400/30" : "border-slate-700 hover:border-slate-600",
       ].join(" ")}
     >
-      {/* Шапка карточки */}
       <div className="flex items-start gap-3">
         <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-700 bg-slate-950">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -150,7 +153,7 @@ export function TextBlockCard({
                 }}
                 disabled={!canMoveUp}
                 aria-label="Move block up"
-                title={`Поднять выше [${BUBBLE_HOTKEYS.moveOrderUp.label}]`}
+                title={`Поднять выше [${hotkeys.moveOrderUp.label}]`}
                 className="flex h-6 w-7 items-center justify-center rounded text-slate-300 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
               >
                 <ChevronUp className="h-4 w-4" />
@@ -162,7 +165,7 @@ export function TextBlockCard({
                 }}
                 disabled={!canMoveDown}
                 aria-label="Move block down"
-                title={`Опустить ниже [${BUBBLE_HOTKEYS.moveOrderDown.label}]`}
+                title={`Опустить ниже [${hotkeys.moveOrderDown.label}]`}
                 className="flex h-6 w-7 items-center justify-center rounded border-l border-slate-700 text-slate-300 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent"
               >
                 <ChevronDown className="h-4 w-4" />
@@ -176,7 +179,7 @@ export function TextBlockCard({
               }}
               aria-label="Delete block"
               className="rounded p-1.5 text-slate-500 transition-colors hover:bg-slate-700 hover:text-red-400"
-              title="Удалить бабл (Del)"
+              title={`Удалить бабл (${hotkeys.deleteBlock.label})`}
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -184,7 +187,6 @@ export function TextBlockCard({
         </div>
       </div>
 
-      {/* Текстовые поля: Speaker, Japanese, Russian */}
       <div className="mt-3 space-y-3">
         <div>
           <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">Speaker</label>
@@ -225,13 +227,9 @@ export function TextBlockCard({
         </div>
       </div>
 
-      {/* Панель типографики и стилизации */}
       <BubbleStyleControls block={block} defaultFontSize={defaultFontSize} onChange={onChange} />
-
-      {/* Панель точечного клина */}
       <SpotCleanControls onSpotClean={onSpotClean} />
 
-      {/* Кнопки OCR и Перевода */}
       <div className="mt-3 flex gap-2">
         <button
           onClick={(e) => {
@@ -265,4 +263,4 @@ export function TextBlockCard({
       </div>
     </article>
   )
-}
+})

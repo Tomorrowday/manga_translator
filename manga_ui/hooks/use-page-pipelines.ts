@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-page-pipelines.ts
-// Тяжелые конвейеры обработки страницы: автодетект, OCR, Clean, Gemini, Export, Full-Auto
+// Конвейеры обработки страницы с пулом параллельных запросов OCR
 
 import { useState } from "react"
 import type { PageItem, PageStatus, TextBlock } from "@/lib/types"
@@ -28,6 +28,21 @@ interface UsePagePipelinesProps {
   setShowTypeset: (show: boolean) => void
   setViewMode: (mode: "original" | "clean") => void
   cleanCacheBuster: number
+}
+
+async function runConcurrent<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let currentIndex = 0
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (currentIndex < items.length) {
+      const idx = currentIndex++
+      results[idx] = await fn(items[idx], idx)
+    }
+  })
+
+  await Promise.all(workers)
+  return results
 }
 
 export function usePagePipelines({
@@ -119,18 +134,20 @@ export function usePagePipelines({
     if (!currentPage || textBlocks.length === 0) return
     setIsOcrRunning(true)
     try {
-      const updated = [...textBlocks]
-      for (let i = 0; i < updated.length; i++) {
-        const b = updated[i]
+      const currentBlocks = [...textBlocks]
+
+      // Параллельный запуск OCR (concurrency limit = 3)
+      const ocrResults = await runConcurrent(currentBlocks, 3, async (b) => {
         const text = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
-        updated[i] = {
+        return {
           ...b,
           japText: text,
-          status: b.status === "translated" ? "translated" : "ocr-done",
+          status: b.status === "translated" ? ("translated" as const) : ("ocr-done" as const),
         }
-      }
-      setTextBlocks(updated)
-      textBlocksRef.current = updated
+      })
+
+      setTextBlocks(ocrResults)
+      textBlocksRef.current = ocrResults
       await saveBlocks(true)
     } catch (e) {
       console.error("Ошибка OCR всех рамок:", e)
@@ -169,27 +186,31 @@ export function usePagePipelines({
     if (!currentPage || textBlocks.length === 0) return
     setIsBatchTranslating(true)
     try {
-      // Сохраняем актуальное состояние страницы перед запросом перевода
       await saveBlocks(true)
 
-      const currentBlocks = [...textBlocks]
-      for (let i = 0; i < currentBlocks.length; i++) {
-        const b = currentBlocks[i]
-        if (!b.japText) {
-          const ocrText = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
-          currentBlocks[i] = { ...b, japText: ocrText, status: "ocr-done" }
-        }
-      }
-      setTextBlocks([...currentBlocks])
+      const blocksToOcr = textBlocks.map((b) => ({ ...b }))
+      const neededOcrIndices = blocksToOcr
+        .map((b, idx) => (!b.japText ? idx : null))
+        .filter((idx): idx is number => idx !== null)
 
-      const toTranslate = currentBlocks
+      if (neededOcrIndices.length > 0) {
+        await runConcurrent(neededOcrIndices, 3, async (idx) => {
+          const b = blocksToOcr[idx]
+          const ocrText = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
+          blocksToOcr[idx] = { ...b, japText: ocrText, status: "ocr-done" }
+        })
+        setTextBlocks([...blocksToOcr])
+        textBlocksRef.current = blocksToOcr
+      }
+
+      const toTranslate = blocksToOcr
         .filter((b) => b.japText.trim().length > 0)
         .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker, order_index: b.orderIndex }))
 
       if (toTranslate.length === 0) return
 
       const translations = await runBatchTranslate(toTranslate, currentPage.id)
-      const updated = currentBlocks.map((b) => {
+      const updated = blocksToOcr.map((b) => {
         if (translations[b.id]) {
           return { ...b, rusText: translations[b.id], status: "translated" as const }
         }
@@ -275,7 +296,6 @@ export function usePagePipelines({
     if (!currentPage) return
     setIsFullAuto(true)
     try {
-      // Сохраняем текущее состояние
       await saveBlocks(true)
 
       let currentBlocks = [...textBlocks]
@@ -289,16 +309,20 @@ export function usePagePipelines({
         return
       }
 
-      for (let i = 0; i < currentBlocks.length; i++) {
-        const b = currentBlocks[i]
-        if (!b.japText) {
+      const neededOcrIndices = currentBlocks
+        .map((b, idx) => (!b.japText ? idx : null))
+        .filter((idx): idx is number => idx !== null)
+
+      if (neededOcrIndices.length > 0) {
+        await runConcurrent(neededOcrIndices, 3, async (idx) => {
+          const b = currentBlocks[idx]
           const ocrText = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
-          currentBlocks[i] = { ...b, japText: ocrText, status: "ocr-done" }
-        }
+          currentBlocks[idx] = { ...b, japText: ocrText, status: "ocr-done" }
+        })
+        setTextBlocks([...currentBlocks])
+        textBlocksRef.current = currentBlocks
+        await saveBlocks(true)
       }
-      setTextBlocks([...currentBlocks])
-      textBlocksRef.current = currentBlocks
-      await saveBlocks(true)
 
       const cleanRes = await runCleanPage(currentPage.id)
       if (!cleanRes.success) {

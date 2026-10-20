@@ -1,9 +1,50 @@
-// hooks/use-manga-hotkeys.ts
-// Глобальный слушатель и маршрутизатор горячих клавиш редактора манги
+// manga_ui/hooks/use-manga-hotkeys.ts
+// ГЛОБАЛЬНЫЙ СЛУШАТЕЛЬ ХОТКЕЕВ И РЕАКТИВНЫЙ ХУК КОНФИГУРАЦИИ
 
-import { useEffect } from "react"
+import { useEffect, useState, useCallback } from "react"
 import type { TextBlock } from "@/lib/types"
-import { BUBBLE_HOTKEYS } from "@/lib/hotkeys"
+import {
+  type HotkeyConfig,
+  type HotkeyActionId,
+  DEFAULT_HOTKEYS,
+  HOTKEYS_UPDATED_EVENT,
+  loadHotkeys,
+  saveHotkeys,
+  matchHotkey,
+  MANGA_FONTS,
+} from "@/lib/hotkeys"
+
+export function useHotkeysConfig() {
+  const [hotkeys, setHotkeys] = useState<HotkeyConfig>(() => loadHotkeys())
+
+  useEffect(() => {
+    const sync = () => setHotkeys(loadHotkeys())
+    window.addEventListener(HOTKEYS_UPDATED_EVENT, sync)
+    window.addEventListener("storage", sync)
+    return () => {
+      window.removeEventListener(HOTKEYS_UPDATED_EVENT, sync)
+      window.removeEventListener("storage", sync)
+    }
+  }, [])
+
+  const updateHotkey = useCallback((action: HotkeyActionId, patch: Partial<HotkeyConfig[HotkeyActionId]>) => {
+    setHotkeys((prev) => {
+      const next = {
+        ...prev,
+        [action]: { ...prev[action], ...patch },
+      }
+      saveHotkeys(next)
+      return next
+    })
+  }, [])
+
+  const resetHotkeys = useCallback(() => {
+    saveHotkeys({ ...DEFAULT_HOTKEYS })
+    setHotkeys({ ...DEFAULT_HOTKEYS })
+  }, [])
+
+  return { hotkeys, updateHotkey, resetHotkeys }
+}
 
 interface UseMangaHotkeysProps {
   selectedId: string | null
@@ -12,10 +53,12 @@ interface UseMangaHotkeysProps {
   onPrevPage: () => void
   onNextPage: () => void
   onSave: () => void
+  onToggleViewMode?: () => void
   onDeleteBlock: (id: string) => void
   onMoveBlock: (id: string, direction: "up" | "down") => void
   onUpdateBlock: (id: string, patch: Partial<TextBlock>) => void
   onSpotClean?: (block: TextBlock, method: "auto" | "lama" | "white", deleteAfter?: boolean) => Promise<void>
+  onBrushResize?: (delta: number) => void
 }
 
 export function useMangaHotkeys({
@@ -25,38 +68,70 @@ export function useMangaHotkeys({
   onPrevPage,
   onNextPage,
   onSave,
+  onToggleViewMode,
   onDeleteBlock,
   onMoveBlock,
   onUpdateBlock,
   onSpotClean,
+  onBrushResize,
 }: UseMangaHotkeysProps) {
+  const { hotkeys } = useHotkeysConfig()
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Игнорируем нажатия внутри текстовых полей ввода
-      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
+      // Игнорируем нажатия внутри форм и полей ввода
+      const target = e.target as HTMLElement | null
+      if (
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable
+      ) {
         return
       }
 
-      const code = e.code
-      const key = e.key
-
-      // 1. Навигация по страницам главы
-      if (code === "PageUp" || (e.altKey && code === "ArrowLeft")) {
+      // 1. Навигация по страницам: Q / E (с поддержкой PageUp / PageDown)
+      if (matchHotkey(e, hotkeys.prevPage) || e.code === "PageUp" || (e.altKey && e.code === "ArrowLeft")) {
         e.preventDefault()
         onPrevPage()
         return
       }
-      if (code === "PageDown" || (e.altKey && code === "ArrowRight")) {
+      if (matchHotkey(e, hotkeys.nextPage) || e.code === "PageDown" || (e.altKey && e.code === "ArrowRight")) {
         e.preventDefault()
         onNextPage()
         return
       }
 
-      // 2. Сохранение (Ctrl+S / Cmd+S / русская Ы)
-      if ((e.ctrlKey || e.metaKey) && (code === "KeyS" || key.toLowerCase() === "s" || key.toLowerCase() === "ы")) {
+      // 2. Сохранение страницы (Ctrl+S / Cmd+S)
+      if (matchHotkey(e, hotkeys.savePage)) {
         e.preventDefault()
         onSave()
         return
+      }
+
+      // 3. Переключение режима скана (Tab: Original / Clean)
+      if (matchHotkey(e, hotkeys.toggleViewMode)) {
+        if (onToggleViewMode) {
+          e.preventDefault()
+          onToggleViewMode()
+          return
+        }
+      }
+
+      // 4. Управление размером кисти стрелками (↑/↓)
+      if (matchHotkey(e, hotkeys.brushSizeUp)) {
+        if (onBrushResize) {
+          e.preventDefault()
+          onBrushResize(+4)
+          return
+        }
+      }
+      if (matchHotkey(e, hotkeys.brushSizeDown)) {
+        if (onBrushResize) {
+          e.preventDefault()
+          onBrushResize(-4)
+          return
+        }
       }
 
       // Все последующие действия требуют активного выбранного бабла
@@ -64,123 +139,111 @@ export function useMangaHotkeys({
       const activeBlock = textBlocks.find((b) => b.id === selectedId)
       if (!activeBlock) return
 
-      // 3. Точечный клин (Spot Clean)
-      if (code === BUBBLE_HOTKEYS.spotWhite.code && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault()
-        if (onSpotClean) {
-          onSpotClean(activeBlock, "white", e.shiftKey)
+      // 5. Быстрый выбор шрифтов по цифрам 1..7
+      for (const font of MANGA_FONTS) {
+        const actionKey = `font${font.index}` as HotkeyActionId
+        const binding = hotkeys[actionKey]
+        if (binding && matchHotkey(e, binding)) {
+          e.preventDefault()
+          onUpdateBlock(selectedId, { fontFamily: font.id })
+          return
         }
+      }
+
+      // 6. Точечный клин (Spot Clean)
+      if (matchHotkey(e, hotkeys.spotWhiteDel)) {
+        e.preventDefault()
+        onSpotClean?.(activeBlock, "white", true)
+        return
+      }
+      if (matchHotkey(e, hotkeys.spotWhite)) {
+        e.preventDefault()
+        onSpotClean?.(activeBlock, "white", false)
+        return
+      }
+      if (matchHotkey(e, hotkeys.spotLamaDel)) {
+        e.preventDefault()
+        onSpotClean?.(activeBlock, "lama", true)
+        return
+      }
+      if (matchHotkey(e, hotkeys.spotLama)) {
+        e.preventDefault()
+        onSpotClean?.(activeBlock, "lama", false)
         return
       }
 
-      if (code === BUBBLE_HOTKEYS.spotLama.code && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault()
-        if (onSpotClean) {
-          onSpotClean(activeBlock, "lama", e.shiftKey)
-        }
-        return
-      }
-
-      // 4. Удаление бабла
-      if (code === "Delete" || code === "Backspace" || key === "Delete" || key === "Backspace") {
+      // 7. Удаление бабла
+      if (matchHotkey(e, hotkeys.deleteBlock)) {
         e.preventDefault()
         onDeleteBlock(selectedId)
         return
       }
 
-      // 5. Изменение порядка чтения баблов: A (выше) / D (ниже)
-      if (
-        (code === BUBBLE_HOTKEYS.moveOrderUp.code || key.toLowerCase() === "a" || key.toLowerCase() === "ф") &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey
-      ) {
+      // 8. Перемещение бабла в порядке чтения: A (выше) / D (ниже)
+      if (matchHotkey(e, hotkeys.moveOrderUp)) {
         e.preventDefault()
         onMoveBlock(selectedId, "up")
         return
       }
-      if (
-        (code === BUBBLE_HOTKEYS.moveOrderDown.code || key.toLowerCase() === "d" || key.toLowerCase() === "в") &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey
-      ) {
+      if (matchHotkey(e, hotkeys.moveOrderDown)) {
         e.preventDefault()
         onMoveBlock(selectedId, "down")
         return
       }
 
-      // Альтернативные стрелочки для изменения порядка (Alt+Up / Alt+Down)
-      if (e.altKey && code === "ArrowUp") {
-        e.preventDefault()
-        onMoveBlock(selectedId, "up")
-        return
-      }
-      if (e.altKey && code === "ArrowDown") {
-        e.preventDefault()
-        onMoveBlock(selectedId, "down")
-        return
-      }
-
-      // 6. Размер шрифта (- / +) — отсчитываем строго от базового размера шрифта тайтла
+      // 9. Размер шрифта (- / +)
       const currentEffectiveFont = activeBlock.fontSize ?? defaultFontSize
-
-      if (key === "-" || key === "_" || code === "NumpadSubtract") {
+      if (matchHotkey(e, hotkeys.fontSizeDown)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { fontSize: Math.max(8, currentEffectiveFont - 1) })
         return
       }
-      if (key === "+" || key === "=" || code === "NumpadAdd") {
+      if (matchHotkey(e, hotkeys.fontSizeUp)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { fontSize: Math.min(48, currentEffectiveFont + 1) })
         return
       }
 
-      // 7. Форма бабла (R: Овал / Прямоугольник)
-      if (code === BUBBLE_HOTKEYS.toggleShape.code && !e.ctrlKey && !e.metaKey) {
+      // 10. Форма бабла (R: Овал / Прямоугольник)
+      if (matchHotkey(e, hotkeys.toggleShape)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { shape: activeBlock.shape === "ellipse" ? "rect" : "ellipse" })
         return
       }
 
-      // 8. Обводка текста (S)
-      if (code === BUBBLE_HOTKEYS.toggleStroke.code && !e.ctrlKey && !e.metaKey) {
+      // 11. Обводка текста (S)
+      if (matchHotkey(e, hotkeys.toggleStroke)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { hasStroke: !activeBlock.hasStroke })
         return
       }
 
-      // 9. Режим отступа (F: Fit / Safe)
-      if (code === BUBBLE_HOTKEYS.togglePadding.code && !e.ctrlKey && !e.metaKey) {
+      // 12. Режим отступа (F: Fit / Safe)
+      if (matchHotkey(e, hotkeys.togglePadding)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { paddingMode: activeBlock.paddingMode === "fit" ? "safe" : "fit" })
         return
       }
 
-      // 10. Режим минимизации переносов (H: Min Hyphens / Normal)
-      if (code === BUBBLE_HOTKEYS.toggleHyphenation.code && !e.ctrlKey && !e.metaKey) {
+      // 13. Режим переносов (H: Min Hyphens / Normal)
+      if (matchHotkey(e, hotkeys.toggleHyphenation)) {
         e.preventDefault()
-        const curVal = activeBlock.minHyphens !== false
-        onUpdateBlock(selectedId, { minHyphens: !curVal })
+        onUpdateBlock(selectedId, { minHyphens: !(activeBlock.minHyphens !== false) })
         return
       }
 
-      // 11. Жирный шрифт (B)
-      if (code === BUBBLE_HOTKEYS.toggleBold.code && !e.ctrlKey && !e.metaKey) {
+      // 14. Стили текста (B, I, U)
+      if (matchHotkey(e, hotkeys.toggleBold)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isBold: !activeBlock.isBold })
         return
       }
-
-      // 12. Курсив (I)
-      if (code === BUBBLE_HOTKEYS.toggleItalic.code && !e.ctrlKey && !e.metaKey) {
+      if (matchHotkey(e, hotkeys.toggleItalic)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isItalic: !activeBlock.isItalic })
         return
       }
-
-      // 13. Все заглавные (U)
-      if (code === BUBBLE_HOTKEYS.toggleUppercase.code && !e.ctrlKey && !e.metaKey) {
+      if (matchHotkey(e, hotkeys.toggleUppercase)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isUppercase: !activeBlock.isUppercase })
         return
@@ -190,15 +253,18 @@ export function useMangaHotkeys({
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [
+    hotkeys,
     selectedId,
     textBlocks,
     defaultFontSize,
     onPrevPage,
     onNextPage,
     onSave,
+    onToggleViewMode,
     onDeleteBlock,
     onMoveBlock,
     onUpdateBlock,
     onSpotClean,
+    onBrushResize,
   ])
 }
