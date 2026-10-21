@@ -1,5 +1,5 @@
 // manga_ui/lib/typeset/mapping.ts
-// Преобразование моделей данных, компаратор чтения манги и алгоритм умного вклинивания блоков
+// Преобразование моделей данных, компаратор порядка чтения манги и алгоритм умного вклинивания блоков
 
 import type { TextBlock } from "../types"
 
@@ -84,13 +84,11 @@ export function findMangaInsertionIndex<T extends BoxGeometry>(
     let penalty = 0
 
     // Для элементов до индекса k: они должны идти ДО newBlock.
-    // Если newBlock по компаратору должен идти раньше них — штраф.
     for (let j = 0; j < k; j++) {
       if (shouldBeBefore[j]) penalty++
     }
 
     // Для элементов после индекса k: они должны идти ПОСЛЕ newBlock.
-    // Если newBlock по компаратору должен идти позже них — штраф.
     for (let j = k; j < n; j++) {
       if (!shouldBeBefore[j]) penalty++
     }
@@ -130,8 +128,6 @@ export function insertBlockInMangaOrder(
 export function sortBlocksMangaOrder<T extends BoxGeometry>(boxes: T[]): T[] {
   return [...boxes].sort((a, b) => compareMangaBlocks(a, b))
 }
-
-export const sortBlocksMangaOrderWithPanels = sortBlocksMangaOrder
 
 export function mapDbBlockToTextBlock(b: any, cropDataUrl: string = ""): TextBlock {
   return {

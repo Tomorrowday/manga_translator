@@ -1,5 +1,5 @@
-// lib/api/projects.ts
-// Управление проектами (тайтлами), глоссарием и статистикой БД
+// manga_ui/lib/api/projects.ts
+// Управление проектами (тайтлами), настройками, глоссарием и статистикой БД
 
 import type { GlossaryItem, ProjectStats, TitleProject, ProjectTree } from "../types"
 import { API_BASE_URL, handleApiResponse } from "./client"
@@ -43,15 +43,6 @@ export async function getProjectTree(titleId: number): Promise<ProjectTree> {
   )
   if (!data.success) throw new Error(data.error)
   return data.title
-}
-
-export async function updateTitleDescription(titleId: number, description: string) {
-  const res = await fetch(`${API_BASE_URL}/api/projects/${titleId}/description`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description }),
-  })
-  return await handleApiResponse<any>(res, "Ошибка обновления синопсиса")
 }
 
 export async function updateTitleSettings(

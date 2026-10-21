@@ -56,7 +56,6 @@ def init_db():
                 page_number INTEGER,
                 file_path TEXT NOT NULL,
                 clean_path TEXT,
-                panels_json TEXT DEFAULT '[]',
                 status TEXT DEFAULT 'raw',
                 FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
             )
@@ -107,13 +106,6 @@ def init_db():
         if "default_font_size" not in title_cols:
             cursor.execute("ALTER TABLE titles ADD COLUMN default_font_size INTEGER DEFAULT 14")
             print("Миграция: добавлена колонка 'default_font_size' в titles")
-
-        # Проверка и миграция panels_json в pages
-        cursor.execute("PRAGMA table_info(pages)")
-        page_cols = [row["name"] for row in cursor.fetchall()]
-        if "panels_json" not in page_cols:
-            cursor.execute("ALTER TABLE pages ADD COLUMN panels_json TEXT DEFAULT '[]'")
-            print("Миграция: добавлена колонка 'panels_json' в pages")
 
         # Проверка миграций text_blocks
         cursor.execute("PRAGMA table_info(text_blocks)")

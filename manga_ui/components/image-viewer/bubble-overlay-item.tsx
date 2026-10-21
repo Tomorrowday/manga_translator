@@ -1,5 +1,5 @@
 // manga_ui/components/image-viewer/bubble-overlay-item.tsx
-// Рендеринг бабла на скане с React.memo и useMemo для верстки текста
+// Рендеринг бабла на скане с React.memo, точным позиционированием и устранением сдвига слов при дабл-клике
 
 "use client"
 
@@ -75,7 +75,8 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   useEffect(() => {
     if (isInlineEditing && textareaRef.current) {
       textareaRef.current.focus()
-      textareaRef.current.select()
+      const len = textareaRef.current.value.length
+      textareaRef.current.setSelectionRange(len, len)
     }
   }, [isInlineEditing])
 
@@ -85,46 +86,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const currentH = isEditingCurrent && activeBox ? activeBox.height : box.height
   const currentRot = isEditingCurrent && editType === "rotate" ? activeRotation : box.rotation || 0
 
-  const handleMouseDown = (e: React.MouseEvent, action: EditAction) => {
-    if (isInlineEditing) return
-    e.stopPropagation()
-    onSelect(box.id)
-    onStartTransform(e, box, action)
-  }
-
-  const handleDoubleClick = (e: React.MouseEvent) => {
-    if (isDraft) return
-    e.stopPropagation()
-    onSelect(box.id)
-    setIsInlineEditing(true)
-  }
-
-  const commitInlineEdit = () => {
-    setIsInlineEditing(false)
-    if (localText !== box.rusText && onUpdate) {
-      onUpdate(box.id, {
-        rusText: localText,
-        status: localText.trim() ? "translated" : box.japText ? "ocr-done" : "new",
-      })
-    }
-  }
-
-  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    e.stopPropagation()
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault()
-      commitInlineEdit()
-      return
-    }
-    if (e.key === "Escape") {
-      e.preventDefault()
-      setLocalText(box.rusText || "")
-      setIsInlineEditing(false)
-      return
-    }
-  }
-
-  // Расчет шрифтов и предпросмотра с мемоизацией верстки
+  // Расчет шрифтов и предпросмотра
   const naturalH = imgElement?.naturalHeight || 1600
   const naturalW = imgElement?.naturalWidth || 1100
   const displayH = imgElement?.clientHeight || naturalH
@@ -138,7 +100,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     previewCanvas = document.createElement("canvas")
   }
 
-  const rawDisplayText = isInlineEditing ? localText : box.rusText || ""
+  const rawDisplayText = box.rusText || ""
   const displayText = box.isUppercase ? rawDisplayText.toUpperCase() : rawDisplayText
 
   const { screenLines, masterActualFontSize, masterLineHeight } = useMemo(() => {
@@ -182,6 +144,53 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const finalScreenFontSize = Math.max(7, Math.round(masterActualFontSize * scale))
   const finalScreenLineHeight = Math.max(8, Math.round(masterLineHeight * scale))
 
+  const handleMouseDown = (e: React.MouseEvent, action: EditAction) => {
+    if (isInlineEditing) return
+    e.stopPropagation()
+    onSelect(box.id)
+    onStartTransform(e, box, action)
+  }
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    if (isDraft) return
+    e.stopPropagation()
+    onSelect(box.id)
+
+    // Если в тексте не было ручных переносов \n, подставляем сформированные визуальные строки
+    if (screenLines.length > 0 && !box.rusText?.includes("\n")) {
+      setLocalText(screenLines.join("\n"))
+    } else {
+      setLocalText(box.rusText || "")
+    }
+
+    setIsInlineEditing(true)
+  }
+
+  const commitInlineEdit = () => {
+    setIsInlineEditing(false)
+    if (localText !== box.rusText && onUpdate) {
+      onUpdate(box.id, {
+        rusText: localText,
+        status: localText.trim() ? "translated" : box.japText ? "ocr-done" : "new",
+      })
+    }
+  }
+
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    e.stopPropagation()
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      commitInlineEdit()
+      return
+    }
+    if (e.key === "Escape") {
+      e.preventDefault()
+      setLocalText(box.rusText || "")
+      setIsInlineEditing(false)
+      return
+    }
+  }
+
   const renderHandles = () => {
     if (!isSelected || isInlineEditing) return null
     return (
@@ -220,6 +229,9 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   }
 
   if (isInlineEditing) {
+    const editLinesCount = Math.max(1, localText.split("\n").length)
+    const totalEditH = editLinesCount * finalScreenLineHeight
+
     return (
       <div
         id={`box-${box.id}`}
@@ -235,27 +247,32 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <textarea
-          ref={textareaRef}
-          value={localText}
-          onChange={(e) => setLocalText(e.target.value)}
-          onKeyDown={handleTextareaKeyDown}
-          onBlur={commitInlineEdit}
-          placeholder="Текст реплики..."
-          className={[
-            "h-full w-full resize-none p-1.5 text-center outline-none border-2 border-indigo-500 rounded shadow-2xl backdrop-blur-sm",
-            isWhiteText
-              ? "bg-slate-900/95 text-white placeholder:text-slate-400"
-              : "bg-white/95 text-black placeholder:text-slate-500",
-            box.isBold ? "font-bold" : "font-normal",
-            box.isItalic ? "italic" : "not-italic",
-          ].join(" ")}
-          style={{
-            fontFamily: `'${currentFont}', sans-serif`,
-            fontSize: `${Math.max(10, finalScreenFontSize)}px`,
-            lineHeight: `${Math.max(12, finalScreenLineHeight)}px`,
-          }}
-        />
+        <div
+          className="relative flex items-center justify-center w-full"
+          style={{ height: `${Math.min(masterBoxPixelH * scale, totalEditH + 8)}px` }}
+        >
+          <textarea
+            ref={textareaRef}
+            value={localText}
+            onChange={(e) => setLocalText(e.target.value)}
+            onKeyDown={handleTextareaKeyDown}
+            onBlur={commitInlineEdit}
+            placeholder="Текст..."
+            className={[
+              "w-full h-full resize-none p-0 text-center outline-none border-2 border-indigo-500 rounded shadow-2xl backdrop-blur-sm overflow-hidden",
+              isWhiteText
+                ? "bg-slate-900/95 text-white placeholder:text-slate-400"
+                : "bg-white/95 text-black placeholder:text-slate-500",
+              box.isBold ? "font-bold" : "font-normal",
+              box.isItalic ? "italic" : "not-italic",
+            ].join(" ")}
+            style={{
+              fontFamily: `'${currentFont}', sans-serif`,
+              fontSize: `${finalScreenFontSize}px`,
+              lineHeight: `${finalScreenLineHeight}px`,
+            }}
+          />
+        </div>
         <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-slate-950 px-1.5 py-0.5 text-[9px] text-slate-300 border border-slate-700 pointer-events-none shadow">
           Enter: перенос | Ctrl+Enter: готово | Esc: отмена
         </div>

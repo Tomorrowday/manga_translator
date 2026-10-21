@@ -1,3 +1,4 @@
+# schemas/projects.py
 from pydantic import BaseModel
 from typing import Optional
 
@@ -10,10 +11,6 @@ class ScanProjectRequest(BaseModel):
 class AddChapterRequest(BaseModel):
     folder_path: str
     chapter_number: Optional[str] = ""
-
-
-class UpdateTitleDescriptionRequest(BaseModel):
-    description: str
 
 
 class UpdateTitleSettingsRequest(BaseModel):

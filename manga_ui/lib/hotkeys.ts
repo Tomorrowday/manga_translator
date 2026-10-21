@@ -120,10 +120,8 @@ export function matchHotkey(e: KeyboardEvent, binding: HotkeyBinding): boolean {
     return false
   }
 
-  // Точное совпадение физического кода клавиши
   if (e.code === binding.code) return true
 
-  // Поддержка дублирующих клавиш для Numpad и знаков препинания
   if (binding.code.startsWith("Digit")) {
     const digitChar = binding.code.replace("Digit", "")
     if (e.code === `Numpad${digitChar}`) return true
@@ -146,7 +144,6 @@ export function formatKeyEvent(e: KeyboardEvent): {
   alt: boolean
   label: string
 } | null {
-  // Игнорируем нажатия чистых модификаторов
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
     return null
   }
@@ -201,11 +198,3 @@ export function saveHotkeys(config: HotkeyConfig) {
     console.error("Ошибка сохранения хоткеев:", err)
   }
 }
-
-// Для обратной совместимости экспортируем прокси-объект
-export const BUBBLE_HOTKEYS = new Proxy({} as HotkeyConfig, {
-  get: (_, prop: string) => {
-    const config = loadHotkeys()
-    return config[prop as HotkeyActionId] || DEFAULT_HOTKEYS[prop as HotkeyActionId]
-  },
-})

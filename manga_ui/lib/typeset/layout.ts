@@ -1,6 +1,6 @@
-// lib/typeset/layout.ts
+// manga_ui/lib/typeset/layout.ts
 // Автоматический перенос строк, поддержка ручных переносов (\n),
-// подбор размера шрифта под геометрию бабла и строгое оптическое центрирование (устранение влияния пробелов)
+// подбор размера шрифта под геометрию бабла и строгое оптическое центрирование
 
 import { cleanLeadingPunct, getWordHyphenSplits, appendHyphenSafe } from "./hyphenation"
 
@@ -16,11 +16,10 @@ function cleanAndTrimLines(rawLines: string[]): string[] {
   const result: string[] = []
 
   for (let i = 0; i < rawLines.length; i++) {
-    const trimmed = rawLines[i].trim()
-    result.push(trimmed)
+    result.push(rawLines[i].trim())
   }
 
-  // Удаляем висячую пунктуацию на отдельных строках (точки, запятые, многоточия)
+  // Удаляем висячую пунктуацию на отдельных строках (точки, запятые, многоточия, тире)
   for (let i = result.length - 1; i > 0; i--) {
     const cur = result[i]
     if (/^[.,!?:;…«»"'\s]+$/.test(cur)) {
@@ -33,6 +32,104 @@ function cleanAndTrimLines(rawLines: string[]): string[] {
   }
 
   return result
+}
+
+function _layoutParagraphs(
+  ctx: CanvasRenderingContext2D,
+  paragraphs: string[],
+  minHyphens: boolean,
+  getAllowedWidth: (lineIdx: number) => number
+): { lines: string[]; hadHyphenation: boolean } {
+  const lines: string[] = []
+  let hadHyphenation = false
+
+  for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+    const paragraph = paragraphs[pIdx].trim()
+    if (!paragraph) {
+      if (lines.length < 35) lines.push("")
+      continue
+    }
+
+    const remainingWords = paragraph.split(/\s+/)
+    let curLine = ""
+
+    while (remainingWords.length > 0 && lines.length < 35) {
+      const allowedW = getAllowedWidth(lines.length)
+      const w = remainingWords[0]
+      if (!w) {
+        remainingWords.shift()
+        continue
+      }
+
+      const testLine = curLine ? `${curLine} ${w}`.trim() : w.trim()
+
+      if (ctx.measureText(testLine).width <= allowedW) {
+        curLine = testLine
+        remainingWords.shift()
+        continue
+      }
+
+      // Не поместилось: если включен режим минимальных переносов и строка уже не пуста — переносим слово целиком
+      if (minHyphens && curLine.length > 0) {
+        lines.push(curLine.trim())
+        curLine = ""
+        continue
+      }
+
+      // Пробуем слоговой дефисный перенос слова
+      let hyphenated = false
+      const splits = getWordHyphenSplits(w)
+
+      for (const split of splits) {
+        const hyphenTest = curLine ? `${curLine} ${split.prefix}`.trim() : split.prefix.trim()
+        if (ctx.measureText(hyphenTest).width <= allowedW) {
+          lines.push(hyphenTest.trim())
+          curLine = ""
+          remainingWords[0] = cleanLeadingPunct(split.suffix)
+          hyphenated = true
+          hadHyphenation = true
+          break
+        }
+      }
+
+      if (hyphenated) continue
+
+      if (curLine) {
+        lines.push(curLine.trim())
+        curLine = ""
+      } else {
+        // Слово не влезает даже в пустую строку: принудительный посимвольный разрыв
+        let splitIdx = -1
+        let part = ""
+        for (let cIdx = 0; cIdx < w.length; cIdx++) {
+          const char = w[cIdx]
+          const test = appendHyphenSafe(part + char)
+          if (ctx.measureText(test).width > allowedW && part.length >= 2) {
+            splitIdx = cIdx
+            break
+          }
+          part += char
+        }
+
+        hadHyphenation = true
+        if (splitIdx !== -1) {
+          lines.push(appendHyphenSafe(part).trim())
+          curLine = ""
+          remainingWords[0] = cleanLeadingPunct(w.slice(splitIdx))
+        } else {
+          lines.push(w.trim())
+          curLine = ""
+          remainingWords.shift()
+        }
+      }
+    }
+
+    if (curLine) {
+      lines.push(curLine.trim())
+    }
+  }
+
+  return { lines: cleanAndTrimLines(lines), hadHyphenation }
 }
 
 export function layoutBubbleTextLines(
@@ -48,23 +145,24 @@ export function layoutBubbleTextLines(
   isItalic?: boolean,
   minHyphens: boolean = true
 ): { lines: string[]; actualFontSize: number; lineHeight: number } {
-  let curSize = fontSize
+  let curSize = Math.max(8, fontSize)
   const isEllipse = shape === "ellipse"
   const widthRatio = padMode === "fit" ? 0.98 : 0.92
-
-  // Делим входной текст по ручным переносам Enter (\n)
+  const targetMaxW = isEllipse ? boxW * 0.9 : boxW * widthRatio
   const paragraphs = text.split(/\r?\n/)
 
-  for (let attempt = 0; attempt < 30; attempt++) {
+  let lastLines: string[] = []
+  let lastLineHeight = Math.round(curSize * 1.15)
+
+  while (curSize >= 8) {
     ctx.font = `${isItalic ? "italic " : ""}${isBold ? "bold " : ""}${curSize}px '${fontFamily}', sans-serif`
     const lineHeight = Math.round(curSize * 1.15)
-    const lines: string[] = []
-    let hadHyphenation = false
+
+    let getAllowedW: (idx: number) => number
 
     if (isEllipse) {
       const rx = (boxW / 2) * widthRatio
       const ry = (boxH / 2) * widthRatio
-
       const estLines = Math.max(
         1,
         Math.min(
@@ -72,203 +170,46 @@ export function layoutBubbleTextLines(
           paragraphs.reduce((acc, p) => {
             const pTrim = p.trim()
             if (!pTrim) return acc + 1
-            const pWidth = ctx.measureText(pTrim).width
-            return acc + Math.max(1, Math.ceil(pWidth / (boxW * 0.78)))
+            return acc + Math.max(1, Math.ceil(ctx.measureText(pTrim).width / (boxW * 0.78)))
           }, 0)
         )
       )
 
-      for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
-        const paragraph = paragraphs[pIdx].trim()
-        if (!paragraph) {
-          if (lines.length < 35) lines.push("")
-          continue
-        }
-
-        const remainingWords = paragraph.split(/\s+/)
-
-        while (remainingWords.length > 0 && lines.length < 35) {
-          const curIdx = lines.length
-          const yPos = (curIdx - (estLines - 1) / 2) * lineHeight
-          const allowedW = getEllipseWidthAtY(yPos, rx, ry)
-
-          let curLine = ""
-
-          while (remainingWords.length > 0) {
-            const w = remainingWords[0]
-            if (!w) {
-              remainingWords.shift()
-              continue
-            }
-            const testLine = curLine ? `${curLine} ${w}`.trim() : w.trim()
-
-            if (ctx.measureText(testLine).width <= allowedW) {
-              curLine = testLine
-              remainingWords.shift()
-              continue
-            }
-
-            // Не влезло: если включен режим minHyphens и строка не пуста — переносим всё слово
-            if (minHyphens && curLine.length > 0) {
-              break
-            }
-
-            // Иначе пробуем дефисный перенос
-            let hyphenated = false
-            const splits = getWordHyphenSplits(w)
-
-            for (const split of splits) {
-              const hyphenTest = curLine ? `${curLine} ${split.prefix}`.trim() : split.prefix.trim()
-              if (ctx.measureText(hyphenTest).width <= allowedW) {
-                curLine = hyphenTest
-                remainingWords[0] = cleanLeadingPunct(split.suffix)
-                hyphenated = true
-                hadHyphenation = true
-                break
-              }
-            }
-
-            if (hyphenated) break
-
-            if (curLine) {
-              break
-            } else {
-              // Слово не влезает даже в пустую строку: принудительный слог
-              let splitIdx = -1
-              let part = ""
-              for (let cIdx = 0; cIdx < w.length; cIdx++) {
-                const char = w[cIdx]
-                const test = appendHyphenSafe(part + char)
-                if (ctx.measureText(test).width > allowedW && part.length >= 2) {
-                  splitIdx = cIdx
-                  break
-                }
-                part += char
-              }
-
-              hadHyphenation = true
-              if (splitIdx !== -1) {
-                lines.push(appendHyphenSafe(part).trim())
-                curLine = ""
-                remainingWords[0] = cleanLeadingPunct(w.slice(splitIdx))
-              } else {
-                lines.push(w.trim())
-                curLine = ""
-                remainingWords.shift()
-              }
-              break
-            }
-          }
-
-          if (curLine) lines.push(curLine.trim())
-        }
+      getAllowedW = (idx: number) => {
+        const yPos = (idx - (estLines - 1) / 2) * lineHeight
+        return getEllipseWidthAtY(yPos, rx, ry)
       }
     } else {
-      // ПРЯМОУГОЛЬНЫЙ БАБЛ
-      const maxW = boxW * widthRatio
-
-      for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
-        const paragraph = paragraphs[pIdx].trim()
-        if (!paragraph) {
-          if (lines.length < 35) lines.push("")
-          continue
-        }
-
-        const remainingWords = paragraph.split(/\s+/)
-        let curLine = ""
-
-        while (remainingWords.length > 0) {
-          const w = remainingWords[0]
-          if (!w) {
-            remainingWords.shift()
-            continue
-          }
-          const testLine = curLine ? `${curLine} ${w}`.trim() : w.trim()
-
-          if (ctx.measureText(testLine).width <= maxW) {
-            curLine = testLine
-            remainingWords.shift()
-          } else {
-            if (minHyphens && curLine.length > 0) {
-              lines.push(curLine.trim())
-              curLine = ""
-              continue
-            }
-
-            let hyphenated = false
-            const splits = getWordHyphenSplits(w)
-
-            for (const split of splits) {
-              const hyphenTest = curLine ? `${curLine} ${split.prefix}`.trim() : split.prefix.trim()
-              if (ctx.measureText(hyphenTest).width <= maxW) {
-                lines.push(hyphenTest.trim())
-                curLine = ""
-                remainingWords[0] = cleanLeadingPunct(split.suffix)
-                hyphenated = true
-                hadHyphenation = true
-                break
-              }
-            }
-
-            if (!hyphenated) {
-              if (curLine) {
-                lines.push(curLine.trim())
-                curLine = ""
-              } else {
-                let splitIdx = -1
-                let part = ""
-                for (let cIdx = 0; cIdx < w.length; cIdx++) {
-                  const char = w[cIdx]
-                  const test = appendHyphenSafe(part + char)
-                  if (ctx.measureText(test).width > maxW && part.length >= 2) {
-                    splitIdx = cIdx
-                    break
-                  }
-                  part += char
-                }
-
-                hadHyphenation = true
-                if (splitIdx !== -1) {
-                  lines.push(appendHyphenSafe(part).trim())
-                  curLine = ""
-                  remainingWords[0] = cleanLeadingPunct(w.slice(splitIdx))
-                } else {
-                  lines.push(w.trim())
-                  curLine = ""
-                  remainingWords.shift()
-                }
-              }
-            }
-          }
-        }
-        if (curLine) lines.push(curLine.trim())
-      }
+      getAllowedW = () => targetMaxW
     }
 
-    // Полный тримминг всех строк перед замером и рендерингом (устранение сдвига от пробела)
-    const cleanedLines = cleanAndTrimLines(lines)
+    const { lines, hadHyphenation } = _layoutParagraphs(ctx, paragraphs, minHyphens, getAllowedW)
+    lastLines = lines
+    lastLineHeight = lineHeight
 
-    const targetW = isEllipse ? boxW * 0.9 : boxW * widthRatio
-    const allLinesFitWidth = cleanedLines.every((line) => ctx.measureText(line.trim()).width <= targetW * 1.02)
-    const totalHeight = cleanedLines.length * lineHeight
-    const fitsHeight = totalHeight <= boxH * 0.96
+    const allLinesFitWidth = lines.every((line) => ctx.measureText(line).width <= targetMaxW * 1.02)
+    const fitsHeight = lines.length * lineHeight <= boxH * 0.96
 
     if (allLinesFitWidth && fitsHeight) {
+      // Если включен режим без дефисов, но переносы всё равно возникли — пробуем уменьшить еще на 1px
       if (minHyphens && hadHyphenation && curSize > 10) {
-        curSize = curSize - 1
+        curSize -= 1
         continue
       }
-      return { lines: cleanedLines, actualFontSize: curSize, lineHeight }
+      return { lines, actualFontSize: curSize, lineHeight }
     }
 
-    if (curSize <= 8) {
-      return { lines: cleanedLines, actualFontSize: curSize, lineHeight }
-    }
+    if (curSize <= 8) break
 
-    curSize = Math.max(8, curSize - 1)
+    // Адаптивный шаг уменьшения шрифта: при крупном кегле шагаем быстрее
+    const step = curSize > 24 ? 2 : 1
+    curSize = Math.max(8, curSize - step)
   }
 
-  const finalLineHeight = Math.round(curSize * 1.15)
-  const fallbackLines = paragraphs.map((p) => p.trim())
-  return { lines: fallbackLines, actualFontSize: curSize, lineHeight: finalLineHeight }
+  // При достижении минимального размера (8px) возвращаем строки, разбитые под рамку, а не сырой неразбитый текст
+  return {
+    lines: lastLines.length > 0 ? lastLines : paragraphs.map((p) => p.trim()),
+    actualFontSize: 8,
+    lineHeight: lastLineHeight,
+  }
 }

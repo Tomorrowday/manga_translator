@@ -12,6 +12,17 @@ export function getPageCleanImageUrl(pageId: number): string {
   return `${API_BASE_URL}/api/pages/${pageId}/clean-image`
 }
 
+export async function releaseVram() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/pages/release-vram`, {
+      method: "POST",
+    })
+    return await handleApiResponse<any>(res, "Ошибка очистки VRAM")
+  } catch (error) {
+    console.warn("Не удалось очистить VRAM:", error)
+  }
+}
+
 export async function getPageDetails(pageId: number): Promise<PageItem | null> {
   try {
     const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}`)

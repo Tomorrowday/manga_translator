@@ -38,17 +38,6 @@ if not YOLO_WEIGHTS_PATH.exists() and (BASE_DIR / "yolo_manga.pt").exists():
 if not DB_PATH.exists() and (BASE_DIR / "manga_db.sqlite").exists():
     DB_PATH = BASE_DIR / "manga_db.sqlite"
 
-# Веса для детектора кадров (панелей)
-YOLO_PANEL_WEIGHTS_PATH = WEIGHTS_DIR / "manga_panel_detector.pt"
-if not YOLO_PANEL_WEIGHTS_PATH.exists():
-    for alt_name in ["model.pt", "best.pt", "yolo_panels.pt", "manga-panel-detector-yolo26n.pt"]:
-        if (WEIGHTS_DIR / alt_name).exists():
-            YOLO_PANEL_WEIGHTS_PATH = WEIGHTS_DIR / alt_name
-            break
-        elif (BASE_DIR / alt_name).exists():
-            YOLO_PANEL_WEIGHTS_PATH = BASE_DIR / alt_name
-            break
-
 # API-ключи и конфигурация LLM
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_NAME = "gemini-3.5-flash-lite"

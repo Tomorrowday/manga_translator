@@ -1,3 +1,4 @@
+# schemas/__init__.py
 from .ai import (
     OcrRequest,
     TranslationRequest,
@@ -5,6 +6,7 @@ from .ai import (
     BatchTranslationRequest,
 )
 from .blocks import (
+    BrushCleanRequest,
     SpotCleanRequest,
     TextBlockItem,
     SavePageBlocksRequest,
@@ -12,7 +14,6 @@ from .blocks import (
 from .projects import (
     ScanProjectRequest,
     AddChapterRequest,
-    UpdateTitleDescriptionRequest,
     UpdateTitleSettingsRequest,
     GlossaryItemCreate,
 )
@@ -22,12 +23,12 @@ __all__ = [
     "TranslationRequest",
     "BatchTranslateItem",
     "BatchTranslationRequest",
+    "BrushCleanRequest",
     "SpotCleanRequest",
     "TextBlockItem",
     "SavePageBlocksRequest",
     "ScanProjectRequest",
     "AddChapterRequest",
-    "UpdateTitleDescriptionRequest",
     "UpdateTitleSettingsRequest",
     "GlossaryItemCreate",
 ]

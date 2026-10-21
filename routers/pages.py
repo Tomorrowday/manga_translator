@@ -16,7 +16,7 @@ from fastapi.responses import Response
 from database import get_db, db_session
 from schemas import SavePageBlocksRequest, SpotCleanRequest
 from schemas.blocks import BrushCleanRequest
-from services.cleaner import spot_clean_region, inpaint_by_brush_mask, load_image_cv2
+from services.cleaner import spot_clean_region, inpaint_by_brush_mask, load_image_cv2, release_vram
 from services.page_service import (
     save_page_blocks_service,
     detect_page_bubbles_service,
@@ -54,6 +54,16 @@ def serve_image_file_safely(file_path: str) -> Response:
             "Cache-Control": "public, max-age=3600",
         }
     )
+
+
+@router.post("/release-vram")
+async def release_vram_endpoint():
+    """Принудительно очищает неиспользуемую видеопамять и кэш PyTorch."""
+    try:
+        release_vram()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/{page_id}")

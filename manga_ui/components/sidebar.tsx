@@ -1,3 +1,5 @@
+// manga_ui/components/sidebar.tsx
+
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
@@ -28,6 +30,7 @@ import {
   deleteProject,
 } from "@/lib/api"
 import { ProjectModal } from "@/components/project-modal"
+import { SidebarModals } from "@/components/sidebar/sidebar-modals"
 
 interface SidebarProps {
   currentPageId: number | null
@@ -64,19 +67,9 @@ export function Sidebar({
   const [loadingTree, setLoadingTree] = useState(false)
   const [isRescanning, setIsRescanning] = useState(false)
 
-  // Модалка создания нового тайтла
-  const [isScanning, setIsScanning] = useState(false)
   const [showScanModal, setShowScanModal] = useState(false)
-  const [scanName, setScanName] = useState("")
-  const [scanPath, setScanPath] = useState("")
-
-  // Модалка добавления главы в существующий тайтл
   const [showAddChapterModal, setShowAddChapterModal] = useState(false)
-  const [chapterPath, setChapterPath] = useState("")
-  const [chapterNumber, setChapterNumber] = useState("")
-  const [isAddingChapter, setIsAddingChapter] = useState(false)
 
-  // Модалка проекта (Глоссарий, Синопсис, Статистика)
   const [showProjectModal, setShowProjectModal] = useState(false)
   const [projectModalTab, setProjectModalTab] = useState<"glossary" | "synopsis" | "stats">("glossary")
 
@@ -147,24 +140,34 @@ export function Sidebar({
     setExpandedChapters((prev) => ({ ...prev, [chapterId]: !prev[chapterId] }))
   }
 
-  const handleScanSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!scanName.trim() || !scanPath.trim()) return
-    setIsScanning(true)
+  const handleScanProject = async (name: string, path: string): Promise<boolean> => {
     try {
-      const res = await scanProjectFolder(scanName, scanPath)
+      const res = await scanProjectFolder(name, path)
       if (res.success) {
-        setShowScanModal(false)
-        setScanName("")
-        setScanPath("")
         await loadProjects()
-      } else {
-        alert("Ошибка: " + res.error)
+        return true
       }
+      alert("Ошибка: " + res.error)
+      return false
     } catch (e) {
       alert("Не удалось отсканировать папку: " + String(e))
-    } finally {
-      setIsScanning(false)
+      return false
+    }
+  }
+
+  const handleAddChapter = async (path: string, chNum?: string): Promise<boolean> => {
+    if (!selectedTitleId) return false
+    try {
+      const res = await addChapterToProject(selectedTitleId, path, chNum)
+      if (res.success) {
+        await loadTree(selectedTitleId)
+        return true
+      }
+      alert("Ошибка: " + (res.error || res.detail))
+      return false
+    } catch (e) {
+      alert("Не удалось добавить главу: " + String(e))
+      return false
     }
   }
 
@@ -179,28 +182,6 @@ export function Sidebar({
       alert("Ошибка повторного сканирования: " + String(err))
     } finally {
       setIsRescanning(false)
-    }
-  }
-
-  const handleAddChapterSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedTitleId || !chapterPath.trim()) return
-
-    setIsAddingChapter(true)
-    try {
-      const res = await addChapterToProject(selectedTitleId, chapterPath.trim(), chapterNumber.trim())
-      if (res.success) {
-        setShowAddChapterModal(false)
-        setChapterPath("")
-        setChapterNumber("")
-        await loadTree(selectedTitleId)
-      } else {
-        alert("Ошибка: " + (res.error || res.detail))
-      }
-    } catch (e) {
-      alert("Не удалось добавить главу: " + String(e))
-    } finally {
-      setIsAddingChapter(false)
     }
   }
 
@@ -425,116 +406,15 @@ export function Sidebar({
         )}
       </div>
 
-      {showScanModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
-            <h3 className="text-sm font-semibold text-white">Сканировать новый тайтл</h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Создаст новый проект тайтла и просканирует все папки глав внутри.
-            </p>
-
-            <form onSubmit={handleScanSubmit} className="mt-4 space-y-3">
-              <div>
-                <label className="block text-[11px] font-medium text-slate-400">Название тайтла</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Chainsaw Man"
-                  value={scanName}
-                  onChange={(e) => setScanName(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-medium text-slate-400">Путь к корневой папке</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="D:\Manga\ChainsawMan"
-                  value={scanPath}
-                  onChange={(e) => setScanPath(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowScanModal(false)}
-                  className="rounded-md px-3 py-1.5 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={isScanning}
-                  className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  {isScanning && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Сканировать
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showAddChapterModal && selectedProject && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-2xl">
-            <h3 className="text-sm font-semibold text-white">Добавить главу в &laquo;{selectedProject.name}&raquo;</h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Новая глава сразу унаследует синопсис и глоссарий этого тайтла.
-            </p>
-
-            <form onSubmit={handleAddChapterSubmit} className="mt-4 space-y-3">
-              <div>
-                <label className="block text-[11px] font-medium text-slate-400">Путь к папке главы (или тома)</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="D:\Manga\ChainsawMan\Chapter_102"
-                  value={chapterPath}
-                  onChange={(e) => setChapterPath(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-medium text-slate-400">
-                  Номер/Имя главы <span className="text-slate-500">(опционально, по умолчанию имя папки)</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="например: Chapter 102"
-                  value={chapterNumber}
-                  onChange={(e) => setChapterNumber(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddChapterModal(false)}
-                  className="rounded-md px-3 py-1.5 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={isAddingChapter}
-                  className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  {isAddingChapter && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Добавить главу
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <SidebarModals
+        showScanModal={showScanModal}
+        showAddChapterModal={showAddChapterModal}
+        selectedProjectName={selectedProject?.name}
+        onCloseScanModal={() => setShowScanModal(false)}
+        onCloseAddChapterModal={() => setShowAddChapterModal(false)}
+        onScanProject={handleScanProject}
+        onAddChapter={handleAddChapter}
+      />
 
       {showProjectModal && selectedTitleId && (
         <ProjectModal
