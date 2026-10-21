@@ -1,5 +1,5 @@
 # services/cleaner.py
-# Интеллектуальный клин баблов (белый клин + LaMa) с поддержкой угла поворота, формы и бесшовного смешивания
+# Интеллектуальный клин баблов (белый клин + LaMa в режиме box) с поддержкой угла поворота, формы и бесшовного смешивания
 
 import gc
 import math
@@ -106,7 +106,7 @@ def _build_bubble_interior_mask(gray: np.ndarray, shape: str = "rect") -> np.nda
         if stats[lbl, cv2.CC_STAT_AREA] >= min_area:
             interior_white[labels == lbl] = 255
 
-    # Если из-за огромного шрифта белая область распалась, берем самую крупную компоненту в центре
+    # Если из-за крупного шрифта белая область распалась, берем самую крупную компоненту в центре
     if np.sum(interior_white) == 0 and num_labels > 1:
         best_lbl = 0
         best_area = 0
@@ -127,15 +127,12 @@ def _build_bubble_interior_mask(gray: np.ndarray, shape: str = "rect") -> np.nda
         interior_white = cv2.dilate(interior_white, kernel_3, iterations=1)
         interior_white[gray < 180] = 0
 
-        # 3. Заполняем все дырки (буквы и внутренние петельки букв) внутри белого острова бабла.
-        # Т.к. RETR_EXTERNAL берет только внешний периметр белого бабла,
-        # заливка cv2.fillPoly превращает весь интерьер бабла в сплошную маску без единой дырочки внутри!
+        # 3. Заполняем все дырки внутри белого острова бабла
         contours, _ = cv2.findContours(interior_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         interior_mask = np.zeros_like(gray)
         if contours:
             cv2.fillPoly(interior_mask, contours, 255)
 
-        # Немного отступаем от внешней границы острова (на 1px внутрь), чтобы не задеть сам контур бабла
         interior_mask = cv2.erode(interior_mask, kernel_3, iterations=1)
 
     if shape == "ellipse":
@@ -148,24 +145,20 @@ def _build_bubble_interior_mask(gray: np.ndarray, shape: str = "rect") -> np.nda
 
 def clean_white_bubble_patch(roi: np.ndarray, gray: np.ndarray, shape: str = "rect"):
     """
-    Очистка белого бабла: удаляет буквы (включая замкнутые петельки) только внутри контура бабла,
-    сохраняя границы бабла и не обеляя фон/скринтон за его пределами.
+    Очистка белого бабла: удаляет буквы (включая замкнутые петельки)
+    только внутри контура бабла, сохраняя границы бабла и не обеляя фон/скринтон за его пределами.
     """
     h_roi, w_roi = roi.shape[:2]
     if h_roi < 3 or w_roi < 3:
         return
 
-    # 1. Находим сплошную маску внутренней части бабла (без дырок от петелек букв)
     interior_mask = _build_bubble_interior_mask(gray, shape=shape)
 
-    # 2. Ищем темные элементы только по ВНЕШНИМ контурам (RETR_EXTERNAL),
-    # чтобы внутренние дырочки букв (な, る, 通) заливались целиком вместе с буквой, а не вычитались!
     _, dark_mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
     contours, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     text_clean_mask = np.zeros_like(gray)
     border_mask = np.zeros_like(gray)
-
     edge_margin = 2
 
     for cnt in contours:
@@ -182,32 +175,25 @@ def clean_white_bubble_patch(roi: np.ndarray, gray: np.ndarray, shape: str = "re
             cv2.drawContours(border_mask, [cnt], -1, 255, thickness=cv2.FILLED)
             continue
 
-        # Заливаем букву целиком вместе со всеми внутренними петельками
         cnt_mask = np.zeros_like(gray)
         cv2.fillPoly(cnt_mask, [cnt], 255)
 
         inside_ratio = np.sum((cnt_mask == 255) & (interior_mask == 255)) / float(max(1, np.sum(cnt_mask == 255)))
         if inside_ratio < 0.75:
-            # Контур находится за пределами бабла (на фоне/скринтоне в углах рамки)
             cv2.drawContours(border_mask, [cnt], -1, 255, thickness=cv2.FILLED)
             continue
 
-        # Заливаем одобренную букву сплошняком (без дырочек внутри петель)
         cv2.fillPoly(text_clean_mask, [cnt], 255)
 
     if np.sum(text_clean_mask) == 0:
         return
 
-    # 3. Расширяем маску текста для удаления антиалиасинга (ореола) вокруг букв
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dilated_text = cv2.dilate(text_clean_mask, kernel, iterations=2)
 
-    # Дополнительная зачистка: любые серые/темные пиксели, полностью окруженные маской текста (микро-петельки),
-    # принудительно закрываем морфологическим закрытием
     close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     dilated_text = cv2.morphologyEx(dilated_text, cv2.MORPH_CLOSE, close_kernel, iterations=1)
 
-    # Ограничиваем очистку строго внутренней территорией бабла и защитным щитом контуров
     border_shield = cv2.dilate(border_mask, kernel, iterations=1)
     dilated_text[border_shield == 255] = 0
     dilated_text[interior_mask == 0] = 0
@@ -296,11 +282,12 @@ def get_box_geometry(image_np: np.ndarray, box: dict) -> Tuple[float, float, int
     return cx, cy, bw, bh, rot, shape
 
 
-def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
+def clean_speech_bubble(image_np: np.ndarray, box: dict, force_mode: str = "auto") -> str:
     """
-    Автоматическая очистка бабла (шаг 2. Clean):
-    - Если бабл белый -> выбеливаем текст.
-    - Если бабл на арте/скринтоне -> LaMa-ретушь с широким контекстом.
+    Очистка бабла:
+    - force_mode == 'white': принудительно белый клин.
+    - force_mode == 'lama': принудительно нейросеть LaMa со сплошной маской бабла (box/ellipse).
+    - force_mode == 'auto': автовыбор по типу фона бабла.
     """
     cx, cy, bw, bh, rot, shape = get_box_geometry(image_np, box)
     img_h, img_w = image_np.shape[:2]
@@ -316,17 +303,14 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
             return "skipped"
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        use_white = (force_mode == "white") or (force_mode == "auto" and is_mostly_white_bubble(roi, gray))
 
-        if is_mostly_white_bubble(roi, gray):
+        if use_white or ml.inpaint_model is None:
             clean_white_bubble_patch(roi, gray, shape=shape)
             image_np[y1:y2, x1:x2] = roi
             return "white"
 
-        if ml.inpaint_model is None:
-            clean_white_bubble_patch(roi, gray, shape=shape)
-            image_np[y1:y2, x1:x2] = roi
-            return "white"
-
+        # LaMa Box Mode
         box_mask = np.zeros(roi.shape[:2], dtype=np.uint8)
         if shape == "ellipse":
             cv2.ellipse(box_mask, (roi.shape[1] // 2, roi.shape[0] // 2), (roi.shape[1] // 2, roi.shape[0] // 2), 0, 0, 360, 255, -1)
@@ -350,6 +334,7 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         blend_inpainted_patch(image_np, inpainted, crop_mask, cx1, cy1, cx2, cy2)
         return "inpaint"
 
+    # --- Повёрнутый бабл ---
     rad = math.radians(rot)
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
@@ -368,12 +353,13 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
     )
 
     gray_patch = cv2.cvtColor(upright_patch, cv2.COLOR_BGR2GRAY)
+    use_white = (force_mode == "white") or (force_mode == "auto" and is_mostly_white_bubble(upright_patch, gray_patch))
 
-    if is_mostly_white_bubble(upright_patch, gray_patch):
+    if use_white or ml.inpaint_model is None:
         clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
         cleaned_upright = upright_patch
         used_method = "white"
-    elif ml.inpaint_model is not None:
+    else:
         target_size = max(512, int(max(bw, bh) * 2.2))
         pad_x = max(80, (target_size - bw) // 2)
         pad_y = max(80, (target_size - bh) // 2)
@@ -400,10 +386,6 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
         inpainted_padded = inpaint_patch_with_lama(padded_patch, clean_mask)
         cleaned_upright = inpainted_padded[pad_y:pad_y + bh, pad_x:pad_x + bw]
         used_method = "inpaint"
-    else:
-        clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
-        cleaned_upright = upright_patch
-        used_method = "white"
 
     mask_patch = np.zeros((bh, bw), dtype=np.uint8)
     if shape == "ellipse":
@@ -433,13 +415,13 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict) -> str:
 def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> str:
     """
     Точечная очистка области:
+    - method == 'auto': автовыбор белого или LaMa box.
     - method == 'white': аккуратно заливает/выбеливает бабл белым.
-    - method == 'lama': ПОЛНОСТЬЮ стирает бабл/плашку и восстанавливает рисунок нейросетью LaMa
-                        с широким контекстом (>= 512px).
+    - method in ('lama', 'lama_box'): ПОЛНОСТЬЮ стирает бабл/плашку и восстанавливает рисунок нейросетью LaMa с широким контекстом (>= 512px).
     """
     try:
         if method == "auto":
-            return clean_speech_bubble(image_np, box)
+            return clean_speech_bubble(image_np, box, force_mode="auto")
 
         cx, cy, bw, bh, rot, shape = get_box_geometry(image_np, box)
         img_h, img_w = image_np.shape[:2]
@@ -462,7 +444,7 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
                 image_np[y1:y2, x1:x2] = roi
                 return "white"
 
-            # 2. РЕЖИМ LAMA:
+            # 2. РЕЖИМ LAMA (Box Mode)
             box_mask = np.zeros(roi.shape[:2], dtype=np.uint8)
             if shape == "ellipse":
                 cv2.ellipse(box_mask, (roi.shape[1] // 2, roi.shape[0] // 2), (roi.shape[1] // 2, roi.shape[0] // 2), 0, 0, 360, 255, -1)
@@ -557,7 +539,7 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
 
         return used_method
     finally:
-        if method == "lama":
+        if method in ["lama", "lama_box"]:
             release_vram()
 
 
@@ -602,4 +584,4 @@ def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray, mode: str
 
         return image_np
     finally:
-        release_vram()  
+        release_vram()

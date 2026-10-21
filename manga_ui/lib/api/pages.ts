@@ -85,8 +85,8 @@ export async function savePageBlocks(
   return await handleApiResponse<any>(res, "Ошибка сохранения баблов")
 }
 
-export async function runCleanPage(pageId: number) {
-  const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}/clean`, {
+export async function runCleanPage(pageId: number, mode: "auto" | "lama" | "white" = "auto") {
+  const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}/clean?mode=${mode}`, {
     method: "POST",
   })
   return await handleApiResponse<any>(res, "Ошибка клина страницы")
@@ -102,7 +102,7 @@ export async function revertCleanPage(pageId: number) {
 export async function runSpotClean(
   pageId: number,
   rect: { x: number; y: number; width: number; height: number; rotation?: number; shape?: string },
-  method: "auto" | "lama" | "white" = "auto"
+  method: "auto" | "lama" | "white" | "lama_box" = "auto"
 ) {
   const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}/clean-spot`, {
     method: "POST",

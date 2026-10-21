@@ -151,8 +151,8 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
     return boxes, new_status, elapsed
 
 
-def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
-    """Очищает баблы на странице (белый клин + LaМа inpainting) со сбросом VRAM после цикла."""
+def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[str, str, Dict[str, int]]:
+    """Очищает баблы на странице с выбором режима: 'auto' | 'white' | 'lama'."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
@@ -181,7 +181,7 @@ def clean_page_bubbles_service(page_id: int) -> Tuple[str, str, Dict[str, int]]:
     stats = {"white": 0, "inpaint": 0}
     try:
         for box in blocks:
-            method = clean_speech_bubble(image, box)
+            method = clean_speech_bubble(image, box, force_mode=clean_mode)
             if method in stats:
                 stats[method] += 1
     finally:

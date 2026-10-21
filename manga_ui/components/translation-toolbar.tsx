@@ -1,6 +1,8 @@
+// manga_ui/components/translation-toolbar.tsx
+
 "use client"
 
-import { Zap, Wand2, ScanText, PlayCircle, Sparkles, Eye, EyeOff, RotateCcw, Loader2 } from "lucide-react"
+import { Zap, Wand2, ScanText, PlayCircle, Sparkles, Eye, EyeOff, RotateCcw, Loader2, ChevronDown } from "lucide-react"
 
 interface TranslationToolbarProps {
   hasCurrentPage: boolean
@@ -17,7 +19,7 @@ interface TranslationToolbarProps {
   onAutoDetect: () => void
   onOcrAllBlocks: () => void
   onTranslateAll: () => void
-  onCleanPage: () => void
+  onCleanPage: (mode?: "auto" | "lama" | "white") => void
   onRevertClean: () => void
   onToggleTypeset: () => void
 }
@@ -87,38 +89,73 @@ export function TranslationToolbar({
           OCR All
         </button>
 
-        {/* 2. SMART CLEAN & REVERT CLEAN (Теперь ШАГ 2) */}
-        <div className="flex items-center">
-          <button
-            onClick={onCleanPage}
-            disabled={!hasCurrentPage || !hasBlocks || isCleaning || isFullAuto}
-            className={[
-              "flex items-center gap-1.5 rounded-l-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50",
-              !hasCleanScan ? "rounded-r-md" : "",
-            ].join(" ")}
-            title="2. Умный клин (выбеливание баблов + AI-ретушь арта через LaMa)"
-          >
-            {isCleaning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 text-purple-400" />}
-            2. Clean
-          </button>
-
-          {hasCleanScan && (
+        {/* 2. SMART CLEAN С ВЫПАДАЮЩИМИ РЕЖИМАМИ ПРИ НАВЕДЕНИИ */}
+        <div className="relative group/clean flex items-center">
+          <div className="flex items-center">
             <button
-              onClick={onRevertClean}
-              disabled={isRevertingClean || isCleaning || isFullAuto}
-              className="flex items-center justify-center rounded-r-md border-l border-slate-700 bg-slate-800 px-2 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-rose-950/60 hover:text-rose-300 disabled:opacity-50"
-              title="Откатить клин страницы (удалить заклиненный файл и вернуться к оригиналу)"
+              onClick={() => onCleanPage("auto")}
+              disabled={!hasCurrentPage || !hasBlocks || isCleaning || isFullAuto}
+              className={[
+                "flex items-center gap-1.5 rounded-l-md bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 hover:text-white disabled:opacity-50",
+                !hasCleanScan ? "rounded-r-md" : "",
+              ].join(" ")}
+              title="2. Умный клин (клик — Auto, наведите для выбора White / LaMa)"
             >
-              {isRevertingClean ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RotateCcw className="h-3.5 w-3.5" />
-              )}
+              {isCleaning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 text-purple-400" />}
+              2. Clean
+              <ChevronDown className="h-3 w-3 text-slate-400 opacity-60 group-hover/clean:opacity-100 transition-opacity" />
             </button>
+
+            {hasCleanScan && (
+              <button
+                onClick={onRevertClean}
+                disabled={isRevertingClean || isCleaning || isFullAuto}
+                className="flex items-center justify-center rounded-r-md border-l border-slate-700 bg-slate-800 px-2 py-1.5 text-xs font-medium text-slate-400 transition-colors hover:bg-rose-950/60 hover:text-rose-300 disabled:opacity-50"
+                title="Откатить клин страницы (удалить заклиненный файл и вернуться к оригиналу)"
+              >
+                {isRevertingClean ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
+          </div>
+
+          {/* Всплывающее меню режимов клина */}
+          {!isCleaning && !isFullAuto && hasCurrentPage && hasBlocks && (
+            <div className="absolute left-0 top-full pt-1.5 hidden group-hover/clean:flex flex-col z-50 animate-in fade-in zoom-in-95 duration-100">
+              <div className="flex flex-col rounded-md border border-slate-700 bg-slate-900/95 p-1 shadow-2xl backdrop-blur-md min-w-[140px] space-y-0.5">
+                <button
+                  type="button"
+                  onClick={() => onCleanPage("auto")}
+                  className="flex items-center justify-between rounded px-2.5 py-1.5 text-left text-[11px] text-slate-200 hover:bg-slate-800 hover:text-white transition-colors"
+                >
+                  <span className="font-medium">Clean Auto</span>
+                  <span className="text-[9px] text-purple-400 font-mono">Smart</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCleanPage("white")}
+                  className="flex items-center justify-between rounded px-2.5 py-1.5 text-left text-[11px] text-slate-200 hover:bg-slate-800 hover:text-white transition-colors"
+                >
+                  <span className="font-medium">Clean White</span>
+                  <span className="text-[9px] text-slate-400 font-mono">White</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCleanPage("lama")}
+                  className="flex items-center justify-between rounded px-2.5 py-1.5 text-left text-[11px] text-purple-300 hover:bg-purple-950/60 hover:text-purple-100 transition-colors"
+                >
+                  <span className="font-medium">Clean LaMa</span>
+                  <span className="text-[9px] text-pink-400 font-mono">Stroke</span>
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
-        {/* 3. TRANSLATE (Теперь ШАГ 3) */}
+        {/* 3. TRANSLATE */}
         <button
           onClick={onTranslateAll}
           disabled={!hasCurrentPage || !hasBlocks || isBatchTranslating || isFullAuto}

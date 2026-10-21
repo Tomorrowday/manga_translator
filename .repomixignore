@@ -1,0 +1,5 @@
+**/*.svg
+**/*.png
+**/*.jpg
+manga_ui/.next/**
+manga_ui/public/**

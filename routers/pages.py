@@ -10,7 +10,7 @@ import base64
 import mimetypes
 from pathlib import Path
 import numpy as np
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from fastapi.responses import Response
 
 from database import get_db, db_session
@@ -205,9 +205,9 @@ async def detect_page_bubbles_by_id(page_id: int):
 
 
 @router.post("/{page_id}/clean")
-async def clean_page_bubbles(page_id: int):
+async def clean_page_bubbles(page_id: int, mode: str = Query("auto")):
     try:
-        clean_path, new_status, stats = clean_page_bubbles_service(page_id)
+        clean_path, new_status, stats = clean_page_bubbles_service(page_id, clean_mode=mode)
         return {
             "success": True,
             "clean_path": clean_path,

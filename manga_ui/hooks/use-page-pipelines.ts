@@ -157,7 +157,7 @@ export function usePagePipelines({
     }
   }
 
-  const handleCleanPage = async () => {
+  const handleCleanPage = async (mode: "auto" | "lama" | "white" = "auto") => {
     if (!currentPage) return
     if (textBlocks.length === 0) {
       alert("Сначала добавьте или найдите баблы для очистки.")
@@ -167,7 +167,7 @@ export function usePagePipelines({
     setIsCleaning(true)
     try {
       await saveBlocks(true)
-      const res = await runCleanPage(currentPage.id)
+      const res = await runCleanPage(currentPage.id, mode)
       if (res.success) {
         setViewMode("clean")
         onPageStatusUpdate(currentPage.id, (res.page_status as PageStatus) || "cleaned", res.clean_path)
@@ -260,7 +260,7 @@ export function usePagePipelines({
 
       let cleanPath = currentPage.clean_path
       if (!cleanPath) {
-        const cleanRes = await runCleanPage(currentPage.id)
+        const cleanRes = await runCleanPage(currentPage.id, "auto")
         if (cleanRes.success && cleanRes.clean_path) {
           cleanPath = cleanRes.clean_path
           onPageStatusUpdate(currentPage.id, "cleaned", cleanPath)
@@ -324,7 +324,7 @@ export function usePagePipelines({
         await saveBlocks(true)
       }
 
-      const cleanRes = await runCleanPage(currentPage.id)
+      const cleanRes = await runCleanPage(currentPage.id, "auto")
       if (!cleanRes.success) {
         throw new Error("Ошибка при очистке страницы: " + cleanRes.error)
       }
@@ -353,7 +353,7 @@ export function usePagePipelines({
       const cleanImg = await loadImage(cleanImgUrl)
       const blob = await bakePageBlob(cleanImg, textBlocksRef.current, defaultFontSize)
 
-      if (blob) {
+      if (!blob) {
         await saveTranslatedPage(currentPage.id, blob)
         setIsExportSuccess(true)
         onPageStatusUpdate(currentPage.id, "done", cleanRes.clean_path)
