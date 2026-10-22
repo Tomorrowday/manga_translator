@@ -34,6 +34,7 @@ def init_db():
                 folder_path TEXT NOT NULL,
                 description TEXT DEFAULT '',
                 default_font_size INTEGER DEFAULT 14,
+                detector_model TEXT DEFAULT 'yolo_manga.pt',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -106,6 +107,9 @@ def init_db():
         if "default_font_size" not in title_cols:
             cursor.execute("ALTER TABLE titles ADD COLUMN default_font_size INTEGER DEFAULT 14")
             print("Миграция: добавлена колонка 'default_font_size' в titles")
+        if "detector_model" not in title_cols:
+            cursor.execute("ALTER TABLE titles ADD COLUMN detector_model TEXT DEFAULT 'yolo_manga.pt'")
+            print("Миграция: добавлена колонка 'detector_model' в titles")
 
         # Проверка миграций text_blocks
         cursor.execute("PRAGMA table_info(text_blocks)")

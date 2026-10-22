@@ -60,11 +60,13 @@ export interface TitleProject {
   folder_path: string
   description?: string
   default_font_size?: number
+  detector_model?: string
   created_at: string
 }
 
 export interface ProjectTree extends TitleProject {
   chapters: ChapterItem[]
+  available_detectors?: Record<string, string>
 }
 
 export interface GlossaryItem {

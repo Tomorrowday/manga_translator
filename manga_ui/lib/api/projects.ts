@@ -47,17 +47,19 @@ export async function getProjectTree(titleId: number): Promise<ProjectTree> {
 
 export async function updateTitleSettings(
   titleId: number,
-  settings: { description?: string; default_font_size?: number }
+  settings: { description?: string; default_font_size?: number; detector_model?: string }
 ) {
   const res = await fetch(`${API_BASE_URL}/api/projects/${titleId}/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
   })
-  return await handleApiResponse<{ success: boolean; description: string; default_font_size: number }>(
-    res,
-    "Ошибка обновления настроек тайтла"
-  )
+  return await handleApiResponse<{
+    success: boolean
+    description: string
+    default_font_size: number
+    detector_model: string
+  }>(res, "Ошибка обновления настроек тайтла")
 }
 
 export async function getTitleSpeakers(titleId: number, chapterId?: number): Promise<string[]> {

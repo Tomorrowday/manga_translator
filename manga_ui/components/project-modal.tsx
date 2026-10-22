@@ -14,6 +14,7 @@ import {
   Save,
   Check,
   Type,
+  Scan,
 } from "lucide-react"
 import type { GlossaryItem, ProjectStats } from "@/lib/types"
 import {
@@ -30,7 +31,7 @@ interface ProjectModalProps {
   titleName: string
   initialTab?: "glossary" | "synopsis" | "stats"
   onClose: () => void
-  onSettingsUpdated?: (newDescription: string, newFontSize: number) => void
+  onSettingsUpdated?: (newDescription: string, newFontSize: number, newDetector: string) => void
 }
 
 export function ProjectModal({
@@ -43,9 +44,14 @@ export function ProjectModal({
   const [mounted, setMounted] = useState(false)
   const [activeTab, setActiveTab] = useState<"glossary" | "synopsis" | "stats">(initialTab)
 
-  // Синопсис и базовый размер шрифта
+  // Синопсис, базовый размер шрифта и детектор
   const [description, setDescription] = useState("")
   const [defaultFontSize, setDefaultFontSize] = useState<number>(14)
+  const [detectorModel, setDetectorModel] = useState<string>("yolo_manga.pt")
+  const [availableDetectors, setAvailableDetectors] = useState<Record<string, string>>({
+    "yolo_manga.pt": "YOLOv8 Bubble Detector (Default)",
+    "yolo26s.pt": "YOLO26s Manga Detector (New)",
+  })
   const [loadingDesc, setLoadingDesc] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [settingsSavedSuccess, setSettingsSavedSuccess] = useState(false)
@@ -81,6 +87,8 @@ export function ProjectModal({
       if (data) {
         if (data.description !== undefined) setDescription(data.description || "")
         if (data.default_font_size !== undefined) setDefaultFontSize(data.default_font_size || 14)
+        if (data.detector_model) setDetectorModel(data.detector_model)
+        if (data.available_detectors) setAvailableDetectors(data.available_detectors)
       }
     } finally {
       setLoadingDesc(false)
@@ -124,10 +132,11 @@ export function ProjectModal({
       const res = await updateTitleSettings(titleId, {
         description: description.trim(),
         default_font_size: defaultFontSize,
+        detector_model: detectorModel,
       })
       if (res.success) {
         setSettingsSavedSuccess(true)
-        onSettingsUpdated?.(res.description, res.default_font_size)
+        onSettingsUpdated?.(res.description, res.default_font_size, res.detector_model)
         setTimeout(() => setSettingsSavedSuccess(false), 2000)
       }
     } finally {
@@ -248,7 +257,6 @@ export function ProjectModal({
                 </p>
               </div>
 
-              {/* Форма добавления */}
               <form onSubmit={handleAddGlossary} className="flex gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3">
                 <input
                   type="text"
@@ -282,7 +290,6 @@ export function ProjectModal({
                 </button>
               </form>
 
-              {/* Таблица */}
               <div className="overflow-hidden rounded-xl border border-slate-800">
                 <table className="w-full text-left text-xs">
                   <thead className="border-b border-slate-800 bg-slate-950 text-slate-400">
@@ -340,6 +347,36 @@ export function ProjectModal({
           {/* ВКЛАДКА 2: СИНОПСИС И НАСТРОЙКИ ТАЙТЛА */}
           {activeTab === "synopsis" && (
             <div className="space-y-4">
+
+              {/* ВЫБОР НЕЙРОСЕТИ ДЕТЕКЦИИ */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      <Scan className="h-3.5 w-3.5 text-indigo-400" />
+                      Модель детекции баблов (YOLO)
+                    </label>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      Используется при автодетекте «1. Detect & OCR» для всех страниц этого тайтла.
+                    </p>
+                  </div>
+
+                  <div className="w-64">
+                    <select
+                      value={detectorModel}
+                      onChange={(e) => setDetectorModel(e.target.value)}
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-100 outline-none focus:border-indigo-500"
+                    >
+                      {Object.entries(availableDetectors).map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               {/* Блок настройки базового шрифта манги */}
               <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-2">
                 <div className="flex items-center justify-between">

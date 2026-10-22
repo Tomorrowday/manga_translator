@@ -21,8 +21,6 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
     """
     Сохраняет блоки страницы с валидацией координат и вычисляет новый статус страницы.
     Использует INSERT OR REPLACE для предотвращения коллизий первичных ключей.
-    Если пользователь удалил все блоки на обработанной странице, статус не откатывается в 'raw',
-    чтобы не провоцировать повторную ложную автодетекцию.
     """
     with db_session() as cursor:
         cursor.execute("SELECT status, clean_path FROM pages WHERE id = ?", (page_id,))
@@ -89,10 +87,19 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
 
 
 def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str, float]:
-    """Выполняет детекцию баблов, ансамблевую нумерацию и первичный MangaOCR."""
+    """Выполняет детекцию баблов с учётом выбранной в тайтле модели детектора."""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
+    cursor.execute(
+        """
+        SELECT p.file_path, p.status, t.detector_model
+        FROM pages p
+        JOIN chapters c ON c.id = p.chapter_id
+        JOIN titles t ON t.id = c.title_id
+        WHERE p.id = ?
+        """,
+        (page_id,)
+    )
     row = cursor.fetchone()
     conn.close()
 
@@ -101,11 +108,12 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
 
     file_path = str(row["file_path"])
     current_status = str(row["status"])
+    detector_model = row["detector_model"] if row["detector_model"] else "yolo_manga.pt"
 
     start_time = time.time()
     image = Image.open(file_path).convert("RGB")
 
-    raw_boxes = detect_and_filter_bubbles(image)
+    raw_boxes = detect_and_filter_bubbles(image, model_name=detector_model)
     boxes: List[Dict[str, Any]] = [dict(b) for b in raw_boxes]
 
     with db_session() as cur:
@@ -185,7 +193,6 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
             if method in stats:
                 stats[method] += 1
     finally:
-        # Освобождаем память после прогона всей страницы
         release_vram()
 
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")

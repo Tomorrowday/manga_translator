@@ -16,6 +16,7 @@ class AddChapterRequest(BaseModel):
 class UpdateTitleSettingsRequest(BaseModel):
     description: Optional[str] = ""
     default_font_size: Optional[int] = 14
+    detector_model: Optional[str] = "yolo_manga.pt"
 
 
 class GlossaryItemCreate(BaseModel):

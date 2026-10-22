@@ -1,6 +1,7 @@
 # ml/models.py
 import os
 from pathlib import Path
+from typing import Dict
 from manga_ocr import MangaOcr
 from ultralytics import YOLO
 import google.generativeai as genai
@@ -26,7 +27,6 @@ class AnimeLamaWrapper:
     @torch.inference_mode()
     def __call__(self, image: Image.Image, mask: Image.Image) -> Image.Image:
         w, h = image.size
-        # Ресайз до кратности 8 (требование ResNet-архитектуры LaMa)
         new_w = (w // 8) * 8
         new_h = (h // 8) * 8
 
@@ -35,10 +35,8 @@ class AnimeLamaWrapper:
 
         img_tensor = transforms.ToTensor()(img_resized).unsqueeze(0).to(self.device)
         mask_tensor = transforms.ToTensor()(mask_resized).unsqueeze(0).to(self.device)
-        # Бинаризация маски
         mask_tensor = (mask_tensor > 0.5).float()
 
-        # Инференс специализированной модели
         out_tensor = self.model(img_tensor, mask_tensor)
         out_tensor = torch.clamp(out_tensor[0], 0, 1).cpu()
 
@@ -52,22 +50,49 @@ class MLContainer:
     """Хранилище загруженных моделей в памяти/видеопамяти."""
     mocr: MangaOcr = None
     yolo_model: YOLO = None
+    yolo_cache: Dict[str, YOLO] = {}
     gemini_model: genai.GenerativeModel = None
     inpaint_model = None
+
+    def get_yolo(self, model_name: str = "yolo_manga.pt") -> YOLO:
+        """Получить инстанс YOLO с кэшированием в памяти."""
+        if not model_name:
+            model_name = "yolo_manga.pt"
+
+        if model_name in self.yolo_cache:
+            return self.yolo_cache[model_name]
+
+        candidate = WEIGHTS_DIR / model_name
+        if not candidate.exists():
+            candidate = YOLO_WEIGHTS_PATH
+
+        print(f"Загрузка детектора YOLO ({candidate.name})...")
+        try:
+            model = YOLO(str(candidate))
+            self.yolo_cache[model_name] = model
+            # Синхронизируем базовую ссылку
+            if self.yolo_model is None:
+                self.yolo_model = model
+            return model
+        except Exception as e:
+            print(f"Ошибка загрузки детектора {candidate}: {e}")
+            if self.yolo_model:
+                return self.yolo_model
+            raise e
 
 
 ml = MLContainer()
 
 
 def load_ml_models():
-    """Загрузка MangaOCR, YOLO, специализированной LaMa и Gemini."""
+    """Загрузка MangaOCR, дефолтной YOLO, LaMa и Gemini."""
     print("Загрузка MangaOCR...")
     ml.mocr = MangaOcr()
 
-    print("Загрузка детектора баблов YOLO...")
+    print("Загрузка детектора баблов YOLO по умолчанию...")
     try:
-        ml.yolo_model = YOLO(str(YOLO_WEIGHTS_PATH))
-        print("YOLO (баблы) загружена успешно.")
+        ml.yolo_model = ml.get_yolo("yolo_manga.pt")
+        print("Базовый YOLO успешно инициализирован.")
     except Exception as e:
         print(f"Ошибка загрузки YOLO: {e}")
 
@@ -94,7 +119,7 @@ def load_ml_models():
         except Exception as e:
             print(f"Не удалось загрузить AnimeMangaInpainting: {e}. Переход на fallback...")
 
-    # Fallback на базовую simple-lama (Places2), если файла нет
+    # Fallback на базовую simple-lama
     if ml.inpaint_model is None:
         try:
             from simple_lama_inpainting import SimpleLama

@@ -38,6 +38,12 @@ if not YOLO_WEIGHTS_PATH.exists() and (BASE_DIR / "yolo_manga.pt").exists():
 if not DB_PATH.exists() and (BASE_DIR / "manga_db.sqlite").exists():
     DB_PATH = BASE_DIR / "manga_db.sqlite"
 
+# Доступные для выбора модели YOLO детекции баблов/текста
+AVAILABLE_DETECTORS = {
+    "yolo_manga.pt": "YOLOv8 Bubble Detector (Default)",
+    "yolo26s.pt": "YOLO26s Manga Detector (New)",
+}
+
 # API-ключи и конфигурация LLM
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL_NAME = "gemini-3.5-flash-lite"
@@ -45,11 +51,7 @@ GEMINI_MODEL_NAME = "gemini-3.5-flash-lite"
 # =====================================================================
 # НАСТРОЙКИ КЛИНА И INPAINTING (LAMA)
 # =====================================================================
-# False (по умолчанию): цветные вебтуны/манхва сохраняют цвет, ч/б манга обесцвечивается
-# True: ВСЕГДА принудительно обесцвечивать результат LaMa в строгое ч/б
 LAMA_FORCE_GRAYSCALE = os.getenv("LAMA_FORCE_GRAYSCALE", "false").lower() in ("true", "1", "yes")
-
-# Максимальная сторона кропа, подаваемая в нейросеть LaMa (защита от OOM при огромных мазках кисти)
 MAX_LAMA_DIM = int(os.getenv("MAX_LAMA_DIM", "2048"))
 
 

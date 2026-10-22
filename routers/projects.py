@@ -13,15 +13,12 @@ from schemas import (
     GlossaryItemCreate,
     UpdateTitleSettingsRequest,
 )
-from config import natural_sort_key
+from config import natural_sort_key, AVAILABLE_DETECTORS
 from logger import logger
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
-# Поддерживаемые форматы графики (включая AVIF и JFIF)
 VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".jfif", ".avif"}
-
-# Служебные папки, которые ни при каких условиях не должны распознаваться как главы манги
 EXCLUDED_DIR_NAMES = {
     "clean", "cleaned", "translated", "export", "exports",
     "raw", ".git", ".idea", "__pycache__", "logs"
@@ -37,11 +34,6 @@ def _scan_and_insert_chapters(
     existing_names: Optional[Set[str]] = None,
     custom_chapter_name: Optional[str] = None
 ) -> Tuple[int, int, int]:
-    """
-    Единая вспомогательная функция сканирования папки на изображения глав
-    и добавления глав/страниц в базу данных SQLite.
-    Возвращает кортеж: (added_chapters, added_pages, skipped_chapters).
-    """
     added_chapters = 0
     added_pages = 0
     skipped_chapters = 0
@@ -49,7 +41,6 @@ def _scan_and_insert_chapters(
     existing_folders = existing_folders or set()
     existing_names = existing_names or set()
 
-    # Проверка: лежат ли изображения прямо в корне переданной папки (одиночная глава)
     direct_files = [f for f in os.listdir(root_folder) if (root_folder / f).is_file()]
     direct_images = [f for f in direct_files if Path(f).suffix.lower() in VALID_IMAGE_EXTENSIONS]
 
@@ -81,7 +72,6 @@ def _scan_and_insert_chapters(
 
         return added_chapters, added_pages, skipped_chapters
 
-    # Иначе рекурсивно обходим подпапки с главами
     walk_dirs = []
     for root, dirs, files in os.walk(root_folder):
         dirs[:] = [d for d in dirs if d.lower() not in EXCLUDED_DIR_NAMES]
@@ -131,7 +121,7 @@ async def scan_project(req: ScanProjectRequest):
     try:
         with db_session() as cursor:
             cursor.execute(
-                "INSERT INTO titles (name, folder_path, default_font_size) VALUES (?, ?, 14)",
+                "INSERT INTO titles (name, folder_path, default_font_size, detector_model) VALUES (?, ?, 14, 'yolo_manga.pt')",
                 (req.name, str(folder))
             )
             title_id = cursor.lastrowid
@@ -152,11 +142,6 @@ async def scan_project(req: ScanProjectRequest):
 
 @router.post("/{title_id}/rescan")
 async def rescan_project(title_id: int):
-    """
-    Повторный скан корневой папки тайтла на новые главы.
-    Уже существующие в базе главы не затрагиваются (разметка и переводы сохраняются).
-    Добавляются только новые найденные папки с изображениями.
-    """
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT id, name, folder_path FROM titles WHERE id = ?", (title_id,))
@@ -265,11 +250,17 @@ async def get_projects():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, name, folder_path, description, default_font_size, created_at FROM titles ORDER BY created_at DESC"
+        "SELECT id, name, folder_path, description, default_font_size, detector_model, created_at FROM titles ORDER BY created_at DESC"
     )
     projects = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return {"success": True, "projects": projects}
+
+
+@router.get("/detectors")
+async def get_available_detectors():
+    """Возвращает список доступных для выбора моделей детектора."""
+    return {"success": True, "detectors": AVAILABLE_DETECTORS}
 
 
 @router.get("/{title_id}/tree")
@@ -278,7 +269,7 @@ async def get_project_tree(title_id: int):
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, name, folder_path, description, default_font_size, created_at FROM titles WHERE id = ?",
+        "SELECT id, name, folder_path, description, default_font_size, detector_model, created_at FROM titles WHERE id = ?",
         (title_id,)
     )
     title_row = cursor.fetchone()
@@ -289,6 +280,8 @@ async def get_project_tree(title_id: int):
     title = dict(title_row)
     if title.get("default_font_size") is None:
         title["default_font_size"] = 14
+    if not title.get("detector_model"):
+        title["detector_model"] = "yolo_manga.pt"
 
     cursor.execute("SELECT * FROM chapters WHERE title_id = ?", (title_id,))
     chapters = [dict(row) for row in cursor.fetchall()]
@@ -299,6 +292,7 @@ async def get_project_tree(title_id: int):
         chapter["pages"] = [dict(row) for row in cursor.fetchall()]
 
     title["chapters"] = chapters
+    title["available_detectors"] = AVAILABLE_DETECTORS
     conn.close()
     return {"success": True, "title": title}
 
@@ -307,14 +301,20 @@ async def get_project_tree(title_id: int):
 async def update_title_settings(title_id: int, req: UpdateTitleSettingsRequest):
     font_size = req.default_font_size if (req.default_font_size and 8 <= req.default_font_size <= 40) else 14
     desc = req.description.strip() if req.description is not None else ""
+    detector = req.detector_model.strip() if req.detector_model else "yolo_manga.pt"
 
     with db_session() as cur:
         cur.execute(
-            "UPDATE titles SET description = ?, default_font_size = ? WHERE id = ?",
-            (desc, font_size, title_id)
+            "UPDATE titles SET description = ?, default_font_size = ?, detector_model = ? WHERE id = ?",
+            (desc, font_size, detector, title_id)
         )
-    logger.info(f"Обновлены настройки для тайтла ID {title_id}: font_size={font_size}")
-    return {"success": True, "description": desc, "default_font_size": font_size}
+    logger.info(f"Обновлены настройки для тайтла ID {title_id}: font_size={font_size}, detector={detector}")
+    return {
+        "success": True,
+        "description": desc,
+        "default_font_size": font_size,
+        "detector_model": detector
+    }
 
 
 @router.get("/{title_id}/speakers")
