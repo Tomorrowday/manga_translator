@@ -24,11 +24,13 @@ def manga_sort_key(box: Dict[str, Any]) -> tuple:
 def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Внутрикадровая / внутриполосная двухфазная топологическая сортировка:
-    1. Адаптивно группирует баблы в горизонтальные ярусы (bands).
-    2. Защищает сдвоенные/пересекающиеся баблы от разрыва (is_touching_double_bubble).
-    3. Запрещает утягивание левого баббла нового ряда в старый верхний ярус,
-       если справа от него на той же высоте есть нераспределенные баблы (has_unassigned_right_peer).
-    4. Внутри яруса группирует баблы в вертикальные колонки по X (колонки — справа налево, внутри колонки — сверху вниз).
+    1. Поддерживает как вертикальные, так и диагональные сдвоенные баблы (например, 6->9 и 7->8).
+    2. При горизонтальном расширении яруса влево сверяет высоту с верхним опорным баблом правой колонки,
+       а не с нижней долькой сдвоенного бабла (исключает захват баблов из соседних колонок ниже).
+    3. Запрещает утягивание левого бабла нового ряда вверх (has_unassigned_right_peer), если справа
+       на его уровне высоты есть еще не распределенные баблы.
+    4. Внутри каждого яруса объединяет колонки и диагональные связки спикеров:
+       колонки сортируются СПРАВА НАЛЕВО, а внутри колонки/связки — СВЕРХУ ВНИЗ.
     """
     if len(items) <= 1:
         return items
@@ -41,14 +43,34 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
         ov = max(0.0, min(a["y2"], b["y2"]) - max(a["y1"], b["y1"]))
         return ov / min(a["h"], b["h"])
 
+    def is_connected_double(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+        """
+        Проверяет, образуют ли два бабла физически соприкасающийся/пересекающийся сдвоенный бабл
+        (включая диагональные сдвоенные баблы, сдвинутые вниз и влево/вправо).
+        """
+        x_gap = max(a["x1"], b["x1"]) - min(a["x2"], b["x2"])
+        y_gap = max(a["y1"], b["y1"]) - min(a["y2"], b["y2"])
+        # Либо прямое 2D-пересечение боксов со значительным перекрытием по одной из осей,
+        # либо плотное вертикальное касание при наличии горизонтального перекрытия
+        if x_gap <= 0.008 and y_overlap_ratio(a, b) >= 0.18 and x_overlap_ratio(a, b) >= 0.05:
+            return True
+        if y_gap <= 0.008 and x_overlap_ratio(a, b) >= 0.12:
+            return True
+        return False
+
     def is_same_col(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
-        return x_overlap_ratio(a, b) >= 0.25 or abs(a["cx"] - b["cx"]) < min(a["w"], b["w"]) * 0.45
+        return (
+            x_overlap_ratio(a, b) >= 0.25
+            or abs(a["cx"] - b["cx"]) < min(a["w"], b["w"]) * 0.45
+            or is_connected_double(a, b)
+        )
 
     # 1. Предварительная сортировка сверху вниз (при равном Y — справа налево)
     sorted_items = sorted(items, key=lambda it: (it["y1"], -it["cx"]))
 
     # 2. Адаптивная кластеризация в горизонтальные ярусы (bands)
     bands: List[List[Dict[str, Any]]] = []
+    assigned_ids = set()
 
     for it in sorted_items:
         placed = False
@@ -65,34 +87,34 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
                 other_col_items = [x for x in band if x not in same_col]
                 band_min_y2 = min(x["y2"] for x in band)
 
-                # Сдвоенный баббл: боксы физически пересекаются или вплотную касаются по вертикали
-                is_touching_double_bubble = (v_gap <= 0.008)
+                # Сдвоенный бабл (вертикальный или диагональный)
+                is_touching_double_bubble = (
+                    v_gap <= 0.008
+                    or any(is_connected_double(it, sc) for sc in same_col)
+                )
 
-                # Проверка 1: Есть ли СПРАВА от `it` на его уровне высоты нераспределенный баббл нового ряда?
-                # Левый баббл нового ряда никогда не должен приклеиваться к верхнему ярусу раньше правых бабблов своего ряда.
+                # Проверка 1: Есть ли СПРАВА от `it` на его уровне высоты еще не распределенный бабл?
+                # Поскольку мы идем сверху вниз, любой еще не распределенный бабл справа на той же высоте
+                # означает, что `it` и `other_it` образуют новый нижний ряд, который должен начинаться справа!
                 has_unassigned_right_peer = any(
                     other_it is not it
-                    and other_it not in band
+                    and id(other_it) not in assigned_ids
                     and not is_same_col(other_it, it)
                     and other_it["cx"] > it["cx"]
                     and y_overlap_ratio(it, other_it) >= 0.30
-                    and all(y_overlap_ratio(other_it, b) < 0.25 for b in band)
+                    and not any(is_connected_double(other_it, b) for b in band)
                     for other_it in sorted_items
                 )
 
                 # Проверка 2: Образует ли `it` параллельный новый ряд с другими колонками снизу?
-                # Исключаем `other_it`, которые сами являются сдвоенным продолжением (v_gap <= 0.008) баббла из `band`.
                 has_parallel_next_row = bool(other_col_items) and any(
                     other_it is not it
-                    and other_it not in band
+                    and id(other_it) not in assigned_ids
                     and not is_same_col(other_it, it)
                     and y_overlap_ratio(it, other_it) >= 0.35
                     and other_it["y1"] >= band_min_y2 - 0.015
                     and all(y_overlap_ratio(other_it, oc) < 0.25 for oc in other_col_items)
-                    and not any(
-                        is_same_col(other_it, oc) and (other_it["y1"] - oc["y2"]) <= 0.008
-                        for oc in other_col_items
-                    )
+                    and not any(is_connected_double(other_it, oc) for oc in other_col_items)
                     for other_it in sorted_items
                 )
 
@@ -106,41 +128,63 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
                     can_join = True
             else:
                 if not left_items:
-                    # Случай А: Новый баббл ЛЕВЕЕ всех текущих бабблов яруса (естественный ход чтения справа налево)
-                    nearest_right = min(right_items, key=lambda x: x["cx"] - it["cx"]) if right_items else band[-1]
-                    core_cy = sum(x["cy"] for x in band) / len(band)
-                    if (
-                        y_overlap_ratio(it, nearest_right) >= 0.28
-                        or abs(it["cy"] - nearest_right["cy"]) < 0.065
+                    # Случай А: Новый бабл ЛЕВЕЕ всех текущих баблов яруса.
+                    # Сравниваем его с ВЕРХНИМ (опорным) баблом ближайшей правой колонки,
+                    # чтобы нижний хвост сдвоенного бабла (например, 5 в 4+5) не затягивал далекие нижние баблы слева.
+                    nearest_right = min(right_items, key=lambda x: x["cx"] - it["cx"]) if right_items else band[0]
+                    nr_col = [x for x in band if is_same_col(x, nearest_right)]
+                    anchor_right = min(nr_col, key=lambda x: x["y1"]) if nr_col else nearest_right
+
+                    # Опорные (верхние) элементы всех колонок яруса
+                    top_anchors = [
+                        min([y for y in band if is_same_col(y, x)], key=lambda z: z["y1"])
+                        for x in band
+                    ]
+                    core_cy = sum(a["cy"] for a in top_anchors) / len(top_anchors)
+
+                    # Также проверяем, нет ли справа под текущим ярусом нераспределенного бабла, с которым `it` выровнен сильнее
+                    better_unassigned_right = any(
+                        other_it is not it
+                        and id(other_it) not in assigned_ids
+                        and other_it["cx"] > it["cx"]
+                        and y_overlap_ratio(it, other_it) > y_overlap_ratio(it, anchor_right) + 0.20
+                        for other_it in sorted_items
+                    )
+
+                    if not better_unassigned_right and (
+                        y_overlap_ratio(it, anchor_right) >= 0.28
+                        or abs(it["cy"] - anchor_right["cy"]) < 0.060
                         or abs(it["cy"] - core_cy) < 0.055
                     ):
                         can_join = True
                 else:
-                    # Случай Б: В ярусе уже есть более высокие бабблы ЛЕВЕЕ текущего (новый баббл ниже и правее).
+                    # Случай Б: В ярусе уже есть баблы ЛЕВЕЕ текущего (новый бабл ниже и правее).
                     min_left_ov = min(y_overlap_ratio(it, lx) for lx in left_items)
                     max_cy_diff = max(abs(it["cy"] - lx["cy"]) for lx in left_items)
                     bridged_by_right = (
                         bool(right_items)
-                        and max(y_overlap_ratio(it, rx) for rx in right_items) >= 0.40
-                        and it["y1"] <= max(lx["y2"] for lx in left_items)
+                        and max(y_overlap_ratio(it, rx) for rx in right_items) >= 0.35
+                        and it["y1"] <= max(lx["y2"] for lx in left_items) + 0.02
                     )
                     if min_left_ov >= 0.38 or max_cy_diff < 0.055 or bridged_by_right:
                         can_join = True
 
             if can_join:
                 band.append(it)
+                assigned_ids.add(id(it))
                 placed = True
                 break
 
         if not placed:
             bands.append([it])
+            assigned_ids.add(id(it))
 
-    # 3. Внутри каждого яруса группируем бабблы в вертикальные колонки по X:
-    #    - Колонки сортируются СПРАВА НАЛЕВО
-    #    - Внутри каждой колонки бабблы сортируются СВЕРХУ ВНИЗ
+    # 3. Внутри каждого яруса группируем баблы в вертикальные колонки / связки спикеров:
+    #    - Колонки сортируются СПРАВА НАЛЕВО (по координате X верхнего опорного бабла колонки)
+    #    - Внутри каждой колонки баблы сортируются СВЕРХУ ВНИЗ
     ordered_items: List[Dict[str, Any]] = []
     for band in bands:
-        band_by_x = sorted(band, key=lambda x: -x["cx"])
+        band_by_x = sorted(band, key=lambda x: (-x["cx"], x["y1"]))
         columns: List[List[Dict[str, Any]]] = []
 
         for it in band_by_x:
@@ -153,7 +197,8 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
             if not placed_col:
                 columns.append([it])
 
-        columns.sort(key=lambda col: -(sum(c["cx"] for c in col) / len(col)))
+        # Сортируем колонки справа налево по среднему X (с приоритетом верхнего элемента связки)
+        columns.sort(key=lambda col: -(min(c, key=lambda z: z["y1"])["cx"] * 0.6 + (sum(c["cx"] for c in col) / len(col)) * 0.4))
 
         for col in columns:
             col.sort(key=lambda c: (c["y1"], -c["cx"]))
@@ -172,29 +217,25 @@ def _find_best_gutter_cut(
     axis: str,
 ) -> Optional[int]:
     """
-    Ищет сквозную белую межкадровую канавку (gutter) вдоль оси:
-    - axis == 'h': горизонтальный разрез y_cut (делит область на Верх и Низ)
-    - axis == 'v': вертикальный разрез x_cut (делит область на Правый кадр и Левый кадр)
-    Разрез разрешается ТОЛЬКО если он:
-    1) не разрезает внутреннюю область ни одного баббла в текущем регионе,
-    2) делит бабблы на две непустые группы,
-    3) представляет собой чистую белую полосу (gutter) между линиями рамок кадров.
+    Ищет сквозную белую межкадровую канавку (gutter) вдоль оси ('h' или 'v'):
+    - Устойчив к баблам, чьи края слегка выступают за рамку кадра в межкадровую канавку:
+      запрещает резать только ядро каждого бабла (22%..78%) и зоны пересечения сдвоенных баблов,
+      а при оценке белизны канавки маскирует выступающие за рамку верхушки/хвосты одиночных баблов.
     """
     img_h, img_w = gray_img.shape[:2]
     if ry2 - ry1 < 40 or rx2 - rx1 < 40 or len(items) < 2:
         return None
 
-    # Ограничиваем зону проверки реальным охватом контента (отступая от белых полей страницы по краям)
     sub = gray_img[ry1:ry2, rx1:rx2]
     dark_mask = sub < 180
     if not np.any(dark_mask):
         return None
 
     dark_ys, dark_xs = np.where(dark_mask)
-    content_y1 = ry1 + int(np.percentile(dark_ys, 1))
-    content_y2 = ry1 + int(np.percentile(dark_ys, 99))
-    content_x1 = rx1 + int(np.percentile(dark_xs, 1))
-    content_x2 = rx1 + int(np.percentile(dark_xs, 99))
+    content_y1 = ry1 + int(np.percentile(dark_ys, 2))
+    content_y2 = ry1 + int(np.percentile(dark_ys, 98))
+    content_x1 = rx1 + int(np.percentile(dark_xs, 2))
+    content_x2 = rx1 + int(np.percentile(dark_xs, 98))
 
     if content_y2 - content_y1 < 30 or content_x2 - content_x1 < 30:
         return None
@@ -202,28 +243,54 @@ def _find_best_gutter_cut(
     if axis == "h":
         min_c = int(min(it["cy"] for it in items) * img_h) + 2
         max_c = int(max(it["cy"] for it in items) * img_h) - 2
-        if max_c - min_c < 12:
+        if max_c - min_c < 10:
             return None
 
-        # Запрещаем разрезать внутреннюю часть любого баббла (оставляя лишь 6% допуск на касание внешней рамки)
+        # 1. Защищаем ядро каждого бабла (22%..78% высоты), чтобы никогда не разрезать бабл пополам,
+        #    но позволить канавке пройти, если край бабла (до 22%) торчит за рамку кадра в белую канавку.
         forbidden = np.zeros(img_h, dtype=bool)
         for it in items:
-            by1 = int((it["y1"] + it["h"] * 0.06) * img_h)
-            by2 = int((it["y2"] - it["h"] * 0.06) * img_h)
-            if by2 > by1:
-                forbidden[max(0, by1):min(img_h, by2)] = True
+            core_y1 = int((it["y1"] + it["h"] * 0.22) * img_h)
+            core_y2 = int((it["y2"] - it["h"] * 0.22) * img_h)
+            if core_y2 > core_y1:
+                forbidden[max(0, core_y1):min(img_h, core_y2)] = True
 
-        # Проверяем строки внутри [min_c, max_c] на белую канавку на ширине [content_x1, content_x2]
-        roi_strip = gray_img[min_c:max_c + 1, content_x1:content_x2]
+        # 2. Дополнительно защищаем зоны пересечения/касания сдвоенных баблов, чтобы не разрезать их связку
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                x_ov = max(0.0, min(a["x2"], b["x2"]) - max(a["x1"], b["x1"])) / min(a["w"], b["w"])
+                y_gap = max(a["y1"], b["y1"]) - min(a["y2"], b["y2"])
+                if x_ov >= 0.08 and y_gap <= 0.012:
+                    join_y1 = int(min(a["cy"], b["cy"]) * img_h)
+                    join_y2 = int(max(a["cy"], b["cy"]) * img_h)
+                    forbidden[max(0, join_y1):min(img_h, join_y2)] = True
+
+        # 3. Копируем полосу изображения и маскируем (делаем белыми) выступающие края баблов вне их ядер,
+        #    чтобы один торчащий в канавку бабл (как #3 на скрине 3 или #6 на скрине 1) не портил детекцию белой канавки.
+        roi_strip = gray_img[min_c:max_c + 1, content_x1:content_x2].copy()
         if roi_strip.size == 0:
             return None
 
-        # Строка считается белой канавкой, если в ней почти нет темных пикселей (< 2.5%) и высокая яркость
+        for it in items:
+            bx1 = max(0, int(it["x1"] * img_w) - content_x1 - 3)
+            bx2 = min(content_x2 - content_x1, int(it["x2"] * img_w) - content_x1 + 3)
+            if bx2 <= bx1:
+                continue
+            # Верхняя и нижняя выступающие кромки (0..22% и 78..100%)
+            top_tip_y1 = max(min_c, int(it["y1"] * img_h) - 2) - min_c
+            top_tip_y2 = min(max_c + 1, int((it["y1"] + it["h"] * 0.22) * img_h)) - min_c
+            if top_tip_y2 > top_tip_y1:
+                roi_strip[top_tip_y1:top_tip_y2, bx1:bx2] = 255
+
+            bot_tip_y1 = max(min_c, int((it["y2"] - it["h"] * 0.22) * img_h)) - min_c
+            bot_tip_y2 = min(max_c + 1, int(it["y2"] * img_h) + 2) - min_c
+            if bot_tip_y2 > bot_tip_y1:
+                roi_strip[bot_tip_y1:bot_tip_y2, bx1:bx2] = 255
+
         dark_ratio = np.mean(roi_strip < 200, axis=1)
         mean_val = np.mean(roi_strip, axis=1)
-        is_white_row = (dark_ratio < 0.025) & (mean_val > 240.0) & (~forbidden[min_c:max_c + 1])
+        is_white_row = (dark_ratio < 0.030) & (mean_val > 238.0) & (~forbidden[min_c:max_c + 1])
 
-        # Ищем непрерывные белые полосы толщиной от 3 пикселей
         best_cut = None
         best_score = -1.0
         n = len(is_white_row)
@@ -241,17 +308,15 @@ def _find_best_gutter_cut(
                 top_group = [it for it in items if it["cy"] * img_h < cut_y]
                 bot_group = [it for it in items if it["cy"] * img_h >= cut_y]
                 if top_group and bot_group:
-                    # Проверяем наличие темных линий рамок кадра непосредственно над или под канавкой
-                    band_top = max(ry1, min_c + i - 8)
-                    band_bot = min(ry2, min_c + j + 8)
+                    band_top = max(ry1, min_c + i - 10)
+                    band_bot = min(ry2, min_c + j + 10)
                     top_border = gray_img[band_top:min_c + i, content_x1:content_x2]
                     bot_border = gray_img[min_c + j:band_bot, content_x1:content_x2]
-                    top_line_strength = float(np.max(np.mean(top_border < 160, axis=1))) if top_border.size > 0 else 0.0
-                    bot_line_strength = float(np.max(np.mean(bot_border < 160, axis=1))) if bot_border.size > 0 else 0.0
+                    top_line_strength = float(np.max(np.mean(top_border < 165, axis=1))) if top_border.size > 0 else 0.0
+                    bot_line_strength = float(np.max(np.mean(bot_border < 165, axis=1))) if bot_border.size > 0 else 0.0
                     border_strength = max(top_line_strength, bot_line_strength)
 
-                    # Канавка валидна, если есть выраженная линия рамки (>= 30% ширины) или широкая белая полоса (>= 8px)
-                    if border_strength >= 0.30 or (run_len >= 8 and border_strength >= 0.18):
+                    if border_strength >= 0.28 or (run_len >= 7 and border_strength >= 0.16):
                         score = run_len * (0.5 + border_strength)
                         if score > best_score:
                             best_score = score
@@ -263,24 +328,48 @@ def _find_best_gutter_cut(
     else:  # axis == 'v'
         min_c = int(min(it["cx"] for it in items) * img_w) + 2
         max_c = int(max(it["cx"] for it in items) * img_w) - 2
-        if max_c - min_c < 12:
+        if max_c - min_c < 10:
             return None
 
-        # Запрещаем разрезать бабблы по вертикали (и связки пересекающихся бабблов вроде 4 и 5 на скрине 4)
         forbidden = np.zeros(img_w, dtype=bool)
         for it in items:
-            bx1 = int((it["x1"] + it["w"] * 0.06) * img_w)
-            bx2 = int((it["x2"] - it["w"] * 0.06) * img_w)
-            if bx2 > bx1:
-                forbidden[max(0, bx1):min(img_w, bx2)] = True
+            core_x1 = int((it["x1"] + it["w"] * 0.22) * img_w)
+            core_x2 = int((it["x2"] - it["w"] * 0.22) * img_w)
+            if core_x2 > core_x1:
+                forbidden[max(0, core_x1):min(img_w, core_x2)] = True
 
-        roi_strip = gray_img[content_y1:content_y2, min_c:max_c + 1]
+        # Защищаем горизонтально пересекающиеся сдвоенные баблы (например, 4 и 5 на скрине 4 или 6 и 9 на скрине 2)
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                y_ov = max(0.0, min(a["y2"], b["y2"]) - max(a["y1"], b["y1"])) / min(a["h"], b["h"])
+                x_gap = max(a["x1"], b["x1"]) - min(a["x2"], b["x2"])
+                if y_ov >= 0.18 and x_gap <= 0.012:
+                    join_x1 = int(min(a["cx"], b["cx"]) * img_w)
+                    join_x2 = int(max(a["cx"], b["cx"]) * img_w)
+                    forbidden[max(0, join_x1):min(img_w, join_x2)] = True
+
+        roi_strip = gray_img[content_y1:content_y2, min_c:max_c + 1].copy()
         if roi_strip.size == 0:
             return None
 
+        for it in items:
+            by1 = max(0, int(it["y1"] * img_h) - content_y1 - 3)
+            by2 = min(content_y2 - content_y1, int(it["y2"] * img_h) - content_y1 + 3)
+            if by2 <= by1:
+                continue
+            left_tip_x1 = max(min_c, int(it["x1"] * img_w) - 2) - min_c
+            left_tip_x2 = min(max_c + 1, int((it["x1"] + it["w"] * 0.22) * img_w)) - min_c
+            if left_tip_x2 > left_tip_x1:
+                roi_strip[by1:by2, left_tip_x1:left_tip_x2] = 255
+
+            right_tip_x1 = max(min_c, int((it["x2"] - it["w"] * 0.22) * img_w)) - min_c
+            right_tip_x2 = min(max_c + 1, int(it["x2"] * img_w) + 2) - min_c
+            if right_tip_x2 > right_tip_x1:
+                roi_strip[by1:by2, right_tip_x1:right_tip_x2] = 255
+
         dark_ratio = np.mean(roi_strip < 200, axis=0)
         mean_val = np.mean(roi_strip, axis=0)
-        is_white_col = (dark_ratio < 0.025) & (mean_val > 240.0) & (~forbidden[min_c:max_c + 1])
+        is_white_col = (dark_ratio < 0.030) & (mean_val > 238.0) & (~forbidden[min_c:max_c + 1])
 
         best_cut = None
         best_score = -1.0
@@ -299,15 +388,15 @@ def _find_best_gutter_cut(
                 right_group = [it for it in items if it["cx"] * img_w >= cut_x]
                 left_group = [it for it in items if it["cx"] * img_w < cut_x]
                 if right_group and left_group:
-                    band_left = max(rx1, min_c + i - 8)
-                    band_right = min(rx2, min_c + j + 8)
+                    band_left = max(rx1, min_c + i - 10)
+                    band_right = min(rx2, min_c + j + 10)
                     left_border = gray_img[content_y1:content_y2, band_left:min_c + i]
                     right_border = gray_img[content_y1:content_y2, min_c + j:band_right]
-                    left_strength = float(np.max(np.mean(left_border < 160, axis=0))) if left_border.size > 0 else 0.0
-                    right_strength = float(np.max(np.mean(right_border < 160, axis=0))) if right_border.size > 0 else 0.0
+                    left_strength = float(np.max(np.mean(left_border < 165, axis=0))) if left_border.size > 0 else 0.0
+                    right_strength = float(np.max(np.mean(right_border < 165, axis=0))) if right_border.size > 0 else 0.0
                     border_strength = max(left_strength, right_strength)
 
-                    if border_strength >= 0.30 or (run_len >= 8 and border_strength >= 0.18):
+                    if border_strength >= 0.28 or (run_len >= 7 and border_strength >= 0.16):
                         score = run_len * (0.5 + border_strength)
                         if score > best_score:
                             best_score = score
@@ -330,7 +419,7 @@ def _partition_and_sort_xy(
     Рекурсивное разбиение страницы по межкадровым канавкам (Recursive XY-Cut):
     1. Если есть сквозная горизонтальная канавка (H-Cut) -> читаем Верхнюю часть, затем Нижнюю.
     2. Иначе если есть сквозная вертикальная канавка (V-Cut) -> читаем Правую часть, затем Левую.
-    3. Внутри каждого неделимого кадра (или при отсутствии четких канавок) -> _sort_region_reading_order().
+    3. Внутри каждого неделимого кадра — _sort_region_reading_order().
     """
     if len(items) <= 1 or depth >= 6:
         return items
@@ -369,10 +458,10 @@ def sort_manga_reading_order(
 ) -> List[Dict[str, Any]]:
     """
     Гибридная топологическая сортировка бабблов манги:
-    - Если передан `gray_img`, сначала безопасно разделяет страницу по сквозным межкадровым канавкам (XY-Cut:
-      Верх -> Низ для рядов, Право -> Лево для колонок кадров, включая высокие правые кадры со стеком кадров слева).
-    - Внутри каждого кадра (или для всей страницы, если `gray_img` не передан) выполняет двухфазную
-      ряд-колоночную сортировку с поддержкой сдвоенных бабблов и защитой от утягивания левых бабблов вверх.
+    - Если передан `gray_img`, сначала разделяет страницу по сквозным межкадровым канавкам (XY-Cut)
+      с маскированием выступающих за рамку краев баблов.
+    - Внутри каждого кадра выполняет двухфазную ряд-колоночную сортировку с поддержкой
+      вертикальных и диагональных сдвоенных баблов.
     """
     if len(boxes) <= 1:
         for i, b in enumerate(boxes):
