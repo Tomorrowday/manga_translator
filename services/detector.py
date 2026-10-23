@@ -13,13 +13,156 @@ from logger import logger
 
 def manga_sort_key(box: Dict[str, Any]) -> tuple:
     """
-    Ключ сортировки в японском порядке чтения (Manga Reading Order):
-    1. Сверху вниз по вертикальным ярусам (кадрам).
-    2. Внутри одного яруса — строго СПРАВА НАЛЕВО (по убыванию координаты X).
+    Устаревший ключ сортировки по жесткой сетке (оставлен для обратной совместимости).
+    Для основной сортировки используется sort_manga_reading_order().
     """
     row_height = 0.18
     row_idx = int(box["y"] / row_height)
     return row_idx, -box["x"]
+
+
+def sort_manga_reading_order(boxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Двухфазная топологическая сортировка баблов манги (Row-Column Manga Flow):
+    1. Адаптивно группирует баблы в горизонтальные ярусы (bands) без жесткой сетки 0.18
+       и без «эффекта снежного кома» на диагональных лесенках.
+    2. Учитывает «правило возврата каретки» (переход от левого края верхнего ряда к правому краю нижнего).
+    3. Объединяет вертикальные связки реплик одного спикера (двойные баблы и плотные вертикальные стеки),
+       если они не образуют параллельный новый ряд кадров.
+    4. Внутри каждого яруса разбивает баблы на вертикальные колонки по X-перекрытию:
+       колонки читаются СПРАВА НАЛЕВО, а баблы внутри одной колонки — строго СВЕРХУ ВНИЗ.
+    """
+    if len(boxes) <= 1:
+        for i, b in enumerate(boxes):
+            b["order_index"] = i + 1
+        return boxes
+
+    items: List[Dict[str, Any]] = []
+    for b in boxes:
+        x1 = float(b["x"])
+        y1 = float(b["y"])
+        w = max(0.01, float(b["width"]))
+        h = max(0.01, float(b["height"]))
+        items.append({
+            "orig": b,
+            "x1": x1,
+            "y1": y1,
+            "x2": x1 + w,
+            "y2": y1 + h,
+            "w": w,
+            "h": h,
+            "cx": x1 + w * 0.5,
+            "cy": y1 + h * 0.5,
+        })
+
+    def x_overlap_ratio(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+        ov = max(0.0, min(a["x2"], b["x2"]) - max(a["x1"], b["x1"]))
+        return ov / min(a["w"], b["w"])
+
+    def y_overlap_ratio(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+        ov = max(0.0, min(a["y2"], b["y2"]) - max(a["y1"], b["y1"]))
+        return ov / min(a["h"], b["h"])
+
+    def is_same_col(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+        return x_overlap_ratio(a, b) >= 0.25 or abs(a["cx"] - b["cx"]) < min(a["w"], b["w"]) * 0.45
+
+    # 1. Предварительная сортировка сверху вниз (при равном Y — справа налево)
+    items.sort(key=lambda it: (it["y1"], -it["cx"]))
+
+    # 2. Адаптивная кластеризация в горизонтальные ярусы (bands)
+    bands: List[List[Dict[str, Any]]] = []
+
+    for it in items:
+        placed = False
+        for band in bands:
+            same_col = [x for x in band if is_same_col(it, x)]
+            left_items = [x for x in band if not is_same_col(it, x) and x["cx"] < it["cx"]]
+            right_items = [x for x in band if not is_same_col(it, x) and x["cx"] > it["cx"]]
+
+            can_join = False
+
+            if same_col:
+                # В этой вертикальной колонке X уже есть бабл(ы) выше.
+                lowest_col = max(same_col, key=lambda x: x["y2"])
+                v_gap = it["y1"] - lowest_col["y2"]
+                other_col_items = [x for x in band if x not in same_col]
+                other_min_y2 = min((oc["y2"] for oc in other_col_items), default=lowest_col["y2"])
+
+                # Проверяем, не образует ли `it` новый параллельный ряд кадров снизу вместе с другими баблами
+                has_parallel_next_row = bool(other_col_items) and any(
+                    other_it is not it
+                    and other_it not in band
+                    and not is_same_col(other_it, it)
+                    and y_overlap_ratio(it, other_it) >= 0.35
+                    and other_it["y1"] >= other_min_y2 - 0.015
+                    and all(y_overlap_ratio(other_it, oc) < 0.25 for oc in other_col_items)
+                    for other_it in items
+                )
+
+                # Вертикальная связка одного спикера (двойной бабл или плотный стек реплик под верхним баблом)
+                if v_gap <= min(0.045, lowest_col["h"] * 0.40) and not has_parallel_next_row:
+                    can_join = True
+            else:
+                if not left_items:
+                    # Случай А: Новый бабл находится ЛЕВЕЕ всех текущих баблов яруса (естественный ход чтения справа налево)
+                    nearest_right = min(right_items, key=lambda x: x["cx"] - it["cx"]) if right_items else band[-1]
+                    core_cy = sum(x["cy"] for x in band) / len(band)
+                    if (
+                        y_overlap_ratio(it, nearest_right) >= 0.28
+                        or abs(it["cy"] - nearest_right["cy"]) < 0.065
+                        or abs(it["cy"] - core_cy) < 0.055
+                    ):
+                        can_join = True
+                else:
+                    # Случай Б: В ярусе уже есть более высокие баблы ЛЕВЕЕ текущего (новый бабл ниже и правее).
+                    # Защита от «возврата каретки» на следующий ряд кадров:
+                    min_left_ov = min(y_overlap_ratio(it, lx) for lx in left_items)
+                    max_cy_diff = max(abs(it["cy"] - lx["cy"]) for lx in left_items)
+                    bridged_by_right = (
+                        bool(right_items)
+                        and max(y_overlap_ratio(it, rx) for rx in right_items) >= 0.40
+                        and it["y1"] <= max(lx["y2"] for lx in left_items)
+                    )
+                    if min_left_ov >= 0.38 or max_cy_diff < 0.055 or bridged_by_right:
+                        can_join = True
+
+            if can_join:
+                band.append(it)
+                placed = True
+                break
+
+        if not placed:
+            bands.append([it])
+
+    # 3. Внутри каждого яруса группируем баблы в вертикальные колонки по X:
+    #    - Колонки сортируются СПРАВА НАЛЕВО
+    #    - Внутри каждой колонки баблы сортируются СВЕРХУ ВНИЗ
+    final_ordered: List[Dict[str, Any]] = []
+    for band in bands:
+        band_by_x = sorted(band, key=lambda x: -x["cx"])
+        columns: List[List[Dict[str, Any]]] = []
+
+        for it in band_by_x:
+            placed_col = False
+            for col in columns:
+                if any(is_same_col(it, c) for c in col):
+                    col.append(it)
+                    placed_col = True
+                    break
+            if not placed_col:
+                columns.append([it])
+
+        columns.sort(key=lambda col: -(sum(c["cx"] for c in col) / len(col)))
+
+        for col in columns:
+            col.sort(key=lambda c: (c["y1"], -c["cx"]))
+            for c in col:
+                final_ordered.append(c["orig"])
+
+    for i, item in enumerate(final_ordered):
+        item["order_index"] = i + 1
+
+    return final_ordered
 
 
 def expand_box_to_bubble(
@@ -223,10 +366,7 @@ def detect_and_filter_bubbles(image: Image.Image, model_name: str = "yolo_manga.
             "class_id": cls_id,
         })
 
-    boxes.sort(key=manga_sort_key)
-
-    for idx, b in enumerate(boxes):
-        b["order_index"] = idx + 1
+    boxes = sort_manga_reading_order(boxes)
 
     # Лог распределения найденных классов
     counts = Counter(b["class_id"] for b in boxes)
