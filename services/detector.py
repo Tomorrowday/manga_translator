@@ -198,7 +198,7 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
                 columns.append([it])
 
         # Сортируем колонки справа налево по среднему X (с приоритетом верхнего элемента связки)
-        columns.sort(key=lambda col: -(min(c, key=lambda z: z["y1"])["cx"] * 0.6 + (sum(c["cx"] for c in col) / len(col)) * 0.4))
+        columns.sort(key=lambda col: -(min(col, key=lambda z: z["y1"])["cx"] * 0.6 + (sum(c["cx"] for c in col) / len(col)) * 0.4))
 
         for col in columns:
             col.sort(key=lambda c: (c["y1"], -c["cx"]))
