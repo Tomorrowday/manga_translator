@@ -48,10 +48,7 @@ export function ProjectModal({
   const [description, setDescription] = useState("")
   const [defaultFontSize, setDefaultFontSize] = useState<number>(14)
   const [detectorModel, setDetectorModel] = useState<string>("yolo_manga.pt")
-  const [availableDetectors, setAvailableDetectors] = useState<Record<string, string>>({
-    "yolo_manga.pt": "YOLOv8 Bubble Detector (Default)",
-    "yolo26s.pt": "YOLO26s Manga Detector (New)",
-  })
+  const [availableDetectors, setAvailableDetectors] = useState<Record<string, string>>({})
   const [loadingDesc, setLoadingDesc] = useState(false)
   const [isSavingSettings, setIsSavingSettings] = useState(false)
   const [settingsSavedSuccess, setSettingsSavedSuccess] = useState(false)
@@ -88,7 +85,14 @@ export function ProjectModal({
         if (data.description !== undefined) setDescription(data.description || "")
         if (data.default_font_size !== undefined) setDefaultFontSize(data.default_font_size || 14)
         if (data.detector_model) setDetectorModel(data.detector_model)
-        if (data.available_detectors) setAvailableDetectors(data.available_detectors)
+        if (data.available_detectors) {
+          setAvailableDetectors(data.available_detectors)
+          // Если текущая модель отсутствует в списке, выставляем первую доступную
+          if (!data.available_detectors[data.detector_model || ""]) {
+            const firstKey = Object.keys(data.available_detectors)[0]
+            if (firstKey) setDetectorModel(firstKey)
+          }
+        }
       }
     } finally {
       setLoadingDesc(false)
@@ -354,7 +358,7 @@ export function ProjectModal({
                   <div>
                     <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
                       <Scan className="h-3.5 w-3.5 text-indigo-400" />
-                      Модель детекции баблов (YOLO)
+                      Модель детекции (weights/detect-bubble)
                     </label>
                     <p className="mt-0.5 text-[11px] text-slate-500">
                       Используется при автодетекте «1. Detect & OCR» для всех страниц этого тайтла.
@@ -367,11 +371,15 @@ export function ProjectModal({
                       onChange={(e) => setDetectorModel(e.target.value)}
                       className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-100 outline-none focus:border-indigo-500"
                     >
-                      {Object.entries(availableDetectors).map(([key, label]) => (
-                        <option key={key} value={key}>
-                          {label}
-                        </option>
-                      ))}
+                      {Object.keys(availableDetectors).length > 0 ? (
+                        Object.entries(availableDetectors).map(([key, label]) => (
+                          <option key={key} value={key}>
+                            {label}
+                          </option>
+                        ))
+                      ) : (
+                        <option value={detectorModel}>{detectorModel}</option>
+                      )}
                     </select>
                   </div>
                 </div>

@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-page-pipelines.ts
-// Конвейеры обработки страницы с пулом параллельных запросов OCR
+// Конвейеры обработки страницы с пулом параллельных запросов OCR и сохранением class_id
 
 import { useState } from "react"
 import type { PageItem, PageStatus, TextBlock } from "@/lib/types"
@@ -103,6 +103,7 @@ export function usePagePipelines({
         const { dataUrl } = await cropRegion(img, { ...box, rotation: 0 })
         newBlocks.push({
           id: box.id || crypto.randomUUID(),
+          class_id: box.class_id ?? 0,
           x: box.x,
           y: box.y,
           width: box.width,
@@ -353,7 +354,7 @@ export function usePagePipelines({
       const cleanImg = await loadImage(cleanImgUrl)
       const blob = await bakePageBlob(cleanImg, textBlocksRef.current, defaultFontSize)
 
-      if (!blob) {
+      if (blob) {
         await saveTranslatedPage(currentPage.id, blob)
         setIsExportSuccess(true)
         onPageStatusUpdate(currentPage.id, "done", cleanRes.clean_path)

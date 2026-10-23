@@ -1,5 +1,5 @@
 // manga_ui/components/text-block-card.tsx
-// Карточка бабла с React.memo и актуальными биндами
+// Карточка бабла с React.memo, актуальными биндами и переключателем классов (0: Bubble, 1: Thought, 2: Free Text)
 
 "use client"
 
@@ -41,6 +41,24 @@ const STATUS_LABELS: Record<TextBlock["status"], { label: string; className: str
   new: { label: "New", className: "bg-slate-700 text-slate-300" },
   "ocr-done": { label: "OCR", className: "bg-sky-500/20 text-sky-300" },
   translated: { label: "Translated", className: "bg-emerald-500/20 text-emerald-300" },
+}
+
+const CLASS_CONFIG: Record<number, { label: string; className: string; title: string }> = {
+  0: {
+    label: "Bubble",
+    className: "border-emerald-500/50 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/60",
+    title: "Класс: Обычный бабл речи (клин: Белый). Кликните для смены на Мысли",
+  },
+  1: {
+    label: "Thought",
+    className: "border-sky-500/50 bg-sky-950/40 text-sky-300 hover:bg-sky-900/60",
+    title: "Класс: Мысли / Прямоугольный блок (клин: Белый). Кликните для смены на Свободный текст",
+  },
+  2: {
+    label: "Free Text",
+    className: "border-purple-500/50 bg-purple-950/40 text-purple-300 hover:bg-purple-900/60",
+    title: "Класс: Текст/звук на арте или скринтоне (клин: LaMa). Кликните для смены на Бабл",
+  },
 }
 
 export const TextBlockCard = memo(function TextBlockCard({
@@ -97,6 +115,15 @@ export const TextBlockCard = memo(function TextBlockCard({
     }
   }
 
+  const currentClassId = block.class_id ?? 0
+  const classCfg = CLASS_CONFIG[currentClassId] || CLASS_CONFIG[0]
+
+  const handleCycleClass = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const nextClass = (currentClassId + 1) % 3
+    onChange({ class_id: nextClass })
+  }
+
   const status = STATUS_LABELS[block.status]
   const isEllipse = block.shape === "ellipse"
   const hasRotation = Math.abs(block.rotation || 0) >= 0.5
@@ -120,6 +147,17 @@ export const TextBlockCard = memo(function TextBlockCard({
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-indigo-300">
               {index + 1}
             </span>
+
+            {/* Кликабельный бейдж класса объекта */}
+            <button
+              type="button"
+              onClick={handleCycleClass}
+              className={`rounded border px-2 py-0.5 text-[10px] font-bold tracking-wide transition-colors ${classCfg.className}`}
+              title={classCfg.title}
+            >
+              {classCfg.label}
+            </button>
+
             <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${status.className}`}>
               {status.label}
             </span>

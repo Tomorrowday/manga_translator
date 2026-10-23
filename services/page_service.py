@@ -37,6 +37,7 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
             pad_mode = b.padding_mode if b.padding_mode in ["safe", "fit"] else "safe"
             min_hyphens_val = 1 if b.min_hyphens is None or b.min_hyphens else 0
             text_color_val = "white" if b.text_color == "white" else "black"
+            class_id_val = int(b.class_id or 0)
 
             clamped_x = max(0.0, min(0.995, float(b.x)))
             clamped_y = max(0.0, min(0.995, float(b.y)))
@@ -49,14 +50,14 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO text_blocks (
-                    id, page_id, x, y, width, height, rotation, jap_text, rus_text, speaker, order_index,
+                    id, page_id, class_id, x, y, width, height, rotation, jap_text, rus_text, speaker, order_index,
                     font_size, font_family, is_bold, is_italic, is_uppercase, has_stroke,
                     text_color, shape, padding_mode, min_hyphens, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    b.id, page_id, clamped_x, clamped_y, clamped_w, clamped_h, round(normalized_rot, 2),
+                    b.id, page_id, class_id_val, clamped_x, clamped_y, clamped_w, clamped_h, round(normalized_rot, 2),
                     b.jap_text, b.rus_text, b.speaker,
                     current_order, b.font_size, b.font_family, int(b.is_bold or False),
                     int(b.is_italic or False), int(b.is_uppercase or False),
@@ -120,7 +121,10 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
         cur.execute("DELETE FROM text_blocks WHERE page_id = ?", (page_id,))
         for b in boxes:
             block_id = str(uuid.uuid4())
+            cls_id = int(b.get("class_id", 0))
+
             b["id"] = block_id
+            b["class_id"] = cls_id
             b["shape"] = "rect"
             b["padding_mode"] = "safe"
             b["min_hyphens"] = True
@@ -141,11 +145,11 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
             cur.execute(
                 """
                 INSERT OR REPLACE INTO text_blocks (
-                    id, page_id, x, y, width, height, rotation, jap_text, order_index, text_color, shape, padding_mode, min_hyphens, status
+                    id, page_id, class_id, x, y, width, height, rotation, jap_text, order_index, text_color, shape, padding_mode, min_hyphens, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, 'black', 'rect', 'safe', 1, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, 'black', 'rect', 'safe', 1, ?)
                 """,
-                (block_id, page_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"], b["status"])
+                (block_id, page_id, cls_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"], b["status"])
             )
 
         new_status = "detected" if boxes else "raw"
@@ -171,7 +175,7 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
         raise ValueError("Файл страницы не найден")
 
     cursor.execute(
-        "SELECT x, y, width, height, shape, rotation, rus_text FROM text_blocks WHERE page_id = ?",
+        "SELECT x, y, width, height, shape, rotation, rus_text, class_id FROM text_blocks WHERE page_id = ?",
         (page_id,)
     )
     blocks = [dict(r) for r in cursor.fetchall()]

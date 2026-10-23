@@ -38,6 +38,7 @@ export function usePageBlocks(
       try {
         const payload = blocksToSave.map((b) => ({
           id: b.id,
+          class_id: b.class_id ?? 0,
           x: b.x,
           y: b.y,
           width: b.width,
@@ -197,6 +198,7 @@ export function usePageBlocks(
       const id = crypto.randomUUID()
       const newBlock: TextBlock = {
         id,
+        class_id: 0,
         x: rect.x,
         y: rect.y,
         width: rect.width,

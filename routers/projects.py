@@ -13,7 +13,7 @@ from schemas import (
     GlossaryItemCreate,
     UpdateTitleSettingsRequest,
 )
-from config import natural_sort_key, AVAILABLE_DETECTORS
+from config import natural_sort_key, get_available_detectors
 from logger import logger
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
@@ -118,11 +118,13 @@ async def scan_project(req: ScanProjectRequest):
     if not folder.exists() or not folder.is_dir():
         return {"success": False, "error": "Папка не найдена или путь указан неверно"}
 
+    default_detector = next(iter(get_available_detectors().keys()), "yolo_manga.pt")
+
     try:
         with db_session() as cursor:
             cursor.execute(
-                "INSERT INTO titles (name, folder_path, default_font_size, detector_model) VALUES (?, ?, 14, 'yolo_manga.pt')",
-                (req.name, str(folder))
+                "INSERT INTO titles (name, folder_path, default_font_size, detector_model) VALUES (?, ?, 14, ?)",
+                (req.name, str(folder), default_detector)
             )
             title_id = cursor.lastrowid
 
@@ -258,9 +260,9 @@ async def get_projects():
 
 
 @router.get("/detectors")
-async def get_available_detectors():
+async def get_available_detectors_endpoint():
     """Возвращает список доступных для выбора моделей детектора."""
-    return {"success": True, "detectors": AVAILABLE_DETECTORS}
+    return {"success": True, "detectors": get_available_detectors()}
 
 
 @router.get("/{title_id}/tree")
@@ -292,7 +294,7 @@ async def get_project_tree(title_id: int):
         chapter["pages"] = [dict(row) for row in cursor.fetchall()]
 
     title["chapters"] = chapters
-    title["available_detectors"] = AVAILABLE_DETECTORS
+    title["available_detectors"] = get_available_detectors()
     conn.close()
     return {"success": True, "title": title}
 

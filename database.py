@@ -66,6 +66,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS text_blocks (
                 id TEXT PRIMARY KEY,
                 page_id INTEGER,
+                class_id INTEGER DEFAULT 0,
                 x REAL, y REAL, width REAL, height REAL,
                 rotation REAL DEFAULT 0.0,
                 jap_text TEXT DEFAULT '',
@@ -116,6 +117,7 @@ def init_db():
         columns = [row["name"] for row in cursor.fetchall()]
 
         migrations = {
+            "class_id": "INTEGER DEFAULT 0",
             "speaker": "TEXT DEFAULT ''",
             "order_index": "INTEGER DEFAULT 0",
             "font_size": "INTEGER",

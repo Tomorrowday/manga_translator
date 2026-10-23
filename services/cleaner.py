@@ -1,5 +1,5 @@
 # services/cleaner.py
-# Интеллектуальный клин баблов (белый клин + LaMa в режиме box) с поддержкой угла поворота, формы и бесшовного смешивания
+# Интеллектуальный клин баблов (белый клин + LaMa в режиме box) с поддержкой угла поворота, формы и маршрутизации class_id
 
 import gc
 import math
@@ -183,8 +183,7 @@ def clean_white_bubble_patch(roi: np.ndarray, gray: np.ndarray, shape: str = "re
 
 def inpaint_patch_with_lama(patch_bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """
-    Вызов нейросети LaMa в контексте torch.inference_mode() без принудительной выгрузки буферов,
-    чтобы избежать фризов при интерактивной работе кистью и точечным клином.
+    Вызов нейросети LaMa в контексте torch.inference_mode() без принудительной выгрузки буферов.
     """
     if ml.inpaint_model is None:
         return patch_bgr
@@ -304,13 +303,29 @@ def _blend_rotated_patch(
 
 def clean_speech_bubble(image_np: np.ndarray, box: dict, force_mode: str = "auto", min_pad: int = 80) -> str:
     """
-    Универсальная очистка бабла (как для пакетного клина страницы, так и для точечного Spot Clean):
+    Универсальная очистка бабла:
     - force_mode == 'white': принудительно белый клин.
-    - force_mode in ('lama', 'lama_box'): принудительно нейросеть LaMa со сплошной маской бабла (box/ellipse).
-    - force_mode == 'auto': автовыбор по типу фона бабла.
+    - force_mode in ('lama', 'lama_box'): принудительно нейросеть LaMa.
+    - force_mode == 'auto':
+        * class_id in (0, 1) -> белый клин (Bubble, Thought)
+        * class_id == 2      -> нейросеть LaMa (Text / SFX на арте/скринтоне)
+        * fallback           -> эвристика is_mostly_white_bubble(...)
     """
     cx, cy, bw, bh, rot, shape = get_box_geometry(image_np, box)
     img_h, img_w = image_np.shape[:2]
+    class_id = int(box.get("class_id", 0))
+
+    # Определение метода клина
+    if force_mode == "white":
+        target_use_white = True
+    elif force_mode in ("lama", "lama_box"):
+        target_use_white = False
+    elif class_id in (0, 1):
+        target_use_white = True
+    elif class_id == 2:
+        target_use_white = False
+    else:
+        target_use_white = None  # Вычисляется ниже через эвристику
 
     # --- 1. НЕПОВЁРНУТЫЙ БАБЛ ---
     if abs(rot) < 0.5:
@@ -324,7 +339,11 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict, force_mode: str = "auto
             return "skipped"
 
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        use_white = (force_mode == "white") or (force_mode == "auto" and is_mostly_white_bubble(roi, gray))
+
+        if target_use_white is not None:
+            use_white = target_use_white
+        else:
+            use_white = is_mostly_white_bubble(roi, gray)
 
         if use_white or ml.inpaint_model is None:
             clean_white_bubble_patch(roi, gray, shape=shape)
@@ -358,7 +377,11 @@ def clean_speech_bubble(image_np: np.ndarray, box: dict, force_mode: str = "auto
     )
 
     gray_patch = cv2.cvtColor(upright_patch, cv2.COLOR_BGR2GRAY)
-    use_white = (force_mode == "white") or (force_mode == "auto" and is_mostly_white_bubble(upright_patch, gray_patch))
+
+    if target_use_white is not None:
+        use_white = target_use_white
+    else:
+        use_white = is_mostly_white_bubble(upright_patch, gray_patch)
 
     if use_white or ml.inpaint_model is None:
         clean_white_bubble_patch(upright_patch, gray_patch, shape=shape)
@@ -401,8 +424,6 @@ def spot_clean_region(image_np: np.ndarray, box: dict, method: str = "auto") -> 
 def inpaint_by_brush_mask(image_np: np.ndarray, mask_gray: np.ndarray, mode: str = "lama") -> np.ndarray:
     """
     Обработка мазка кисти (ручной режим).
-    Не вызывает принудительный gc.collect() / empty_cache() после каждого мазка,
-    обеспечивая мгновенный отклик при серии мазков.
     """
     if mode == "white":
         image_np[mask_gray > 127] = [255, 255, 255]

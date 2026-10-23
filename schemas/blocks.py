@@ -20,6 +20,7 @@ class SpotCleanRequest(BaseModel):
 
 class TextBlockItem(BaseModel):
     id: str
+    class_id: Optional[int] = 0  # 0: Bubble, 1: Thought, 2: Text/SFX
     x: float
     y: float
     width: float

@@ -172,7 +172,7 @@ async def get_page_blocks(page_id: int):
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, page_id, x, y, width, height, rotation, jap_text, rus_text, speaker, order_index,
+        SELECT id, page_id, class_id, x, y, width, height, rotation, jap_text, rus_text, speaker, order_index,
                font_size, font_family, is_bold, is_italic, is_uppercase, has_stroke, text_color,
                shape, padding_mode, min_hyphens, status 
         FROM text_blocks 

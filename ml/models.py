@@ -14,6 +14,9 @@ from config import (
     GEMINI_MODEL_NAME,
     YOLO_WEIGHTS_PATH,
     WEIGHTS_DIR,
+    DETECT_MODELS_DIR,
+    BASE_DIR,
+    get_available_detectors,
 )
 
 
@@ -54,23 +57,31 @@ class MLContainer:
     gemini_model: genai.GenerativeModel = None
     inpaint_model = None
 
-    def get_yolo(self, model_name: str = "yolo_manga.pt") -> YOLO:
-        """Получить инстанс YOLO с кэшированием в памяти."""
+    def get_yolo(self, model_name: str = "") -> YOLO:
+        """Получить инстанс YOLO с кэшированием в памяти и поддержкой папки weights/detect-bubble/."""
         if not model_name:
-            model_name = "yolo_manga.pt"
+            available = get_available_detectors()
+            model_name = next(iter(available.keys()), "yolo_manga.pt")
 
         if model_name in self.yolo_cache:
             return self.yolo_cache[model_name]
 
-        candidate = WEIGHTS_DIR / model_name
+        # Приоритетный поиск модели:
+        # 1. weights/detect-bubble/
+        # 2. weights/
+        # 3. корень проекта
+        candidate = DETECT_MODELS_DIR / model_name
+        if not candidate.exists():
+            candidate = WEIGHTS_DIR / model_name
+        if not candidate.exists():
+            candidate = BASE_DIR / model_name
         if not candidate.exists():
             candidate = YOLO_WEIGHTS_PATH
 
-        print(f"Загрузка детектора YOLO ({candidate.name})...")
+        print(f"Загрузка детектора YOLO ({candidate})...")
         try:
             model = YOLO(str(candidate))
             self.yolo_cache[model_name] = model
-            # Синхронизируем базовую ссылку
             if self.yolo_model is None:
                 self.yolo_model = model
             return model
@@ -91,7 +102,7 @@ def load_ml_models():
 
     print("Загрузка детектора баблов YOLO по умолчанию...")
     try:
-        ml.yolo_model = ml.get_yolo("yolo_manga.pt")
+        ml.yolo_model = ml.get_yolo()
         print("Базовый YOLO успешно инициализирован.")
     except Exception as e:
         print(f"Ошибка загрузки YOLO: {e}")

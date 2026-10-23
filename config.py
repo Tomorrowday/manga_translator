@@ -4,6 +4,7 @@
 import os
 import re
 from pathlib import Path
+from typing import Dict
 from dotenv import load_dotenv
 
 # Настройка аллокатора PyTorch CUDA строго ДО загрузки torch/нейросетей
@@ -29,20 +30,46 @@ DB_PATH = DATA_DIR / "manga_db.sqlite"
 # 2. Папка для весов нейросетей (.pt, .onnx, чекпоинты)
 WEIGHTS_DIR = BASE_DIR / "weights"
 WEIGHTS_DIR.mkdir(exist_ok=True)
-YOLO_WEIGHTS_PATH = WEIGHTS_DIR / "yolo_manga.pt"
 
-# Плавный fallback: если файл еще не успели переместить из корня
+# Папка специализированных моделей детекции баблов и текста
+DETECT_MODELS_DIR = WEIGHTS_DIR / "detect-bubble"
+DETECT_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+YOLO_WEIGHTS_PATH = WEIGHTS_DIR / "yolo_manga.pt"
 if not YOLO_WEIGHTS_PATH.exists() and (BASE_DIR / "yolo_manga.pt").exists():
     YOLO_WEIGHTS_PATH = BASE_DIR / "yolo_manga.pt"
 
 if not DB_PATH.exists() and (BASE_DIR / "manga_db.sqlite").exists():
     DB_PATH = BASE_DIR / "manga_db.sqlite"
 
-# Доступные для выбора модели YOLO детекции баблов/текста
-AVAILABLE_DETECTORS = {
-    "yolo_manga.pt": "YOLOv8 Bubble Detector (Default)",
-    "yolo26s.pt": "YOLO26s Manga Detector (New)",
-}
+
+def get_available_detectors() -> Dict[str, str]:
+    """
+    Динамически сканирует папку weights/detect-bubble/*.pt.
+    Если там пусто — проверяет weights/*.pt.
+    Возвращает словарь вида {"имя_файла.pt": "имя_файла.pt"}.
+    """
+    detectors: Dict[str, str] = {}
+
+    # 1. Приоритетный поиск в папке weights/detect-bubble/
+    bubble_pt_files = sorted(list(DETECT_MODELS_DIR.glob("*.pt")), key=lambda p: p.name.lower())
+    for f in bubble_pt_files:
+        detectors[f.name] = f.name
+
+    # 2. Если в папке detect-bubble ничего нет, ищем в weights/
+    if not detectors:
+        root_weights_pt = sorted(list(WEIGHTS_DIR.glob("*.pt")), key=lambda p: p.name.lower())
+        for f in root_weights_pt:
+            # Исключаем чекпоинты LaMa, чтобы не путать с детекторами
+            if "lama" not in f.name.lower() and "generator" not in f.name.lower():
+                detectors[f.name] = f.name
+
+    # 3. Fallback, если вообще ни одного файла не обнаружено
+    if not detectors:
+        detectors["yolo_manga.pt"] = "yolo_manga.pt"
+
+    return detectors
+
 
 # API-ключи и конфигурация LLM
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

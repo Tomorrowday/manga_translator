@@ -132,6 +132,7 @@ export function sortBlocksMangaOrder<T extends BoxGeometry>(boxes: T[]): T[] {
 export function mapDbBlockToTextBlock(b: any, cropDataUrl: string = ""): TextBlock {
   return {
     id: b.id,
+    class_id: b.class_id ?? 0,
     x: b.x,
     y: b.y,
     width: b.width,

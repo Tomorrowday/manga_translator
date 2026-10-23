@@ -175,6 +175,7 @@ export function MangaTranslator() {
               const cropped = await cropRegion(img, { ...box, rotation: 0 })
               fresh.push({
                 id: box.id || crypto.randomUUID(),
+                class_id: box.class_id ?? 0,
                 x: box.x,
                 y: box.y,
                 width: box.width,

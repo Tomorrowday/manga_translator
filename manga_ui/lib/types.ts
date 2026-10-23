@@ -12,6 +12,7 @@ export type TextColor = "black" | "white"
 
 export interface TextBlock {
   id: string
+  class_id?: number // 0: Bubble, 1: Thought, 2: Free Text / SFX
   x: number
   y: number
   width: number
