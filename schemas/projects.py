@@ -25,7 +25,6 @@ class UpdateTitleSettingsRequest(BaseModel):
     font_bubble: Optional[str] = "v_CCFaceFront"
     font_thought: Optional[str] = "v_CCFaceFront"
     font_sfx: Optional[str] = "v_Mighty Zeo 2.0"
-    lama_precision: Optional[str] = "fp32"
     lama_downscale: Optional[bool] = False
 
 

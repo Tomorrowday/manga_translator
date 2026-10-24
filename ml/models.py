@@ -25,14 +25,6 @@ class MLManager:
         return _impl.ml.mocr
 
     @property
-    def lama_precision(self) -> str:
-        return _impl.ml.lama_precision
-
-    @lama_precision.setter
-    def lama_precision(self, value: str) -> None:
-        _impl.ml.lama_precision = value
-
-    @property
     def lama_downscale(self) -> bool:
         return _impl.ml.lama_downscale
 

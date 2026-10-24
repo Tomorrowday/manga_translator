@@ -43,14 +43,12 @@ def init_db():
                 font_bubble TEXT DEFAULT 'v_CCFaceFront',
                 font_thought TEXT DEFAULT 'v_CCFaceFront',
                 font_sfx TEXT DEFAULT 'v_Mighty Zeo 2.0',
-                lama_precision TEXT DEFAULT 'fp32',
                 lama_downscale INTEGER DEFAULT 0
             )
         ''')
 
         # Безопасно добавляем новые колонки в существующую БД
         for col_def in [
-            "lama_precision TEXT DEFAULT 'fp32'",
             "lama_downscale INTEGER DEFAULT 0"
         ]:
             try:
@@ -65,8 +63,8 @@ def init_db():
                 INSERT INTO global_settings (
                     id, default_font_size, detector_model, clean_model, detect_conf,
                     auto_oval_bubble, default_padding, default_hyphenation,
-                    font_bubble, font_thought, font_sfx, lama_precision, lama_downscale
-                ) VALUES (1, 14, 'yolo_manga.pt', 'anime-manga-big-lama.pt', 0.25, 1, 'safe', 1, 'v_CCFaceFront', 'v_CCFaceFront', 'v_Mighty Zeo 2.0', 'fp32', 0)
+                    font_bubble, font_thought, font_sfx, lama_downscale
+                ) VALUES (1, 14, 'yolo_manga.pt', 'anime-manga-big-lama.pt', 0.25, 1, 'safe', 1, 'v_CCFaceFront', 'v_CCFaceFront', 'v_Mighty Zeo 2.0', 0)
             ''')
 
         cursor.execute('''

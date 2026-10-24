@@ -10,7 +10,7 @@ import type { TitleSettings } from "@/lib/types"
 
 export interface SettingsModalProps {
   onClose: () => void
-  onSettingsUpdated?: (newSettings: TitleSettings) => void
+  onSettingsUpdated?: (newSettings: Partial<TitleSettings>) => void
 }
 
 export { SettingsModal } from "./settings-modal_impl"

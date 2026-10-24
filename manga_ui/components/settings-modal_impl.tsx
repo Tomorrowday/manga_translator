@@ -1,5 +1,5 @@
 // manga_ui/components/settings-modal_impl.tsx
-// Единое окно ГЛОБАЛЬНЫХ настроек с интеграцией моделей, тогглов сжатия/точности и Ollama
+// Единое окно ГЛОБАЛЬНЫХ настроек с интеграцией моделей, тогглов сжатия и Ollama
 
 "use client"
 
@@ -19,10 +19,9 @@ import {
   CircleDot,
   Bot,
   RefreshCw,
-  Cpu,
   Layers,
 } from "lucide-react"
-import type { TitleSettings, LamaPrecision } from "@/lib/types"
+import type { TitleSettings } from "@/lib/types"
 import { MANGA_FONTS } from "@/lib/hotkeys"
 import { getGlobalSettings, updateGlobalSettings } from "@/lib/api/projects"
 import { checkOllamaConnection } from "@/lib/api/ollama"
@@ -48,7 +47,6 @@ export function SettingsModal({
 
   // Тогглы клинера (LaMa)
   const [lamaDownscale, setLamaDownscale] = useState<boolean>(false)
-  const [lamaPrecision, setLamaPrecision] = useState<LamaPrecision>("fp32")
 
   // Параметры моделей и шрифтов
   const [detectorModel, setDetectorModel] = useState<string>("yolo_manga.pt")
@@ -105,7 +103,6 @@ export function SettingsModal({
           if (s.default_hyphenation !== undefined) setDefaultHyphenation(Boolean(s.default_hyphenation))
 
           if (s.lama_downscale !== undefined) setLamaDownscale(Boolean(s.lama_downscale))
-          if (s.lama_precision) setLamaPrecision(s.lama_precision as LamaPrecision)
 
           if (s.font_bubble) setFontBubble(s.font_bubble)
           if (s.font_thought) setFontThought(s.font_thought)
@@ -132,7 +129,6 @@ export function SettingsModal({
         default_padding: defaultPadding,
         default_hyphenation: defaultHyphenation,
         lama_downscale: lamaDownscale,
-        lama_precision: lamaPrecision,
         font_bubble: fontBubble,
         font_thought: fontThought,
         font_sfx: fontSfx,
@@ -255,40 +251,6 @@ export function SettingsModal({
                     ].join(" ")}
                   />
                 </button>
-              </div>
-
-              {/* Тоггл: Режим точности LaMa */}
-              <div className="flex items-start justify-between rounded-xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700">
-                <div className="space-y-1 pr-4">
-                  <div className="flex items-center gap-2">
-                    <Cpu className="h-4 w-4 text-purple-400" />
-                    <label className="text-xs font-semibold text-slate-200">
-                      Режим вычислений нейросети LaMa (Precision)
-                    </label>
-                  </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    <strong>FP32 (стандарт):</strong> максимальная точность вычислений.<br />
-                    <strong>FP16 / BF16:</strong> снижает потребление видеопамяти в 2 раза, работает только на видеокартах с поддержкой полуточности.
-                  </p>
-                </div>
-
-                <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-1 shrink-0">
-                  {(["fp32", "fp16", "bf16"] as LamaPrecision[]).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setLamaPrecision(mode)}
-                      className={[
-                        "rounded px-2.5 py-1 text-xs font-semibold uppercase transition-colors",
-                        lamaPrecision === mode
-                          ? "bg-purple-600 text-white"
-                          : "text-slate-400 hover:text-slate-200",
-                      ].join(" ")}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Тоггл: Авто-овал для баблов речи */}

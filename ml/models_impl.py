@@ -48,20 +48,17 @@ def release_vram() -> dict:
 class AccurateLamaWrapper:
     """
     Обёртка над TorchScript-моделью LaMa.
-    Использует зеркальное дополнение (reflect padding) до кратности 8 без ресайза,
-    что исключает замыливание арта манги.
+    Использует дополнение (padding) без ресайза до кратности 8, что исключает замыливание арта манги.
     Очищает кэш CUDA сразу после каждого вызова.
     """
 
     def __init__(self, model: torch.jit.ScriptModule, device: torch.device):
         self.model = model
         self.device = device
-        self.precision: str = "fp32"  # "fp32", "fp16", "bf16"
 
     @torch.inference_mode()
     def __call__(self, image: Image.Image, mask: Image.Image) -> Image.Image:
         orig_w, orig_h = image.size
-
         pad_w = (8 - orig_w % 8) % 8
         pad_h = (8 - orig_h % 8) % 8
 
@@ -73,22 +70,14 @@ class AccurateLamaWrapper:
         mask_tensor = torch.from_numpy(mask_np).unsqueeze(0).unsqueeze(0).to(self.device)
 
         if pad_w > 0 or pad_h > 0:
-            img_tensor = F.pad(img_tensor, (0, pad_w, 0, pad_h), mode="reflect")
-            mask_tensor = F.pad(mask_tensor, (0, pad_w, 0, pad_h), mode="reflect")
+            pad_mode = "reflect" if (pad_w < orig_w and pad_h < orig_h) else "replicate"
+            img_tensor = F.pad(img_tensor, (0, pad_w, 0, pad_h), mode=pad_mode)
+            mask_tensor = F.pad(mask_tensor, (0, pad_w, 0, pad_h), mode=pad_mode)
 
         out_uint8 = None
-        device_type = "cuda" if "cuda" in str(self.device) else "cpu"
 
         try:
-            if self.precision == "fp16" and device_type == "cuda":
-                with torch.autocast(device_type="cuda", dtype=torch.float16):
-                    out_tensor = self.model(img_tensor, mask_tensor)
-            elif self.precision == "bf16" and device_type == "cuda":
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    out_tensor = self.model(img_tensor, mask_tensor)
-            else:
-                out_tensor = self.model(img_tensor, mask_tensor)
-
+            out_tensor = self.model(img_tensor, mask_tensor)
             out_tensor = out_tensor[:, :, :orig_h, :orig_w]
             out_tensor = torch.clamp(out_tensor[0], 0, 1).permute(1, 2, 0).detach().cpu().float().numpy()
             out_uint8 = (out_tensor * 255.0).round().astype(np.uint8)
@@ -110,7 +99,6 @@ class MLManager:
         self._yolo_models: Dict[str, Any] = {}
         self._cleaners: Dict[str, Any] = {}
         self.gemini_model = None
-        self.lama_precision: str = "fp32"
         self.lama_downscale: bool = False
         logger.info(f"MLManager инициализирован. Устройство: {self._device}")
 
@@ -145,7 +133,6 @@ class MLManager:
         if name in self._yolo_models:
             return self._yolo_models[name]
 
-        # Ищем путь к файлу
         candidates = [
             config.DETECT_MODELS_DIR / name,
             config.WEIGHTS_DIR / name,
@@ -169,9 +156,7 @@ class MLManager:
     def load_cleaner(self, name: str = "anime-manga-big-lama.pt"):
         """Загружает модель LaMa."""
         if name in self._cleaners:
-            cleaner = self._cleaners[name]
-            cleaner.precision = self.lama_precision
-            return cleaner
+            return self._cleaners[name]
 
         candidates = [
             config.CLEAN_MODELS_DIR / name,
@@ -195,7 +180,6 @@ class MLManager:
         base_model = torch.jit.load(target_path, map_location=self._device)
         base_model.eval()
         wrapper = AccurateLamaWrapper(base_model, self._device)
-        wrapper.precision = self.lama_precision
         self._cleaners[name] = wrapper
         return wrapper
 

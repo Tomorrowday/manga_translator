@@ -18,7 +18,6 @@
    - font_bubble TEXT DEFAULT 'v_CCFaceFront'
    - font_thought TEXT DEFAULT 'v_CCFaceFront'
    - font_sfx TEXT DEFAULT 'v_Mighty Zeo 2.0'
-   - lama_precision TEXT DEFAULT 'fp32'
    - lama_downscale INTEGER DEFAULT 0
 
 2. titles:
