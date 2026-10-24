@@ -1,5 +1,5 @@
 # routers/chapters.py
-# HTTP-контроллер для работы с главами (раздельный экспорт и чистый импорт)
+# HTTP-контроллер для работы с главами (раздельный экспорт, чистый импорт, сброс шрифтов)
 
 import os
 from pathlib import Path
@@ -38,6 +38,26 @@ async def delete_chapter(chapter_id: int):
         return {"success": True, "message": "Глава успешно удалена"}
     except Exception as e:
         logger.error(f"Ошибка при удалении главы {chapter_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{chapter_id}/reset-fonts")
+async def reset_chapter_fonts(chapter_id: int):
+    """Сбрасывает размеры всех баблов главы в Auto (font_size = NULL)."""
+    try:
+        with db_session() as cur:
+            cur.execute(
+                """
+                UPDATE text_blocks
+                SET font_size = NULL
+                WHERE page_id IN (SELECT id FROM pages WHERE chapter_id = ?)
+                """,
+                (chapter_id,)
+            )
+        logger.info(f"Шрифты всех баблов главы {chapter_id} сброшены в Auto.")
+        return {"success": True, "message": "Все баблы главы переведены в Auto"}
+    except Exception as e:
+        logger.error(f"Ошибка сброса шрифтов главы {chapter_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

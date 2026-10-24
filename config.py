@@ -18,8 +18,8 @@ os.environ["ULTRALYTICS_AUTOINSTALL"] = "False"
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
-# Настройка аллокатора PyTorch CUDA строго ДО загрузки torch/нейросетей
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:128")
+# Настройка аллокатора PyTorch CUDA без неподдерживаемого в Windows expandable_segments
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:128")
 
 # Загружаем переменные из .env
 load_dotenv()
@@ -83,15 +83,12 @@ def get_available_detectors() -> Dict[str, str]:
 def get_available_cleaners() -> Dict[str, str]:
     """Сканирует папку weights/clean-lama/*.pt для выбора модели Inpainting."""
     cleaners: Dict[str, str] = {}
-
-    # Всегда предоставляем опцию стандартной библиотеки SimpleLama
     cleaners["simple_lama"] = "SimpleLama (Библиотека)"
 
     lama_files = sorted(list(CLEAN_MODELS_DIR.glob("*.pt")), key=lambda p: p.name.lower())
     for f in lama_files:
         cleaners[f.name] = f.name
 
-    # Поиск чекпоинтов LaMa в корне weights/
     root_lama = sorted(list(WEIGHTS_DIR.glob("*lama*.pt")), key=lambda p: p.name.lower())
     for f in root_lama:
         if f.name not in cleaners:

@@ -13,12 +13,6 @@ from logger import logger
 
 
 def build_chapter_export_payloads(chapter_id: int) -> Tuple[str, str, str, str, Optional[str]]:
-    """
-    Формирует два раздельных JSON файла:
-    1. context_json: инструкции, глоссарий, синопсис.
-    2. dialogues_json: чистый массив диалогов [ { "id": "1-1", "speaker": "...", "raw": "...", "ru": "..." } ].
-    Возвращает: (context_json, dialogues_json, context_filename, dialogues_filename, chapter_folder)
-    """
     conn = get_db()
     cursor = conn.cursor()
 
@@ -67,7 +61,6 @@ def build_chapter_export_payloads(chapter_id: int) -> Tuple[str, str, str, str, 
 
     conn.close()
 
-    # 1. Формируем чистый массив диалогов
     dialogues: List[Dict[str, str]] = []
     page_bubble_counters: Dict[int, int] = {}
 
@@ -83,7 +76,6 @@ def build_chapter_export_payloads(chapter_id: int) -> Tuple[str, str, str, str, 
             "ru": b["rus_text"] or ""
         })
 
-    # 2. Файл контекста (Инструкция, синопсис, глоссарий)
     context_payload = {
         "instructions": CLAUDE_CHATGPT_EXPORT_INSTRUCTIONS,
         "synopsis": title_description,
@@ -103,7 +95,6 @@ def build_chapter_export_payloads(chapter_id: int) -> Tuple[str, str, str, str, 
 
 
 def export_chapter_dialogue_to_folder(chapter_id: int) -> Dict[str, Any]:
-    """Сохраняет ОБА файла (_context.json и _dialogues.json) в папку главы на диске."""
     (
         context_json,
         dialogues_json,
@@ -154,7 +145,6 @@ def find_latest_dialogue_json_in_folder(chapter_id: int) -> Optional[str]:
     if not folder or not os.path.exists(folder):
         return None
 
-    # Ищем файлы *_dialogues.json или любые json кроме *_context.json
     json_files = [f for f in Path(folder).glob("*.json") if not f.name.endswith("_context.json")]
     if not json_files:
         json_files = list(Path(folder).glob("*.json"))
@@ -166,10 +156,6 @@ def find_latest_dialogue_json_in_folder(chapter_id: int) -> Optional[str]:
 
 
 def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[str, int]:
-    """
-    Импорт диалогов. Поддерживает как чистый массив [ { "id": "1-1", ... } ],
-    так и объект с полем { "dialogues": [...] }, а также сопоставление по UUID.
-    """
     text = file_bytes.decode("utf-8").strip()
 
     if "```" in text:
@@ -179,7 +165,6 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
 
     data = json.loads(text)
 
-    # Распознаём чистый массив или словарь с dialogues
     if isinstance(data, list):
         dialogues = data
     elif isinstance(data, dict):
@@ -191,9 +176,15 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
 
     conn = get_db()
     cur = conn.cursor()
+
+    # Считываем настройку auto_oval_bubble
+    cur.execute("SELECT auto_oval_bubble FROM global_settings WHERE id = 1")
+    setting_row = cur.fetchone()
+    auto_oval_enabled = bool(setting_row["auto_oval_bubble"]) if setting_row else True
+
     cur.execute(
         """
-        SELECT tb.id, tb.rus_text, tb.speaker, tb.order_index, p.page_number
+        SELECT tb.id, tb.rus_text, tb.speaker, tb.order_index, tb.class_id, tb.shape, p.page_number
         FROM text_blocks tb
         JOIN pages p ON p.id = tb.page_id
         WHERE p.chapter_id = ?
@@ -225,7 +216,6 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
 
             target_block = None
 
-            # Поиск по формату "1-1" (Page-Bubble)
             if "-" in key_id and not len(key_id) > 30:
                 parts = key_id.split("-")
                 if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
@@ -238,7 +228,6 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
                         if 1 <= b_num <= len(p_list):
                             target_block = p_list[b_num - 1]
 
-            # Fallback по прямому UUID
             if not target_block and key_id in by_uuid:
                 target_block = by_uuid[key_id]
 
@@ -255,9 +244,14 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
 
             new_status = "translated" if final_ru else "ocr-done"
 
+            # Авто-овал: если появился русский перевод и это класс 0 (Речь)
+            new_shape = target_block.get("shape", "rect")
+            if target_block.get("class_id", 0) == 0 and auto_oval_enabled:
+                new_shape = "ellipse" if final_ru else "rect"
+
             cur_session.execute(
-                "UPDATE text_blocks SET rus_text = ?, speaker = ?, status = ? WHERE id = ?",
-                (final_ru, final_spk, new_status, real_block_id)
+                "UPDATE text_blocks SET rus_text = ?, speaker = ?, shape = ?, status = ? WHERE id = ?",
+                (final_ru, final_spk, new_shape, new_status, real_block_id)
             )
             updated_count += 1
 

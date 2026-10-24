@@ -10,6 +10,8 @@ export type PaddingMode = "safe" | "fit"
 
 export type TextColor = "black" | "white"
 
+export type LamaPrecision = "fp32" | "fp16" | "bf16"
+
 export interface TextBlock {
   id: string
   class_id?: number // 0: Bubble (Речь), 1: Thought (Мысли), 2: Free Text / SFX (Арт)
@@ -67,6 +69,8 @@ export interface TitleSettings {
   font_bubble?: string
   font_thought?: string
   font_sfx?: string
+  lama_precision?: LamaPrecision
+  lama_downscale?: boolean
 }
 
 export interface TitleProject extends TitleSettings {

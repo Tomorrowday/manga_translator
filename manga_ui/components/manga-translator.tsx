@@ -1,10 +1,10 @@
 // manga_ui/components/manga-translator.tsx
-// Главный контейнер: точная передача тогглов, сохранение четкости моделей и хоткеи
+// Главный контейнер с интерактивным изменением ширины правой панели (Resizable Splitter)
 
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import type { PageItem, PageStatus, TitleSettings } from "@/lib/types"
+import type { PageItem, PageStatus, TitleSettings, TextBlock } from "@/lib/types"
 import { ImageViewer } from "@/components/image-viewer"
 import { Sidebar } from "@/components/sidebar"
 import { BatchChapterActions } from "@/components/batch-chapter-actions"
@@ -26,8 +26,13 @@ import {
   runPageAutoDetect,
   openTranslatedFolder,
   runBrushClean,
-} from "@/lib/api/pages"
+  updateTitleSettings,
+  resetChapterBubbleFonts,
+} from "@/lib/api"
 import { getGlobalSettings, exportChapterScriptToFolder } from "@/lib/api"
+
+const RIGHT_PANEL_STORAGE_KEY = "manga_right_panel_width"
+const DEFAULT_PANEL_WIDTH = 490
 
 export function MangaTranslator() {
   const [currentPage, setCurrentPage] = useState<PageItem | null>(null)
@@ -37,9 +42,32 @@ export function MangaTranslator() {
   const [showTypeset, setShowTypeset] = useState(false)
   const [brushSize, setBrushSize] = useState<number>(32)
 
+  // Базовый размер шрифта для текущего тайтла
+  const [currentTitleId, setCurrentTitleId] = useState<number | null>(null)
+  const [titleFontSize, setTitleFontSize] = useState<number>(14)
+  const [isApplyingChapterFont, setIsApplyingChapterFont] = useState(false)
+
+  // Ширина правой панели (свободно изменяемая сплиттером)
+  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH)
+  const [isResizing, setIsResizing] = useState<boolean>(false)
+
+  // Загружаем сохранённую пользователем ширину панели
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(RIGHT_PANEL_STORAGE_KEY)
+      if (saved) {
+        const val = parseInt(saved, 10)
+        if (!isNaN(val) && val >= 360 && val <= 1000) {
+          setPanelWidth(val)
+        }
+      }
+    } catch {
+      // Игнорируем ошибки доступа к localStorage
+    }
+  }, [])
+
   // Глобальные настройки приложения
   const [globalSettings, setGlobalSettings] = useState<TitleSettings>({
-    default_font_size: 14,
     auto_oval_bubble: true,
     default_padding: "safe",
     default_hyphenation: true,
@@ -59,6 +87,42 @@ export function MangaTranslator() {
   const chapterPagesRef = useRef<PageItem[]>([])
   chapterPagesRef.current = chapterPages
   const isSwitchingPageRef = useRef(false)
+
+  // Обработчик перетаскивания границы панели
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+  }, [])
+
+  useEffect(() => {
+    if (!isResizing) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = window.innerWidth - e.clientX
+      const minW = 360
+      const maxW = Math.max(minW, Math.floor(window.innerWidth * 0.55))
+      const clamped = Math.min(Math.max(newWidth, minW), maxW)
+
+      setPanelWidth(clamped)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      setPanelWidth((latest) => {
+        try {
+          localStorage.setItem(RIGHT_PANEL_STORAGE_KEY, String(latest))
+        } catch {}
+        return latest
+      })
+    }
+
+    window.addEventListener("mousemove", handleMouseMove)
+    window.addEventListener("mouseup", handleMouseUp)
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("mouseup", handleMouseUp)
+    }
+  }, [isResizing])
 
   useEffect(() => {
     async function loadSettings() {
@@ -95,6 +159,39 @@ export function MangaTranslator() {
     }
   }, [])
 
+  // При смене базового кегля тайтла — обновляем состояние и сохраняем в БД
+  const handleTitleFontSizeChange = useCallback(async (newSize: number) => {
+    setTitleFontSize(newSize)
+    if (currentTitleId) {
+      try {
+        await updateTitleSettings(currentTitleId, { default_font_size: newSize } as any)
+      } catch (err) {
+        console.warn("Не удалось сохранить размер шрифта тайтла:", err)
+      }
+    }
+  }, [currentTitleId])
+
+  // Кнопка: применить базовый кегль ко всей главе (сброс всех баблов в Auto)
+  const handleApplyFontSizeToChapter = useCallback(async () => {
+    const chId = currentPage?.chapter_id || chapterPages[0]?.chapter_id
+    if (!chId) return
+
+    const ok = confirm(`Сбросить все баблы текущей главы в режим Auto под кегль ${titleFontSize}px?`)
+    if (!ok) return
+
+    setIsApplyingChapterFont(true)
+    try {
+      await resetChapterBubbleFonts(chId)
+      // Сбрасываем ручные фиксации на текущей открытой странице
+      setTextBlocks((prev) => prev.map((b) => ({ ...b, fontSize: undefined })))
+      alert(`Все баблы главы успешно переведены в режим Auto (${titleFontSize}px)!`)
+    } catch (err) {
+      alert("Ошибка применения к главе: " + String(err))
+    } finally {
+      setIsApplyingChapterFont(false)
+    }
+  }, [currentPage?.chapter_id, chapterPages, titleFontSize])
+
   const {
     textBlocks,
     setTextBlocks,
@@ -112,7 +209,12 @@ export function MangaTranslator() {
     moveBlock,
     spotCleanBlock,
     addOrUpdateDrawnBlock,
-  } = usePageBlocks(currentPage, globalSettings, handlePageStatusUpdate, refreshSpeakersList)
+  } = usePageBlocks(
+    currentPage,
+    { ...globalSettings, default_font_size: titleFontSize },
+    handlePageStatusUpdate,
+    refreshSpeakersList
+  )
 
   const pipelines = usePagePipelines({
     currentPage,
@@ -120,7 +222,7 @@ export function MangaTranslator() {
     textBlocks,
     setTextBlocks,
     textBlocksRef,
-    globalSettings,
+    globalSettings: { ...globalSettings, default_font_size: titleFontSize },
     setSelectedId,
     saveBlocks,
     onPageStatusUpdate: handlePageStatusUpdate,
@@ -136,6 +238,13 @@ export function MangaTranslator() {
       setChapterPages([])
     }
   }, [currentPage?.chapter_id, clearBlocks])
+
+  const handleTitleSelected = useCallback((titleId: number, defaultFontSize?: number) => {
+    setCurrentTitleId(titleId)
+    if (defaultFontSize) {
+      setTitleFontSize(defaultFontSize)
+    }
+  }, [])
 
   const handleSelectPage = async (page: PageItem, skipSave = false) => {
     if (isSwitchingPageRef.current) return
@@ -154,6 +263,9 @@ export function MangaTranslator() {
 
       const freshPage = (await getPageDetails(page.id)) || page
       setCurrentPage(freshPage)
+      if (freshPage.title_id) {
+        setCurrentTitleId(freshPage.title_id)
+      }
       setViewMode(freshPage.clean_path ? "clean" : "original")
       setCleanCacheBuster(Date.now())
       refreshSpeakersList(freshPage.id)
@@ -172,7 +284,7 @@ export function MangaTranslator() {
       })
 
       if (dbBlocks && dbBlocks.length > 0) {
-        const loaded = []
+        const loaded: TextBlock[] = []
         for (const b of dbBlocks) {
           const cropped = img.naturalWidth > 0 ? await cropRegion(img, { ...b, rotation: b.rotation || 0 }) : { dataUrl: "" }
           loaded.push(mapDbBlockToTextBlock(b, cropped.dataUrl))
@@ -182,18 +294,15 @@ export function MangaTranslator() {
       } else {
         const isFreshPage = freshPage.status === "raw" || freshPage.status === "new"
         if (isFreshPage) {
-          const isAutoOvalEnabled = globalSettings.auto_oval_bubble ?? true
           const detectRes = await runPageAutoDetect(
             page.id,
             globalSettings.detect_conf,
-            isAutoOvalEnabled
+            false
           )
           if (detectRes?.boxes?.length) {
-            const fresh = []
+            const fresh: TextBlock[] = []
             for (const box of detectRes.boxes) {
               const cropped = await cropRegion(img, { ...box, rotation: 0 })
-              const isBubble = (box.class_id ?? 0) === 0
-              const resolvedShape = (isBubble && isAutoOvalEnabled) ? "ellipse" : (box.shape || "rect")
 
               fresh.push({
                 id: box.id || crypto.randomUUID(),
@@ -207,13 +316,13 @@ export function MangaTranslator() {
                 japText: box.jap_text || "",
                 rusText: "",
                 orderIndex: box.order_index,
-                fontSize: box.font_size || globalSettings.default_font_size || 14,
+                fontSize: undefined, // СТРОГО AUTO
                 fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
-                textColor: "black" as const,
-                shape: resolvedShape,
-                paddingMode: box.padding_mode || globalSettings.default_padding || "safe",
+                textColor: "black",
+                shape: "rect", // При детекте текста перевода ещё нет, поэтому всегда rect
+                paddingMode: (box.padding_mode as TextBlock["paddingMode"]) || globalSettings.default_padding || "safe",
                 minHyphens: box.min_hyphens !== undefined ? box.min_hyphens : (globalSettings.default_hyphenation ?? true),
-                status: (box.status as any) || (box.jap_text ? "ocr-done" : "new"),
+                status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
               })
             }
             setNewPageBlocks(fresh)
@@ -285,12 +394,13 @@ export function MangaTranslator() {
     setShowTypeset((prev) => !prev)
   }, [])
 
-  // Хоткеи C / V / G для типов баблов с учетом тоггла
   const handleSetBlockClass = useCallback(
     (classId: number) => {
       if (!selectedId) return
+      const targetBlock = textBlocksRef.current.find((b) => b.id === selectedId)
+      const hasTranslation = Boolean(targetBlock?.rusText && targetBlock.rusText.trim())
       const autoOval = globalSettings.auto_oval_bubble ?? true
-      const shape = classId === 0 && autoOval ? "ellipse" : "rect"
+      const shape = classId === 0 && autoOval && hasTranslation ? "ellipse" : "rect"
 
       let fontFamily = globalSettings.font_bubble || "v_CCFaceFront"
       if (classId === 1) fontFamily = globalSettings.font_thought || "v_CCFaceFront"
@@ -298,10 +408,9 @@ export function MangaTranslator() {
 
       updateBlock(selectedId, { class_id: classId, shape, fontFamily })
     },
-    [selectedId, globalSettings, updateBlock]
+    [selectedId, globalSettings, updateBlock, textBlocksRef]
   )
 
-  // Хоткеи действий с главой
   const handleChapterExportJson = useCallback(async () => {
     const chId = chapterPages[0]?.chapter_id
     if (!chId) return
@@ -316,7 +425,7 @@ export function MangaTranslator() {
   useMangaHotkeys({
     selectedId,
     textBlocks,
-    defaultFontSize: globalSettings.default_font_size || 14,
+    defaultFontSize: titleFontSize,
     onPrevPage: handlePrevPage,
     onNextPage: handleNextPage,
     onSave: () => saveBlocks(true),
@@ -342,7 +451,7 @@ export function MangaTranslator() {
     : null
 
   return (
-    <div className="flex h-screen flex-col bg-slate-900 text-slate-100">
+    <div className={`flex h-screen flex-col bg-slate-900 text-slate-100 ${isResizing ? "select-none" : ""}`}>
       <datalist id="manga-speakers">
         {allSpeakerSuggestions.map((name) => (
           <option key={name} value={name} />
@@ -355,6 +464,10 @@ export function MangaTranslator() {
         totalPages={chapterPages.length}
         totalBlocks={textBlocks.length}
         translatedCount={translatedCount}
+        titleFontSize={titleFontSize}
+        onTitleFontSizeChange={handleTitleFontSizeChange}
+        onApplyFontSizeToChapter={handleApplyFontSizeToChapter}
+        isApplyingChapterFont={isApplyingChapterFont}
         isSaving={isSaving}
         isExporting={pipelines.isExporting}
         isExportSuccess={pipelines.isExportSuccess}
@@ -370,7 +483,7 @@ export function MangaTranslator() {
       <BatchChapterActions
         pages={chapterPages}
         currentPageId={currentPage?.id ?? null}
-        titleDefaultFontSize={globalSettings.default_font_size || 14}
+        titleDefaultFontSize={titleFontSize}
         onSaveCurrentPage={() => saveBlocks(true)}
         onPageStatusUpdate={handlePageStatusUpdate}
         onCompleteBatch={() => setSidebarRefreshTrigger((prev) => prev + 1)}
@@ -379,7 +492,7 @@ export function MangaTranslator() {
         }}
       />
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden relative">
         <Sidebar
           currentPageId={currentPage?.id || null}
           activePageUpdate={activePageUpdate}
@@ -387,8 +500,10 @@ export function MangaTranslator() {
           onSelectPage={(page) => handleSelectPage(page, false)}
           onActiveChapterChange={setChapterPages}
           onChapterDeleted={handleChapterDeleted}
+          onTitleSelected={handleTitleSelected}
         />
 
+        {/* Просмотрщик страницы */}
         <ImageViewer
           imageSrc={activeImageSrc}
           textBlocks={textBlocks}
@@ -397,7 +512,7 @@ export function MangaTranslator() {
           pageNumber={currentPage?.page_number}
           hasCleanScan={Boolean(currentPage?.clean_path)}
           viewMode={viewMode}
-          defaultFontSize={globalSettings.default_font_size || 14}
+          defaultFontSize={titleFontSize}
           brushSize={brushSize}
           onBrushResize={handleBrushResize}
           onToggleViewMode={handleToggleViewMode}
@@ -407,7 +522,23 @@ export function MangaTranslator() {
           onBrushClean={handleBrushClean}
         />
 
-        <section className="flex min-h-0 w-full flex-col border-t border-slate-800 lg:w-2/5 lg:border-l lg:border-t-0">
+        {/* Интерактивный сплиттер правой панели */}
+        <div
+          onMouseDown={startResizing}
+          className={[
+            "w-1.5 shrink-0 cursor-col-resize select-none transition-colors relative z-30 group",
+            isResizing ? "bg-indigo-500" : "bg-slate-800 hover:bg-indigo-500/70",
+          ].join(" ")}
+          title="Потяните, чтобы изменить ширину правой панели"
+        >
+          <div className="absolute inset-y-0 -left-1 -right-1" />
+        </div>
+
+        {/* Правая панель с динамически изменяемой шириной */}
+        <section
+          style={{ width: `${panelWidth}px` }}
+          className="flex min-h-0 shrink-0 flex-col overflow-hidden bg-slate-950/60"
+        >
           <TranslationToolbar
             hasCurrentPage={Boolean(currentPage)}
             hasBlocks={textBlocks.length > 0}
@@ -432,7 +563,7 @@ export function MangaTranslator() {
             currentPage={currentPage}
             textBlocks={textBlocks}
             selectedId={selectedId}
-            defaultFontSize={globalSettings.default_font_size || 14}
+            defaultFontSize={titleFontSize}
             autoOvalBubble={globalSettings.auto_oval_bubble ?? true}
             onSelect={setSelectedId}
             onUpdate={updateBlock}

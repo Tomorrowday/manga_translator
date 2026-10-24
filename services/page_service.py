@@ -1,24 +1,22 @@
 # services/page_service.py
-# Бизнес-логика работы со страницей с чтением из единых глобальных настроек
+# Бизнес-логика работы со страницей с поддержкой Unicode путей сохранения
 
 import os
 import time
 import uuid
 from typing import List, Dict, Any, Tuple, Optional
-import cv2
-import numpy as np
+from pathlib import Path
 from PIL import Image
 
 from database import get_db, db_session
 from schemas import TextBlockItem
-from services.cleaner import clean_speech_bubble, load_image_cv2, release_vram
+from services.cleaner import clean_speech_bubble, load_image_cv2, save_image_cv2, release_vram
 from services.detector import detect_and_filter_bubbles
 from services.ocr import ocr_image_region
 from logger import logger
 
 
 def get_active_global_settings() -> Dict[str, Any]:
-    """Считывает актуальные глобальные настройки из БД."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT * FROM global_settings WHERE id = 1")
@@ -28,7 +26,6 @@ def get_active_global_settings() -> Dict[str, Any]:
     if row:
         return dict(row)
     return {
-        "default_font_size": 14,
         "detector_model": "yolo_manga.pt",
         "clean_model": "anime-manga-big-lama.pt",
         "detect_conf": 0.25,
@@ -37,7 +34,9 @@ def get_active_global_settings() -> Dict[str, Any]:
         "default_hyphenation": 1,
         "font_bubble": "v_CCFaceFront",
         "font_thought": "v_CCFaceFront",
-        "font_sfx": "v_Mighty Zeo 2.0"
+        "font_sfx": "v_Mighty Zeo 2.0",
+        "lama_precision": "fp32",
+        "lama_downscale": 0
     }
 
 
@@ -108,9 +107,9 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
 
 
 def detect_page_bubbles_service(
-    page_id: int,
-    conf_override: Optional[float] = None,
-    auto_oval_override: Optional[bool] = None
+        page_id: int,
+        conf_override: Optional[float] = None,
+        auto_oval_override: Optional[bool] = None
 ) -> Tuple[List[Dict[str, Any]], str, float]:
     conn = get_db()
     cursor = conn.cursor()
@@ -124,97 +123,87 @@ def detect_page_bubbles_service(
     file_path = str(row["file_path"])
     current_status = str(row["status"])
 
-    # Считываем глобальные настройки приложения
     cfg = get_active_global_settings()
-
     detector_model = cfg.get("detector_model") or "yolo_manga.pt"
     detect_conf = conf_override if conf_override is not None else float(cfg.get("detect_conf", 0.25))
 
-    raw_auto_oval = cfg.get("auto_oval_bubble")
-    is_auto_oval_enabled = bool(raw_auto_oval) if raw_auto_oval is not None else True
-    auto_oval = auto_oval_override if auto_oval_override is not None else is_auto_oval_enabled
-
     default_pad = cfg.get("default_padding") or "safe"
     default_hyph = bool(cfg.get("default_hyphenation", 1))
-    default_font_size = int(cfg.get("default_font_size", 14))
 
     font_bubble = cfg.get("font_bubble") or "v_CCFaceFront"
     font_thought = cfg.get("font_thought") or "v_CCFaceFront"
     font_sfx = cfg.get("font_sfx") or "v_Mighty Zeo 2.0"
 
     start_time = time.time()
-    image = Image.open(file_path).convert("RGB")
+    try:
+        image = Image.open(file_path).convert("RGB")
 
-    raw_boxes = detect_and_filter_bubbles(
-        image,
-        model_name=detector_model,
-        conf_threshold=float(detect_conf)
-    )
-    boxes: List[Dict[str, Any]] = [dict(b) for b in raw_boxes]
+        raw_boxes = detect_and_filter_bubbles(
+            image,
+            model_name=detector_model,
+            conf_threshold=float(detect_conf)
+        )
+        boxes: List[Dict[str, Any]] = [dict(b) for b in raw_boxes]
 
-    with db_session() as cur:
-        cur.execute("DELETE FROM text_blocks WHERE page_id = ?", (page_id,))
-        for b in boxes:
-            block_id = str(uuid.uuid4())
-            cls_id = int(b.get("class_id", 0))
-
-            # Авто-овал: для обычных баблов речи (класс 0) ставим овал
-            if cls_id == 0 and auto_oval:
-                block_shape = "ellipse"
-            else:
+        with db_session() as cur:
+            cur.execute("DELETE FROM text_blocks WHERE page_id = ?", (page_id,))
+            for b in boxes:
+                block_id = str(uuid.uuid4())
+                cls_id = int(b.get("class_id", 0))
                 block_shape = "rect"
 
-            # Стандартный шрифт по классу
-            if cls_id == 0:
-                block_font = font_bubble
-            elif cls_id == 1:
-                block_font = font_thought
+                if cls_id == 0:
+                    block_font = font_bubble
+                elif cls_id == 1:
+                    block_font = font_thought
+                else:
+                    block_font = font_sfx
+
+                b["id"] = block_id
+                b["class_id"] = cls_id
+                b["shape"] = block_shape
+                b["font_family"] = block_font
+                b["font_size"] = None
+                b["padding_mode"] = default_pad
+                b["min_hyphens"] = default_hyph
+                b["text_color"] = "black"
+                b["rotation"] = 0.0
+
+                jap_text = ocr_image_region(
+                    image,
+                    float(b["x"]),
+                    float(b["y"]),
+                    float(b["width"]),
+                    float(b["height"]),
+                    rotation=0.0
+                )
+                b["jap_text"] = jap_text
+                b["status"] = "ocr-done" if jap_text else "new"
+
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO text_blocks (
+                        id, page_id, class_id, x, y, width, height, rotation, jap_text, order_index, 
+                        font_size, font_family, text_color, shape, padding_mode, min_hyphens, status
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, NULL, ?, 'black', ?, ?, ?, ?)
+                    """,
+                    (
+                        block_id, page_id, cls_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"],
+                        block_font, block_shape, default_pad, int(default_hyph), b["status"]
+                    )
+                )
+
+            new_status = "detected" if boxes else "raw"
+            if current_status not in ["cleaned", "translated", "done"]:
+                cur.execute("UPDATE pages SET status = ? WHERE id = ?", (new_status, page_id))
             else:
-                block_font = font_sfx
+                new_status = current_status
 
-            b["id"] = block_id
-            b["class_id"] = cls_id
-            b["shape"] = block_shape
-            b["font_family"] = block_font
-            b["font_size"] = default_font_size
-            b["padding_mode"] = default_pad
-            b["min_hyphens"] = default_hyph
-            b["text_color"] = "black"
-            b["rotation"] = 0.0
-
-            jap_text = ocr_image_region(
-                image,
-                float(b["x"]),
-                float(b["y"]),
-                float(b["width"]),
-                float(b["height"]),
-                rotation=0.0
-            )
-            b["jap_text"] = jap_text
-            b["status"] = "ocr-done" if jap_text else "new"
-
-            cur.execute(
-                """
-                INSERT OR REPLACE INTO text_blocks (
-                    id, page_id, class_id, x, y, width, height, rotation, jap_text, order_index, 
-                    font_size, font_family, text_color, shape, padding_mode, min_hyphens, status
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, 'black', ?, ?, ?, ?)
-                """,
-                (
-                    block_id, page_id, cls_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"],
-                    default_font_size, block_font, block_shape, default_pad, int(default_hyph), b["status"]
-                )
-            )
-
-        new_status = "detected" if boxes else "raw"
-        if current_status not in ["cleaned", "translated", "done"]:
-            cur.execute("UPDATE pages SET status = ? WHERE id = ?", (new_status, page_id))
-        else:
-            new_status = current_status
-
-    elapsed = round(time.time() - start_time, 4)
-    return boxes, new_status, elapsed
+        elapsed = round(time.time() - start_time, 4)
+        return boxes, new_status, elapsed
+    finally:
+        release_vram()
 
 
 def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[str, str, Dict[str, int]]:
@@ -227,7 +216,6 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
         conn.close()
         raise ValueError("Файл страницы не найден")
 
-    # Считываем глобальную модель клина
     cfg = get_active_global_settings()
     clean_model_name = cfg.get("clean_model") or "anime-manga-big-lama.pt"
 
@@ -243,7 +231,7 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
 
     orig_path = str(page_row["file_path"])
     try:
-        image: np.ndarray = load_image_cv2(orig_path)
+        image = load_image_cv2(orig_path)
     except Exception as e:
         raise RuntimeError(f"Не удалось открыть изображение: {e}")
 
@@ -261,7 +249,11 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
 
     file_name = os.path.splitext(os.path.basename(orig_path))[0]
     clean_path = str(os.path.join(clean_dir, f"{file_name}.png"))
-    cv2.imwrite(clean_path, image)
+
+    # Сохраняем с гарантированной поддержкой юникода
+    save_ok = save_image_cv2(clean_path, image)
+    if not save_ok:
+        raise RuntimeError(f"Не удалось сохранить заклиненный файл по пути: {clean_path}")
 
     page_status_str = str(page_row["status"])
     has_rus = any(bool(b.get("rus_text") and b["rus_text"].strip()) for b in blocks)

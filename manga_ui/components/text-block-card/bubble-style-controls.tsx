@@ -34,6 +34,7 @@ export function BubbleStyleControls({
   const isFit = block.paddingMode === "fit"
   const isMinHyphens = block.minHyphens !== false
   const isWhiteText = block.textColor === "white"
+  const isManual = block.fontSize !== undefined
   const currentEffectiveSize = block.fontSize ?? defaultFontSize
 
   return (
@@ -61,31 +62,39 @@ export function BubbleStyleControls({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-1">
-        {/* Управление размером шрифта */}
+        {/* Управление размером шрифта с отображением текущего реального кегля */}
         <div className="flex items-center gap-1 text-slate-400">
           <button
             type="button"
             onClick={() => onChange({ fontSize: Math.max(8, currentEffectiveSize - 1) })}
-            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors font-mono"
+            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors font-mono font-bold"
             title={`Уменьшить шрифт [${hotkeys.fontSizeDown.label}]`}
           >
             -
           </button>
+
           <button
             type="button"
-            onClick={() => onChange({ fontSize: undefined })}
+            onClick={() => onChange({ fontSize: isManual ? undefined : currentEffectiveSize })}
             className={[
-              "px-1.5 h-6 rounded text-[10px] font-bold transition-colors",
-              block.fontSize === undefined ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-400 hover:text-slate-200",
+              "px-2 h-6 rounded text-[10px] font-bold transition-all border",
+              !isManual
+                ? "border-indigo-500/60 bg-indigo-600/30 text-indigo-200"
+                : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700",
             ].join(" ")}
-            title={`Автоматический размер по умолчанию (${defaultFontSize}px)`}
+            title={
+              !isManual
+                ? `Авто-размер (базовый кегль тайтла: ${defaultFontSize}px). Нажмите, чтобы зафиксировать.`
+                : `Кегль зафиксирован: ${block.fontSize}px. Нажмите, чтобы сбросить в Auto.`
+            }
           >
-            Auto ({defaultFontSize})
+            {!isManual ? `Auto (${currentEffectiveSize}px)` : `${block.fontSize}px (Фикс)`}
           </button>
+
           <button
             type="button"
             onClick={() => onChange({ fontSize: Math.min(48, currentEffectiveSize + 1) })}
-            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors font-mono"
+            className="h-6 w-6 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors font-mono font-bold"
             title={`Увеличить шрифт [${hotkeys.fontSizeUp.label}]`}
           >
             +

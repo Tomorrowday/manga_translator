@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-page-blocks.ts
-// Управление блоками страницы: авто-наследование настроек формы (овал/rect) и шрифтов при рисовании мышкой
+// Управление блоками страницы: новые баблы создаются строго в режиме Auto
 
 import { useState, useRef, useCallback } from "react"
 import type { TextBlock, PageItem, PageStatus, TitleSettings } from "@/lib/types"
@@ -166,7 +166,6 @@ export function usePageBlocks(
     [onPageStatusUpdate, deleteBlock]
   )
 
-  // Ручное рисование рамки мышкой — применение настроек по умолчанию (авто-овал, отступы, переносы, шрифты)
   const addOrUpdateDrawnBlock = useCallback(
     async (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => {
       isDirtyRef.current = true
@@ -192,11 +191,10 @@ export function usePageBlocks(
         return
       }
 
-      const defaultShape = (globalSettings.auto_oval_bubble ?? true) ? "ellipse" : "rect"
+      // Новая нарисованная рамка по умолчанию ВСЕГДА Auto (fontSize: undefined)
       const defaultFont = globalSettings.font_bubble || "v_CCFaceFront"
       const defaultPadding = globalSettings.default_padding || "safe"
       const defaultHyphens = globalSettings.default_hyphenation !== undefined ? globalSettings.default_hyphenation : true
-      const defaultFontSize = globalSettings.default_font_size || 14
 
       const id = crypto.randomUUID()
       const newBlock: TextBlock = {
@@ -210,10 +208,10 @@ export function usePageBlocks(
         imageCrop: dataUrl,
         japText: "",
         rusText: "",
-        fontSize: defaultFontSize,
+        fontSize: undefined, // ПО УМОЛЧАНИЮ ВСЕГДА AUTO
         fontFamily: defaultFont,
         textColor: "black",
-        shape: defaultShape,
+        shape: "rect",
         paddingMode: defaultPadding,
         minHyphens: defaultHyphens,
         status: "new",

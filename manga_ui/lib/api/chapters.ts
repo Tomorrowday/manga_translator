@@ -17,6 +17,13 @@ export async function deleteChapter(chapterId: number) {
   return await handleApiResponse<any>(res, "Ошибка удаления главы")
 }
 
+export async function resetChapterBubbleFonts(chapterId: number) {
+  const res = await fetch(`${API_BASE_URL}/api/chapters/${chapterId}/reset-fonts`, {
+    method: "POST",
+  })
+  return await handleApiResponse<any>(res, "Ошибка сброса шрифтов главы")
+}
+
 export async function exportChapterScriptToFolder(chapterId: number) {
   const res = await fetch(`${API_BASE_URL}/api/chapters/${chapterId}/export-dialogue-to-folder`, {
     method: "POST",

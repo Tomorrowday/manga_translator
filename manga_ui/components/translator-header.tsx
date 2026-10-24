@@ -1,5 +1,5 @@
 // manga_ui/components/translator-header.tsx
-// Шапка редактора с кнопкой вызова Настроек и Хоткеев
+// Шапка редактора с контроллером кегля шрифта тайтла, кнопкой применения к главе и инструментами
 
 "use client"
 
@@ -16,6 +16,8 @@ import {
   ChevronRight,
   Keyboard,
   Sliders,
+  Type,
+  CheckCheck,
 } from "lucide-react"
 import type { PageItem } from "@/lib/types"
 import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
@@ -26,6 +28,10 @@ interface TranslatorHeaderProps {
   totalPages?: number
   totalBlocks: number
   translatedCount: number
+  titleFontSize: number
+  onTitleFontSizeChange: (newSize: number) => void
+  onApplyFontSizeToChapter: () => void
+  isApplyingChapterFont: boolean
   isSaving: boolean
   isExporting: boolean
   isExportSuccess: boolean
@@ -44,6 +50,10 @@ export function TranslatorHeader({
   totalPages = 0,
   totalBlocks,
   translatedCount,
+  titleFontSize,
+  onTitleFontSizeChange,
+  onApplyFontSizeToChapter,
+  isApplyingChapterFont,
   isSaving,
   isExporting,
   isExportSuccess,
@@ -60,7 +70,7 @@ export function TranslatorHeader({
   const hasNext = currentIndex >= 0 && currentIndex < totalPages - 1
 
   return (
-    <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950/60 px-6 py-3">
+    <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950/60 px-6 py-2.5">
       <div className="flex items-center gap-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-500 shadow-md">
           <BookText className="h-5 w-5 text-white" />
@@ -106,10 +116,50 @@ export function TranslatorHeader({
       </div>
 
       <div className="flex items-center gap-3 text-xs text-slate-400">
+        {/* Контроллер базового размера шрифта тайтла + Кнопка применения к главе */}
+        <div className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 p-1 text-xs">
+          <div className="flex items-center gap-1 px-1">
+            <Type className="h-3.5 w-3.5 text-indigo-400" />
+            <span className="text-[11px] font-medium text-slate-300">Кегль:</span>
+            <button
+              type="button"
+              onClick={() => onTitleFontSizeChange(Math.max(8, titleFontSize - 1))}
+              className="h-5 w-5 rounded bg-slate-800 font-mono font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+            >
+              -
+            </button>
+            <span className="min-w-[30px] text-center font-mono font-bold text-indigo-300">
+              {titleFontSize}px
+            </span>
+            <button
+              type="button"
+              onClick={() => onTitleFontSizeChange(Math.min(48, titleFontSize + 1))}
+              className="h-5 w-5 rounded bg-slate-800 font-mono font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+            >
+              +
+            </button>
+          </div>
+
+          <button
+            type="button"
+            disabled={!currentPage || isApplyingChapterFont}
+            onClick={onApplyFontSizeToChapter}
+            className="flex items-center gap-1 rounded bg-indigo-600/40 hover:bg-indigo-600 px-2 py-0.5 text-[11px] font-medium text-indigo-200 hover:text-white transition-all disabled:opacity-40"
+            title="Сбросить все баблы текущей главы в режим Auto по этому базовому кеглю"
+          >
+            {isApplyingChapterFont ? (
+              <Loader2 className="h-3 w-3 animate-spin text-white" />
+            ) : (
+              <CheckCheck className="h-3 w-3 text-indigo-300" />
+            )}
+            Применить к главе
+          </button>
+        </div>
+
         <button
           onClick={onOpenSettings}
           className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-          title="Глобальные настройки тайтла (тогглы, модели, шрифты)"
+          title="Глобальные настройки (модели, тогглы)"
         >
           <Sliders className="h-3.5 w-3.5 text-amber-400" />
           Настройки

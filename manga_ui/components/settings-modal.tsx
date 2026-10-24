@@ -1,5 +1,5 @@
 // manga_ui/components/settings-modal.tsx
-// Единое окно ГЛОБАЛЬНЫХ настроек с интеграцией моделей, тогглов и Ollama
+// Единое окно ГЛОБАЛЬНЫХ настроек с интеграцией моделей, тогглов сжатия/точности и Ollama
 
 "use client"
 
@@ -14,14 +14,15 @@ import {
   Save,
   Scan,
   Sparkles,
-  Type,
   Maximize2,
   WrapText,
   CircleDot,
   Bot,
   RefreshCw,
+  Cpu,
+  Layers,
 } from "lucide-react"
-import type { TitleSettings } from "@/lib/types"
+import type { TitleSettings, LamaPrecision } from "@/lib/types"
 import { MANGA_FONTS } from "@/lib/hotkeys"
 import { getGlobalSettings, updateGlobalSettings } from "@/lib/api/projects"
 import { checkOllamaConnection } from "@/lib/api/ollama"
@@ -44,16 +45,19 @@ export function SettingsModal({
   const [availableDetectors, setAvailableDetectors] = useState<Record<string, string>>({})
   const [availableCleaners, setAvailableCleaners] = useState<Record<string, string>>({})
 
-  // Тогглы
+  // Тогглы тайпсета
   const [autoOvalBubble, setAutoOvalBubble] = useState<boolean>(true)
   const [defaultPadding, setDefaultPadding] = useState<"safe" | "fit">("safe")
   const [defaultHyphenation, setDefaultHyphenation] = useState<boolean>(true)
 
-  // Параметры
+  // Тогглы клинера (LaMa)
+  const [lamaDownscale, setLamaDownscale] = useState<boolean>(false)
+  const [lamaPrecision, setLamaPrecision] = useState<LamaPrecision>("fp32")
+
+  // Параметры моделей и шрифтов
   const [detectorModel, setDetectorModel] = useState<string>("yolo_manga.pt")
   const [cleanModel, setCleanModel] = useState<string>("anime-manga-big-lama.pt")
   const [detectConf, setDetectConf] = useState<number>(0.25)
-  const [defaultFontSize, setDefaultFontSize] = useState<number>(14)
   const [fontBubble, setFontBubble] = useState<string>("v_CCFaceFront")
   const [fontThought, setFontThought] = useState<string>("v_CCFaceFront")
   const [fontSfx, setFontSfx] = useState<string>("v_Mighty Zeo 2.0")
@@ -99,11 +103,13 @@ export function SettingsModal({
           if (s.detector_model) setDetectorModel(s.detector_model)
           if (s.clean_model) setCleanModel(s.clean_model)
           if (s.detect_conf !== undefined) setDetectConf(s.detect_conf)
-          if (s.default_font_size !== undefined) setDefaultFontSize(s.default_font_size)
 
           if (s.auto_oval_bubble !== undefined) setAutoOvalBubble(Boolean(s.auto_oval_bubble))
           if (s.default_padding) setDefaultPadding(s.default_padding)
           if (s.default_hyphenation !== undefined) setDefaultHyphenation(Boolean(s.default_hyphenation))
+
+          if (s.lama_downscale !== undefined) setLamaDownscale(Boolean(s.lama_downscale))
+          if (s.lama_precision) setLamaPrecision(s.lama_precision as LamaPrecision)
 
           if (s.font_bubble) setFontBubble(s.font_bubble)
           if (s.font_thought) setFontThought(s.font_thought)
@@ -126,10 +132,11 @@ export function SettingsModal({
         detector_model: detectorModel,
         clean_model: cleanModel,
         detect_conf: detectConf,
-        default_font_size: defaultFontSize,
         auto_oval_bubble: autoOvalBubble,
         default_padding: defaultPadding,
         default_hyphenation: defaultHyphenation,
+        lama_downscale: lamaDownscale,
+        lama_precision: lamaPrecision,
         font_bubble: fontBubble,
         font_thought: fontThought,
         font_sfx: fontSfx,
@@ -157,7 +164,7 @@ export function SettingsModal({
       }}
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
     >
-      <div className="flex h-[640px] w-full max-w-2xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="flex h-[660px] w-full max-w-2xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
 
         {/* Шапка */}
         <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-6 py-4">
@@ -167,7 +174,7 @@ export function SettingsModal({
             </div>
             <div>
               <h3 className="text-sm font-semibold text-white">Глобальные настройки приложения</h3>
-              <p className="text-xs text-slate-400">Действуют для всех тайтлов, страниц и операций</p>
+              <p className="text-xs text-slate-400">Действуют для всех тайтлов и страниц</p>
             </div>
           </div>
 
@@ -222,6 +229,72 @@ export function SettingsModal({
           ) : activeTab === "toggles" ? (
             <div className="space-y-4">
 
+              {/* Тоггл: Сжатие перед клином */}
+              <div className="flex items-start justify-between rounded-xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700">
+                <div className="space-y-1 pr-4">
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-pink-400" />
+                    <label className="text-xs font-semibold text-slate-200">
+                      Сжатие картинок перед клином (Downscale)
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <strong>Выключено (по умолчанию):</strong> 100% оригинальное разрешение и чёткость. Скринтоны и арт не размываются.<br />
+                    <strong>Включено:</strong> сжимает огромные сканы (выше 2048px) перед отправкой в нейросеть для экономии VRAM.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setLamaDownscale(!lamaDownscale)}
+                  className={[
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none",
+                    lamaDownscale ? "bg-pink-600" : "bg-slate-800",
+                  ].join(" ")}
+                >
+                  <span
+                    className={[
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out",
+                      lamaDownscale ? "translate-x-5" : "translate-x-0",
+                    ].join(" ")}
+                  />
+                </button>
+              </div>
+
+              {/* Тоггл: Режим точности LaMa */}
+              <div className="flex items-start justify-between rounded-xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700">
+                <div className="space-y-1 pr-4">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="h-4 w-4 text-purple-400" />
+                    <label className="text-xs font-semibold text-slate-200">
+                      Режим вычислений нейросети LaMa (Precision)
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <strong>FP32 (стандарт):</strong> максимальная точность вычислений.<br />
+                    <strong>FP16 / BF16:</strong> снижает потребление видеопамяти в 2 раза, работает только на видеокартах с поддержкой полуточности.
+                  </p>
+                </div>
+
+                <div className="flex items-center rounded-lg border border-slate-800 bg-slate-900 p-1 shrink-0">
+                  {(["fp32", "fp16", "bf16"] as LamaPrecision[]).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setLamaPrecision(mode)}
+                      className={[
+                        "rounded px-2.5 py-1 text-xs font-semibold uppercase transition-colors",
+                        lamaPrecision === mode
+                          ? "bg-purple-600 text-white"
+                          : "text-slate-400 hover:text-slate-200",
+                      ].join(" ")}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Тоггл: Авто-овал для баблов речи */}
               <div className="flex items-start justify-between rounded-xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700">
                 <div className="space-y-1 pr-4">
@@ -232,8 +305,7 @@ export function SettingsModal({
                     </label>
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Все найденные или нарисованные баблы речи (класс 0) сразу получают овальную форму с оптическим центрированием текста.
-                    Мысли (класс 1) и надписи на арте (класс 2) остаются прямоугольными.
+                    Баблы речи (класс 0) при появлении перевода сразу получают овальную форму с оптическим центрированием текста.
                   </p>
                 </div>
 
@@ -408,47 +480,6 @@ export function SettingsModal({
                     <span className="w-12 text-center font-mono text-xs font-bold text-indigo-300 rounded bg-slate-900 px-2 py-1 border border-slate-800">
                       {detectConf.toFixed(2)}
                     </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Базовый размер шрифта */}
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-300">
-                      <Type className="h-3.5 w-3.5 text-indigo-400" />
-                      Базовый кегль шрифта
-                    </label>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      Стартовый размер при автоматической подгонке под бабл.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setDefaultFontSize((prev) => Math.max(8, prev - 1))}
-                      className="h-7 w-7 rounded bg-slate-800 text-xs font-bold text-slate-300 hover:bg-slate-700"
-                    >
-                      -
-                    </button>
-                    <input
-                      type="number"
-                      min={8}
-                      max={40}
-                      value={defaultFontSize}
-                      onChange={(e) => setDefaultFontSize(Math.max(8, Math.min(40, Number(e.target.value) || 14)))}
-                      className="h-7 w-14 rounded border border-slate-700 bg-slate-900 text-center font-mono text-xs font-bold text-indigo-300 focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setDefaultFontSize((prev) => Math.min(40, prev + 1))}
-                      className="h-7 w-7 rounded bg-slate-800 text-xs font-bold text-slate-300 hover:bg-slate-700"
-                    >
-                      +
-                    </button>
-                    <span className="text-xs text-slate-400 font-mono">px</span>
                   </div>
                 </div>
               </div>

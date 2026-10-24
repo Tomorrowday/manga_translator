@@ -17,7 +17,7 @@ from fastapi.responses import Response
 from database import get_db, db_session
 from schemas import SavePageBlocksRequest, SpotCleanRequest
 from schemas.blocks import BrushCleanRequest
-from services.cleaner import spot_clean_region, inpaint_by_brush_mask, load_image_cv2, release_vram
+from services.cleaner import spot_clean_region, inpaint_by_brush_mask, load_image_cv2, save_image_cv2, release_vram
 from services.page_service import (
     save_page_blocks_service,
     detect_page_bubbles_service,
@@ -194,9 +194,9 @@ async def save_page_blocks_endpoint(page_id: int, req: SavePageBlocksRequest):
 
 @router.post("/{page_id}/detect")
 async def detect_page_bubbles_by_id(
-    page_id: int,
-    conf: Optional[float] = Query(None),
-    auto_oval: Optional[bool] = Query(None)
+        page_id: int,
+        conf: Optional[float] = Query(None),
+        auto_oval: Optional[bool] = Query(None)
 ):
     try:
         boxes, new_status, elapsed = detect_page_bubbles_service(
@@ -264,8 +264,9 @@ async def spot_clean_page(page_id: int, req: SpotCleanRequest):
     if not page_row:
         raise HTTPException(status_code=404, detail="Страница не найдена")
 
-    orig_path = page_row["file_path"]
-    source_path = page_row["clean_path"] if page_row["clean_path"] and os.path.exists(page_row["clean_path"]) else orig_path
+    orig_path = str(page_row["file_path"])
+    source_path = str(page_row["clean_path"]) if page_row["clean_path"] and os.path.exists(
+        page_row["clean_path"]) else orig_path
 
     if not os.path.exists(source_path):
         raise HTTPException(status_code=404, detail="Исходный файл страницы не найден")
@@ -288,8 +289,9 @@ async def spot_clean_page(page_id: int, req: SpotCleanRequest):
 
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
     os.makedirs(clean_dir, exist_ok=True)
-    final_clean_path = os.path.join(clean_dir, f"{os.path.splitext(os.path.basename(orig_path))[0]}.png")
-    cv2.imwrite(final_clean_path, image)
+    final_clean_path = str(os.path.join(clean_dir, f"{os.path.splitext(os.path.basename(orig_path))[0]}.png"))
+
+    save_image_cv2(final_clean_path, image)
 
     new_status = "done" if page_row["status"] == "done" else "cleaned"
 
@@ -326,7 +328,8 @@ async def brush_clean_page(page_id: int, req: BrushCleanRequest):
         raise HTTPException(status_code=404, detail="Страница не найдена")
 
     orig_path = str(page_row["file_path"])
-    source_path = str(page_row["clean_path"]) if page_row["clean_path"] and os.path.exists(page_row["clean_path"]) else orig_path
+    source_path = str(page_row["clean_path"]) if page_row["clean_path"] and os.path.exists(
+        page_row["clean_path"]) else orig_path
 
     try:
         image = load_image_cv2(source_path)
@@ -356,8 +359,9 @@ async def brush_clean_page(page_id: int, req: BrushCleanRequest):
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
     os.makedirs(clean_dir, exist_ok=True)
     file_name = os.path.splitext(os.path.basename(orig_path))[0]
-    final_clean_path = os.path.join(clean_dir, f"{file_name}.png")
-    cv2.imwrite(final_clean_path, image)
+    final_clean_path = str(os.path.join(clean_dir, f"{file_name}.png"))
+
+    save_image_cv2(final_clean_path, image)
 
     new_status = "done" if page_row["status"] == "done" else "cleaned"
 

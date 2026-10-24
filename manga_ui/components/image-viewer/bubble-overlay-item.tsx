@@ -1,5 +1,5 @@
 // manga_ui/components/image-viewer/bubble-overlay-item.tsx
-// Рендеринг бабла на скане с React.memo, точным позиционированием и устранением сдвига слов при дабл-клике
+// Рендеринг бабла на скане: авто-овал при появлении русского перевода
 
 "use client"
 
@@ -86,7 +86,6 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const currentH = isEditingCurrent && activeBox ? activeBox.height : box.height
   const currentRot = isEditingCurrent && editType === "rotate" ? activeRotation : box.rotation || 0
 
-  // Расчет шрифтов и предпросмотра
   const naturalH = imgElement?.naturalHeight || 1600
   const naturalW = imgElement?.naturalWidth || 1100
   const displayH = imgElement?.clientHeight || naturalH
@@ -156,7 +155,6 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     e.stopPropagation()
     onSelect(box.id)
 
-    // Если в тексте не было ручных переносов \n, подставляем сформированные визуальные строки
     if (screenLines.length > 0 && !box.rusText?.includes("\n")) {
       setLocalText(screenLines.join("\n"))
     } else {
@@ -169,10 +167,16 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const commitInlineEdit = () => {
     setIsInlineEditing(false)
     if (localText !== box.rusText && onUpdate) {
-      onUpdate(box.id, {
+      const isSpeech = (box.class_id ?? 0) === 0
+      const hasText = localText.trim().length > 0
+      const patch: Partial<TextBlock> = {
         rusText: localText,
-        status: localText.trim() ? "translated" : box.japText ? "ocr-done" : "new",
-      })
+        status: hasText ? "translated" : box.japText ? "ocr-done" : "new",
+      }
+      if (isSpeech) {
+        patch.shape = hasText ? "ellipse" : "rect"
+      }
+      onUpdate(box.id, patch)
     }
   }
 

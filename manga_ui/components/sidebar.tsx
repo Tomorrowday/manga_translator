@@ -15,8 +15,7 @@ import {
   Loader2,
   PanelLeftClose,
   PanelLeftOpen,
-  BookMarked,
-  Sparkles,
+  BookOpen,
   RefreshCw,
 } from "lucide-react"
 import type { TitleProject, ProjectTree, PageItem, PageStatus, ChapterItem } from "@/lib/types"
@@ -39,6 +38,7 @@ interface SidebarProps {
   onSelectPage: (page: PageItem) => void
   onActiveChapterChange?: (pages: PageItem[]) => void
   onChapterDeleted?: (chapterId: number) => void
+  onTitleSelected?: (titleId: number, defaultFontSize?: number) => void
 }
 
 const STATUS_CONFIG: Record<PageStatus, { color: string; label: string }> = {
@@ -57,6 +57,7 @@ export function Sidebar({
   onSelectPage,
   onActiveChapterChange,
   onChapterDeleted,
+  onTitleSelected,
 }: SidebarProps) {
   const [isOpen, setIsOpen] = useState(true)
   const [projects, setProjects] = useState<TitleProject[]>([])
@@ -97,6 +98,7 @@ export function Sidebar({
     try {
       const tree = await getProjectTree(titleId)
       setProjectTree(tree)
+      onTitleSelected?.(titleId, tree.default_font_size)
       if (tree.chapters && tree.chapters.length > 0) {
         setExpandedChapters((prev) => (Object.keys(prev).length === 0 ? { [tree.chapters[0].id]: true } : prev))
       }
@@ -105,7 +107,7 @@ export function Sidebar({
     } finally {
       setLoadingTree(false)
     }
-  }, [])
+  }, [onTitleSelected])
 
   useEffect(() => {
     if (selectedTitleId) {
@@ -278,29 +280,18 @@ export function Sidebar({
         </div>
 
         {selectedTitleId && (
-          <div className="grid grid-cols-4 gap-1 pt-0.5">
+          <div className="grid grid-cols-3 gap-1 pt-0.5">
+            {/* Объединенная кнопка: Глоссарий + Синопсис */}
             <button
               onClick={() => {
                 setProjectModalTab("glossary")
                 setShowProjectModal(true)
               }}
               className="flex items-center justify-center gap-1 rounded border border-slate-800 bg-slate-900 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-              title="Глоссарий и персонажи"
+              title="Глоссарий, персонажи и синопсис тайтла"
             >
-              <BookMarked className="h-3 w-3 text-indigo-400" />
-              Глоссарий
-            </button>
-
-            <button
-              onClick={() => {
-                setProjectModalTab("synopsis")
-                setShowProjectModal(true)
-              }}
-              className="flex items-center justify-center gap-1 rounded border border-slate-800 bg-slate-900 py-1 text-[11px] font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-              title="Синопсис и стиль речи"
-            >
-              <Sparkles className="h-3 w-3 text-amber-400" />
-              Стиль
+              <BookOpen className="h-3.5 w-3.5 text-indigo-400" />
+              О тайтле
             </button>
 
             <button

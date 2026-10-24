@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-page-pipelines.ts
-// Пайплайны обработки страниц: детект строго учитывает тоггл auto_oval_bubble из настроек
+// Пайплайны обработки страниц с гарантированным Auto размером для баблов
 
 import { useState } from "react"
 import type { PageItem, PageStatus, TextBlock, TitleSettings } from "@/lib/types"
@@ -78,11 +78,10 @@ export function usePagePipelines({
 
     setIsDetecting(true)
     try {
-      const isAutoOvalEnabled = globalSettings.auto_oval_bubble ?? true
       const detectRes = await runPageAutoDetect(
         currentPage.id,
         globalSettings.detect_conf,
-        isAutoOvalEnabled
+        false
       )
       const boxes = detectRes.boxes || []
 
@@ -106,9 +105,6 @@ export function usePagePipelines({
       const newBlocks: TextBlock[] = []
       for (const box of boxes) {
         const { dataUrl } = await cropRegion(img, { ...box, rotation: 0 })
-        const isBubble = (box.class_id ?? 0) === 0
-        // Форма строго зависит от тоггла: если включен - овал, если выключен - rect
-        const resolvedShape = (isBubble && isAutoOvalEnabled) ? "ellipse" : (box.shape || "rect")
 
         newBlocks.push({
           id: box.id || crypto.randomUUID(),
@@ -122,9 +118,9 @@ export function usePagePipelines({
           japText: box.jap_text || "",
           rusText: "",
           orderIndex: box.order_index,
-          fontSize: box.font_size || globalSettings.default_font_size || 14,
+          fontSize: (box.font_size !== undefined && box.font_size !== null) ? box.font_size : undefined, // AUTO ПО УМОЛЧАНИЮ
           fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
-          shape: resolvedShape,
+          shape: "rect",
           paddingMode: box.padding_mode || globalSettings.default_padding || "safe",
           minHyphens: box.min_hyphens !== undefined ? box.min_hyphens : (globalSettings.default_hyphenation ?? true),
           status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
@@ -237,9 +233,16 @@ export function usePagePipelines({
         model: check.models.find((m) => m.includes("qwen") || m.includes("llama")) || check.models[0] || "qwen2.5:7b",
       })
 
+      const autoOval = globalSettings.auto_oval_bubble ?? true
       const updated = blocksToOcr.map((b) => {
         if (translations[b.id]) {
-          return { ...b, rusText: translations[b.id], status: "translated" as const }
+          const isBubble = (b.class_id ?? 0) === 0
+          return {
+            ...b,
+            rusText: translations[b.id],
+            shape: isBubble && autoOval ? "ellipse" : b.shape,
+            status: "translated" as const,
+          }
         }
         return b
       })
@@ -368,9 +371,16 @@ export function usePagePipelines({
             baseUrl: "http://localhost:11434",
             model: check.models[0] || "qwen2.5:7b",
           })
+          const autoOval = globalSettings.auto_oval_bubble ?? true
           currentBlocks = currentBlocks.map((b) => {
             if (translations[b.id]) {
-              return { ...b, rusText: translations[b.id], status: "translated" as const }
+              const isBubble = (b.class_id ?? 0) === 0
+              return {
+                ...b,
+                rusText: translations[b.id],
+                shape: isBubble && autoOval ? "ellipse" : b.shape,
+                status: "translated" as const,
+              }
             }
             return b
           })

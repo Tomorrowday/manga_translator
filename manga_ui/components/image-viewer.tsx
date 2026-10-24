@@ -1,5 +1,5 @@
 // manga_ui/components/image-viewer.tsx
-// Инструменты разметки баблов и интеграция кисти через useBrushTool с очисткой VRAM при выходе
+// Инструменты разметки баблов и просмотр скана (адаптивная ширина flex-1)
 
 "use client"
 
@@ -69,7 +69,6 @@ export function ImageViewer({
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState<DrawRect | null>(null)
 
-  // Очистка VRAM при выходе из режима Brush (переключение на Box, размонтирование или смена страницы)
   const prevToolRef = useRef(activeTool)
   useEffect(() => {
     if (prevToolRef.current === "brush" && activeTool !== "brush") {
@@ -148,8 +147,8 @@ export function ImageViewer({
   const boxes = draft ? [...textBlocks, { id: "__draft__", ...draft } as TextBlock] : textBlocks
 
   return (
-    <section className="flex min-h-0 w-full flex-col lg:w-3/5">
-      <header className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
+    <section className="flex min-h-0 flex-1 min-w-0 flex-col overflow-hidden">
+      <header className="flex items-center justify-between border-b border-slate-800 px-5 py-3 shrink-0">
         <div className="flex items-center gap-3">
           <div>
             <h2 className="text-sm font-semibold text-slate-100">
@@ -386,19 +385,19 @@ export function ImageViewer({
       </div>
 
       {imageSrc && (
-        <footer className="flex items-center justify-between border-t border-slate-800 px-5 py-2 text-xs text-slate-400 bg-slate-950/60">
-          <div className="flex items-center gap-2">
-            <MousePointerSquareDashed className="h-3.5 w-3.5 text-slate-500" />
+        <footer className="flex items-center justify-between border-t border-slate-800 px-5 py-2 text-xs text-slate-400 bg-slate-950/60 shrink-0">
+          <div className="flex items-center gap-2 truncate pr-2">
+            <MousePointerSquareDashed className="h-3.5 w-3.5 text-slate-500 shrink-0" />
             {activeTool === "brush" ? (
-              <span className="text-pink-300 font-medium">
+              <span className="text-pink-300 font-medium truncate">
                 Режим кисти: {brushMode.toUpperCase()} | Закрасьте область и отпустите мышь.
               </span>
             ) : (
-              <span>8 точек для размера. Двойной клик — редактирование текста.</span>
+              <span className="truncate">8 точек для размера. Двойной клик — редактирование текста.</span>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 shrink-0">
             {activeTool === "brush" ? (
               <>
                 <span className="text-slate-400">Размер кисти:</span>

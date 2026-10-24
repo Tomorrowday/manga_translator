@@ -14,6 +14,7 @@ from schemas import (
     UpdateTitleSettingsRequest,
 )
 from config import natural_sort_key, get_available_detectors, get_available_cleaners
+from ml.models import ml
 from logger import logger
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
@@ -39,7 +40,6 @@ async def get_global_settings_endpoint():
     conn.close()
 
     settings = dict(row) if row else {
-        "default_font_size": 14,
         "detector_model": "yolo_manga.pt",
         "clean_model": "anime-manga-big-lama.pt",
         "detect_conf": 0.25,
@@ -48,13 +48,21 @@ async def get_global_settings_endpoint():
         "default_hyphenation": 1,
         "font_bubble": "v_CCFaceFront",
         "font_thought": "v_CCFaceFront",
-        "font_sfx": "v_Mighty Zeo 2.0"
+        "font_sfx": "v_Mighty Zeo 2.0",
+        "lama_precision": "fp32",
+        "lama_downscale": 0,
     }
 
     settings["auto_oval_bubble"] = bool(settings.get("auto_oval_bubble", 1))
     settings["default_hyphenation"] = bool(settings.get("default_hyphenation", 1))
+    settings["lama_downscale"] = bool(settings.get("lama_downscale", 0))
+    settings["lama_precision"] = str(settings.get("lama_precision") or "fp32")
     settings["available_detectors"] = get_available_detectors()
     settings["available_cleaners"] = get_available_cleaners()
+
+    # Синхронизируем с менеджером моделей
+    ml.lama_precision = settings["lama_precision"]
+    ml.lama_downscale = settings["lama_downscale"]
 
     return {"success": True, "settings": settings}
 
@@ -62,7 +70,6 @@ async def get_global_settings_endpoint():
 @router.put("/global-settings")
 async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
     """Обновить глобальные настройки приложения."""
-    font_size = req.default_font_size if (req.default_font_size and 8 <= req.default_font_size <= 40) else 14
     detector = req.detector_model.strip() if req.detector_model else "yolo_manga.pt"
     cleaner = req.clean_model.strip() if req.clean_model else "anime-manga-big-lama.pt"
     conf = float(req.detect_conf) if req.detect_conf is not None else 0.25
@@ -72,17 +79,18 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
     font_b = req.font_bubble or "v_CCFaceFront"
     font_t = req.font_thought or "v_CCFaceFront"
     font_s = req.font_sfx or "v_Mighty Zeo 2.0"
+    precision = req.lama_precision if req.lama_precision in ["fp32", "fp16", "bf16"] else "fp32"
+    downscale = 1 if req.lama_downscale else 0
 
     with db_session() as cur:
         cur.execute(
             """
             INSERT INTO global_settings (
-                id, default_font_size, detector_model, clean_model, detect_conf,
+                id, detector_model, clean_model, detect_conf,
                 auto_oval_bubble, default_padding, default_hyphenation,
-                font_bubble, font_thought, font_sfx
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                font_bubble, font_thought, font_sfx, lama_precision, lama_downscale
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-                default_font_size = excluded.default_font_size,
                 detector_model = excluded.detector_model,
                 clean_model = excluded.clean_model,
                 detect_conf = excluded.detect_conf,
@@ -91,16 +99,21 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
                 default_hyphenation = excluded.default_hyphenation,
                 font_bubble = excluded.font_bubble,
                 font_thought = excluded.font_thought,
-                font_sfx = excluded.font_sfx
+                font_sfx = excluded.font_sfx,
+                lama_precision = excluded.lama_precision,
+                lama_downscale = excluded.lama_downscale
             """,
-            (font_size, detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s)
+            (detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s, precision, downscale)
         )
 
-    logger.info("Глобальные настройки приложения успешно обновлены.")
+    # Применяем на лету
+    ml.lama_precision = precision
+    ml.lama_downscale = bool(downscale)
+
+    logger.info(f"Глобальные настройки обновлены: точность={precision}, сжатие={bool(downscale)}.")
     return {
         "success": True,
         "settings": {
-            "default_font_size": font_size,
             "detector_model": detector,
             "clean_model": cleaner,
             "detect_conf": conf,
@@ -109,7 +122,9 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
             "default_hyphenation": bool(hyph),
             "font_bubble": font_b,
             "font_thought": font_t,
-            "font_sfx": font_s
+            "font_sfx": font_s,
+            "lama_precision": precision,
+            "lama_downscale": bool(downscale)
         }
     }
 
@@ -370,12 +385,18 @@ async def get_project_tree(title_id: int):
 
 @router.put("/{title_id}/settings")
 async def update_title_settings(title_id: int, req: UpdateTitleSettingsRequest):
-    """Обновить описание/синопсис тайтла."""
-    desc = req.description.strip() if req.description is not None else ""
+    """Обновить описание/синопсис и базовый размер шрифта тайтла."""
     with db_session() as cur:
-        cur.execute("UPDATE titles SET description = ? WHERE id = ?", (desc, title_id))
+        if req.description is not None:
+            cur.execute("UPDATE titles SET description = ? WHERE id = ?", (req.description.strip(), title_id))
+        if req.default_font_size is not None and 8 <= req.default_font_size <= 60:
+            cur.execute("UPDATE titles SET default_font_size = ? WHERE id = ?", (int(req.default_font_size), title_id))
 
-    return {"success": True, "description": desc}
+    return {
+        "success": True,
+        "description": req.description,
+        "default_font_size": req.default_font_size
+    }
 
 
 @router.get("/{title_id}/speakers")

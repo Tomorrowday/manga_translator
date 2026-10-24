@@ -14,8 +14,8 @@ class AddChapterRequest(BaseModel):
 
 
 class UpdateTitleSettingsRequest(BaseModel):
-    description: Optional[str] = ""
-    default_font_size: Optional[int] = 14
+    description: Optional[str] = None
+    default_font_size: Optional[int] = None
     detector_model: Optional[str] = "yolo_manga.pt"
     clean_model: Optional[str] = "anime-manga-big-lama.pt"
     detect_conf: Optional[float] = 0.25
@@ -25,6 +25,8 @@ class UpdateTitleSettingsRequest(BaseModel):
     font_bubble: Optional[str] = "v_CCFaceFront"
     font_thought: Optional[str] = "v_CCFaceFront"
     font_sfx: Optional[str] = "v_Mighty Zeo 2.0"
+    lama_precision: Optional[str] = "fp32"
+    lama_downscale: Optional[bool] = False
 
 
 class GlossaryItemCreate(BaseModel):
