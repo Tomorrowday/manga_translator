@@ -1,5 +1,5 @@
 # services/detector.py
-# Детекция речевых баблов и текста (YOLO), фильтрация и извлечение class_id
+# Детекция речевых баблов и текста (YOLO) с поддержкой порога уверенности (conf_threshold)
 
 from typing import List, Dict, Any, Tuple, Optional
 from collections import Counter
@@ -11,27 +11,7 @@ from ml.models import ml
 from logger import logger
 
 
-def manga_sort_key(box: Dict[str, Any]) -> tuple:
-    """
-    Устаревший ключ сортировки по жесткой сетке (оставлен для обратной совместимости).
-    Для основной сортировки используется sort_manga_reading_order().
-    """
-    row_height = 0.18
-    row_idx = int(box["y"] / row_height)
-    return row_idx, -box["x"]
-
-
 def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Внутрикадровая / внутриполосная двухфазная топологическая сортировка:
-    1. Поддерживает как вертикальные, так и диагональные сдвоенные баблы (например, 6->9 и 7->8).
-    2. При горизонтальном расширении яруса влево сверяет высоту с верхним опорным баблом правой колонки,
-       а не с нижней долькой сдвоенного бабла (исключает захват баблов из соседних колонок ниже).
-    3. Запрещает утягивание левого бабла нового ряда вверх (has_unassigned_right_peer), если справа
-       на его уровне высоты есть еще не распределенные баблы.
-    4. Внутри каждого яруса объединяет колонки и диагональные связки спикеров:
-       колонки сортируются СПРАВА НАЛЕВО, а внутри колонки/связки — СВЕРХУ ВНИЗ.
-    """
     if len(items) <= 1:
         return items
 
@@ -44,14 +24,8 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
         return ov / min(a["h"], b["h"])
 
     def is_connected_double(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
-        """
-        Проверяет, образуют ли два бабла физически соприкасающийся/пересекающийся сдвоенный бабл
-        (включая диагональные сдвоенные баблы, сдвинутые вниз и влево/вправо).
-        """
         x_gap = max(a["x1"], b["x1"]) - min(a["x2"], b["x2"])
         y_gap = max(a["y1"], b["y1"]) - min(a["y2"], b["y2"])
-        # Либо прямое 2D-пересечение боксов со значительным перекрытием по одной из осей,
-        # либо плотное вертикальное касание при наличии горизонтального перекрытия
         if x_gap <= 0.008 and y_overlap_ratio(a, b) >= 0.18 and x_overlap_ratio(a, b) >= 0.05:
             return True
         if y_gap <= 0.008 and x_overlap_ratio(a, b) >= 0.12:
@@ -65,10 +39,7 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
             or is_connected_double(a, b)
         )
 
-    # 1. Предварительная сортировка сверху вниз (при равном Y — справа налево)
     sorted_items = sorted(items, key=lambda it: (it["y1"], -it["cx"]))
-
-    # 2. Адаптивная кластеризация в горизонтальные ярусы (bands)
     bands: List[List[Dict[str, Any]]] = []
     assigned_ids = set()
 
@@ -80,22 +51,17 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
             right_items = [x for x in band if not is_same_col(it, x) and x["cx"] > it["cx"]]
 
             can_join = False
-
             if same_col:
                 lowest_col = max(same_col, key=lambda x: x["y2"])
                 v_gap = it["y1"] - lowest_col["y2"]
                 other_col_items = [x for x in band if x not in same_col]
                 band_min_y2 = min(x["y2"] for x in band)
 
-                # Сдвоенный бабл (вертикальный или диагональный)
                 is_touching_double_bubble = (
                     v_gap <= 0.008
                     or any(is_connected_double(it, sc) for sc in same_col)
                 )
 
-                # Проверка 1: Есть ли СПРАВА от `it` на его уровне высоты еще не распределенный бабл?
-                # Поскольку мы идем сверху вниз, любой еще не распределенный бабл справа на той же высоте
-                # означает, что `it` и `other_it` образуют новый нижний ряд, который должен начинаться справа!
                 has_unassigned_right_peer = any(
                     other_it is not it
                     and id(other_it) not in assigned_ids
@@ -106,7 +72,6 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
                     for other_it in sorted_items
                 )
 
-                # Проверка 2: Образует ли `it` параллельный новый ряд с другими колонками снизу?
                 has_parallel_next_row = bool(other_col_items) and any(
                     other_it is not it
                     and id(other_it) not in assigned_ids
@@ -128,21 +93,16 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
                     can_join = True
             else:
                 if not left_items:
-                    # Случай А: Новый бабл ЛЕВЕЕ всех текущих баблов яруса.
-                    # Сравниваем его с ВЕРХНИМ (опорным) баблом ближайшей правой колонки,
-                    # чтобы нижний хвост сдвоенного бабла (например, 5 в 4+5) не затягивал далекие нижние баблы слева.
                     nearest_right = min(right_items, key=lambda x: x["cx"] - it["cx"]) if right_items else band[0]
                     nr_col = [x for x in band if is_same_col(x, nearest_right)]
                     anchor_right = min(nr_col, key=lambda x: x["y1"]) if nr_col else nearest_right
 
-                    # Опорные (верхние) элементы всех колонок яруса
                     top_anchors = [
                         min([y for y in band if is_same_col(y, x)], key=lambda z: z["y1"])
                         for x in band
                     ]
                     core_cy = sum(a["cy"] for a in top_anchors) / len(top_anchors)
 
-                    # Также проверяем, нет ли справа под текущим ярусом нераспределенного бабла, с которым `it` выровнен сильнее
                     better_unassigned_right = any(
                         other_it is not it
                         and id(other_it) not in assigned_ids
@@ -158,7 +118,6 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
                     ):
                         can_join = True
                 else:
-                    # Случай Б: В ярусе уже есть баблы ЛЕВЕЕ текущего (новый бабл ниже и правее).
                     min_left_ov = min(y_overlap_ratio(it, lx) for lx in left_items)
                     max_cy_diff = max(abs(it["cy"] - lx["cy"]) for lx in left_items)
                     bridged_by_right = (
@@ -179,9 +138,6 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
             bands.append([it])
             assigned_ids.add(id(it))
 
-    # 3. Внутри каждого яруса группируем баблы в вертикальные колонки / связки спикеров:
-    #    - Колонки сортируются СПРАВА НАЛЕВО (по координате X верхнего опорного бабла колонки)
-    #    - Внутри каждой колонки баблы сортируются СВЕРХУ ВНИЗ
     ordered_items: List[Dict[str, Any]] = []
     for band in bands:
         band_by_x = sorted(band, key=lambda x: (-x["cx"], x["y1"]))
@@ -197,7 +153,6 @@ def _sort_region_reading_order(items: List[Dict[str, Any]]) -> List[Dict[str, An
             if not placed_col:
                 columns.append([it])
 
-        # Сортируем колонки справа налево по среднему X (с приоритетом верхнего элемента связки)
         columns.sort(key=lambda col: -(min(col, key=lambda z: z["y1"])["cx"] * 0.6 + (sum(c["cx"] for c in col) / len(col)) * 0.4))
 
         for col in columns:
@@ -216,12 +171,6 @@ def _find_best_gutter_cut(
     rx2: int,
     axis: str,
 ) -> Optional[int]:
-    """
-    Ищет сквозную белую межкадровую канавку (gutter) вдоль оси ('h' или 'v'):
-    - Устойчив к баблам, чьи края слегка выступают за рамку кадра в межкадровую канавку:
-      запрещает резать только ядро каждого бабла (22%..78%) и зоны пересечения сдвоенных баблов,
-      а при оценке белизны канавки маскирует выступающие за рамку верхушки/хвосты одиночных баблов.
-    """
     img_h, img_w = gray_img.shape[:2]
     if ry2 - ry1 < 40 or rx2 - rx1 < 40 or len(items) < 2:
         return None
@@ -246,8 +195,6 @@ def _find_best_gutter_cut(
         if max_c - min_c < 10:
             return None
 
-        # 1. Защищаем ядро каждого бабла (22%..78% высоты), чтобы никогда не разрезать бабл пополам,
-        #    но позволить канавке пройти, если край бабла (до 22%) торчит за рамку кадра в белую канавку.
         forbidden = np.zeros(img_h, dtype=bool)
         for it in items:
             core_y1 = int((it["y1"] + it["h"] * 0.22) * img_h)
@@ -255,7 +202,6 @@ def _find_best_gutter_cut(
             if core_y2 > core_y1:
                 forbidden[max(0, core_y1):min(img_h, core_y2)] = True
 
-        # 2. Дополнительно защищаем зоны пересечения/касания сдвоенных баблов, чтобы не разрезать их связку
         for i, a in enumerate(items):
             for b in items[i + 1:]:
                 x_ov = max(0.0, min(a["x2"], b["x2"]) - max(a["x1"], b["x1"])) / min(a["w"], b["w"])
@@ -265,8 +211,6 @@ def _find_best_gutter_cut(
                     join_y2 = int(max(a["cy"], b["cy"]) * img_h)
                     forbidden[max(0, join_y1):min(img_h, join_y2)] = True
 
-        # 3. Копируем полосу изображения и маскируем (делаем белыми) выступающие края баблов вне их ядер,
-        #    чтобы один торчащий в канавку бабл (как #3 на скрине 3 или #6 на скрине 1) не портил детекцию белой канавки.
         roi_strip = gray_img[min_c:max_c + 1, content_x1:content_x2].copy()
         if roi_strip.size == 0:
             return None
@@ -276,7 +220,6 @@ def _find_best_gutter_cut(
             bx2 = min(content_x2 - content_x1, int(it["x2"] * img_w) - content_x1 + 3)
             if bx2 <= bx1:
                 continue
-            # Верхняя и нижняя выступающие кромки (0..22% и 78..100%)
             top_tip_y1 = max(min_c, int(it["y1"] * img_h) - 2) - min_c
             top_tip_y2 = min(max_c + 1, int((it["y1"] + it["h"] * 0.22) * img_h)) - min_c
             if top_tip_y2 > top_tip_y1:
@@ -325,7 +268,7 @@ def _find_best_gutter_cut(
 
         return best_cut
 
-    else:  # axis == 'v'
+    else:
         min_c = int(min(it["cx"] for it in items) * img_w) + 2
         max_c = int(max(it["cx"] for it in items) * img_w) - 2
         if max_c - min_c < 10:
@@ -338,7 +281,6 @@ def _find_best_gutter_cut(
             if core_x2 > core_x1:
                 forbidden[max(0, core_x1):min(img_w, core_x2)] = True
 
-        # Защищаем горизонтально пересекающиеся сдвоенные баблы (например, 4 и 5 на скрине 4 или 6 и 9 на скрине 2)
         for i, a in enumerate(items):
             for b in items[i + 1:]:
                 y_ov = max(0.0, min(a["y2"], b["y2"]) - max(a["y1"], b["y1"])) / min(a["h"], b["h"])
@@ -363,7 +305,7 @@ def _find_best_gutter_cut(
                 roi_strip[by1:by2, left_tip_x1:left_tip_x2] = 255
 
             right_tip_x1 = max(min_c, int((it["x2"] - it["w"] * 0.22) * img_w)) - min_c
-            right_tip_x2 = min(max_c + 1, int(it["x2"] * img_w) + 2) - min_c
+            right_tip_x2 = min(max_c + 1, int(it["x2"] * img_h) + 2) - min_c
             if right_tip_x2 > right_tip_x1:
                 roi_strip[by1:by2, right_tip_x1:right_tip_x2] = 255
 
@@ -415,18 +357,11 @@ def _partition_and_sort_xy(
     rx2: int,
     depth: int = 0,
 ) -> List[Dict[str, Any]]:
-    """
-    Рекурсивное разбиение страницы по межкадровым канавкам (Recursive XY-Cut):
-    1. Если есть сквозная горизонтальная канавка (H-Cut) -> читаем Верхнюю часть, затем Нижнюю.
-    2. Иначе если есть сквозная вертикальная канавка (V-Cut) -> читаем Правую часть, затем Левую.
-    3. Внутри каждого неделимого кадра — _sort_region_reading_order().
-    """
     if len(items) <= 1 or depth >= 6:
         return items
 
     img_h, img_w = gray_img.shape[:2]
 
-    # Шаг 1. Пробуем горизонтальный разрез (H-Cut: сверху вниз)
     cut_y = _find_best_gutter_cut(gray_img, items, ry1, ry2, rx1, rx2, axis="h")
     if cut_y is not None:
         top_items = [it for it in items if it["cy"] * img_h < cut_y]
@@ -437,7 +372,6 @@ def _partition_and_sort_xy(
                 + _partition_and_sort_xy(gray_img, bot_items, cut_y, ry2, rx1, rx2, depth + 1)
             )
 
-    # Шаг 2. Пробуем вертикальный разрез (V-Cut: справа налево)
     cut_x = _find_best_gutter_cut(gray_img, items, ry1, ry2, rx1, rx2, axis="v")
     if cut_x is not None:
         right_items = [it for it in items if it["cx"] * img_w >= cut_x]
@@ -448,7 +382,6 @@ def _partition_and_sort_xy(
                 + _partition_and_sort_xy(gray_img, left_items, ry1, ry2, rx1, cut_x, depth + 1)
             )
 
-    # Шаг 3. Листовой регион (отдельный кадр или бесшовная область) — сортируем топологически
     return _sort_region_reading_order(items)
 
 
@@ -456,13 +389,6 @@ def sort_manga_reading_order(
     boxes: List[Dict[str, Any]],
     gray_img: Optional[np.ndarray] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Гибридная топологическая сортировка бабблов манги:
-    - Если передан `gray_img`, сначала разделяет страницу по сквозным межкадровым канавкам (XY-Cut)
-      с маскированием выступающих за рамку краев баблов.
-    - Внутри каждого кадра выполняет двухфазную ряд-колоночную сортировку с поддержкой
-      вертикальных и диагональных сдвоенных баблов.
-    """
     if len(boxes) <= 1:
         for i, b in enumerate(boxes):
             b["order_index"] = i + 1
@@ -507,11 +433,6 @@ def expand_box_to_bubble(
     orig_y2: int,
     other_boxes: List[Tuple[int, int, int, int]] = None
 ) -> Tuple[int, int, int, int]:
-    """
-    Деликатное лучевое расширение:
-    Мягко раздвигает бокс в стороны до черных стенок бабла.
-    ГАРАНТИЯ: Итоговый бокс НИКОГДА не может стать уже или меньше исходного бокса от нейросети.
-    """
     try:
         img_h, img_w = gray_img.shape[:2]
 
@@ -559,7 +480,6 @@ def expand_box_to_bubble(
         if x_slice_end <= x_slice_start:
             x_slice_start, x_slice_end = x1, x2
 
-        # 1. ЛУЧ ВЛЕВО
         left_expand = 0
         for dx in range(1, max_expand_x + 1):
             cur_x = x1 - dx
@@ -570,7 +490,6 @@ def expand_box_to_bubble(
                 break
             left_expand = dx
 
-        # 2. ЛУЧ ВПРАВО
         right_expand = 0
         for dx in range(1, max_expand_x + 1):
             cur_x = x2 + dx
@@ -581,7 +500,6 @@ def expand_box_to_bubble(
                 break
             right_expand = dx
 
-        # 3. ЛУЧ ВВЕРХ
         top_expand = 0
         for dy in range(1, max_expand_y + 1):
             cur_y = y1 - dy
@@ -592,7 +510,6 @@ def expand_box_to_bubble(
                 break
             top_expand = dy
 
-        # 4. ЛУЧ ВНИЗ
         bottom_expand = 0
         for dy in range(1, max_expand_y + 1):
             cur_y = y2 + dy
@@ -622,19 +539,26 @@ def expand_box_to_bubble(
         return orig_x1, orig_y1, orig_x2, orig_y2
 
 
-def detect_and_filter_bubbles(image: Image.Image, model_name: str = "yolo_manga.pt") -> List[Dict[str, Any]]:
+def detect_and_filter_bubbles(
+    image: Image.Image,
+    model_name: str = "yolo_manga.pt",
+    conf_threshold: float = 0.25
+) -> List[Dict[str, Any]]:
+    """Детекция объектов с учётом порога confidence (по умолчанию 0.25)."""
     yolo = ml.get_yolo(model_name)
     if yolo is None:
         raise RuntimeError(f"Модель YOLO ({model_name}) не загружена")
 
-    # Диагностика классов в консоли
     model_classes = getattr(yolo, "names", {})
-    logger.info(f"[YOLO Детектор] Запуск модели '{model_name}'. Зарегистрированные классы модели: {model_classes}")
+    logger.info(
+        f"[YOLO Детектор] Запуск '{model_name}' с порогом conf={conf_threshold}. "
+        f"Классы: {model_classes}"
+    )
 
     img_width, img_height = image.size
 
     with torch.inference_mode():
-        results = yolo.predict(image, conf=0.25, verbose=False)
+        results = yolo.predict(image, conf=conf_threshold, verbose=False)
         raw_items = []
         for box in results[0].boxes:
             xyxy = box.xyxy[0].tolist()
@@ -643,7 +567,6 @@ def detect_and_filter_bubbles(image: Image.Image, model_name: str = "yolo_manga.
 
     del results
 
-    # Фильтр: исключаем дублирующие внешние рамки
     filtered_items: List[Tuple[List[float], int]] = []
     for i, (box_a, cls_a) in enumerate(raw_items):
         x1_a, y1_a, x2_a, y2_a = box_a
@@ -681,7 +604,7 @@ def detect_and_filter_bubbles(image: Image.Image, model_name: str = "yolo_manga.
     for idx, (ix1, iy1, ix2, iy2, cls_id) in enumerate(int_boxes):
         other_boxes = [b for j, b in enumerate(plain_coords) if j != idx]
 
-        # Для обычных баблов и мыслей расширяем к контурам, для SFX/текста оставляем точный бокс
+        # Для баблов и мыслей расширяем к контурам, для SFX оставляем точный бокс
         if cls_id in (0, 1):
             ex1, ey1, ex2, ey2 = expand_box_to_bubble(gray_img, ix1, iy1, ix2, iy2, other_boxes)
         else:
@@ -702,9 +625,8 @@ def detect_and_filter_bubbles(image: Image.Image, model_name: str = "yolo_manga.
 
     boxes = sort_manga_reading_order(boxes, gray_img=gray_img)
 
-    # Лог распределения найденных классов
     counts = Counter(b["class_id"] for b in boxes)
     readable_counts = {model_classes.get(cid, f"Класс {cid}"): count for cid, count in counts.items()}
-    logger.info(f"[YOLO Детектор] Найдено объектов: {len(boxes)}. Распределение по классам: {readable_counts}")
+    logger.info(f"[YOLO Детектор] Найдено объектов: {len(boxes)}. Распределение: {readable_counts}")
 
     return boxes

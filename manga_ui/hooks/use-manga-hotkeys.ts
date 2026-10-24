@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-manga-hotkeys.ts
-// ГЛОБАЛЬНЫЙ СЛУШАТЕЛЬ ХОТКЕЕВ И РЕАКТИВНЫЙ ХУК КОНФИГУРАЦИИ
+// Глобальный слушатель хоткеев с поддержкой смены типов баблов, тайпсета и операций главы
 
 import { useEffect, useState, useCallback } from "react"
 import type { TextBlock } from "@/lib/types"
@@ -54,11 +54,18 @@ interface UseMangaHotkeysProps {
   onNextPage: () => void
   onSave: () => void
   onToggleViewMode?: () => void
+  onToggleTypeset?: () => void
+  onSetClass?: (classId: number) => void
   onDeleteBlock: (id: string) => void
   onMoveBlock: (id: string, direction: "up" | "down") => void
   onUpdateBlock: (id: string, patch: Partial<TextBlock>) => void
   onSpotClean?: (block: TextBlock, method: "auto" | "lama" | "white", deleteAfter?: boolean) => Promise<void>
   onBrushResize?: (delta: number) => void
+  onChapterDetectAll?: () => void
+  onChapterCleanAll?: () => void
+  onChapterExportAll?: () => void
+  onChapterExportJson?: () => void
+  onChapterImportJson?: () => void
 }
 
 export function useMangaHotkeys({
@@ -69,17 +76,23 @@ export function useMangaHotkeys({
   onNextPage,
   onSave,
   onToggleViewMode,
+  onToggleTypeset,
+  onSetClass,
   onDeleteBlock,
   onMoveBlock,
   onUpdateBlock,
   onSpotClean,
   onBrushResize,
+  onChapterDetectAll,
+  onChapterCleanAll,
+  onChapterExportAll,
+  onChapterExportJson,
+  onChapterImportJson,
 }: UseMangaHotkeysProps) {
   const { hotkeys } = useHotkeysConfig()
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Игнорируем нажатия внутри форм и полей ввода
       const target = e.target as HTMLElement | null
       if (
         target instanceof HTMLTextAreaElement ||
@@ -90,7 +103,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 1. Навигация по страницам: Q / E (с поддержкой PageUp / PageDown)
+      // 1. Навигация по страницам
       if (matchHotkey(e, hotkeys.prevPage) || e.code === "PageUp" || (e.altKey && e.code === "ArrowLeft")) {
         e.preventDefault()
         onPrevPage()
@@ -102,14 +115,14 @@ export function useMangaHotkeys({
         return
       }
 
-      // 2. Сохранение страницы (Ctrl+S / Cmd+S)
+      // 2. Сохранение страницы
       if (matchHotkey(e, hotkeys.savePage)) {
         e.preventDefault()
         onSave()
         return
       }
 
-      // 3. Переключение режима скана (Tab: Original / Clean)
+      // 3. Переключение режима скана (Tab)
       if (matchHotkey(e, hotkeys.toggleViewMode)) {
         if (onToggleViewMode) {
           e.preventDefault()
@@ -118,7 +131,43 @@ export function useMangaHotkeys({
         }
       }
 
-      // 4. Управление размером кисти стрелками (↑/↓)
+      // 4. Включение / выключение тайпсета (T)
+      if (matchHotkey(e, hotkeys.toggleTypeset)) {
+        if (onToggleTypeset) {
+          e.preventDefault()
+          onToggleTypeset()
+          return
+        }
+      }
+
+      // 5. Действия с главой
+      if (matchHotkey(e, hotkeys.chapterDetectAll)) {
+        e.preventDefault()
+        onChapterDetectAll?.()
+        return
+      }
+      if (matchHotkey(e, hotkeys.chapterCleanAll)) {
+        e.preventDefault()
+        onChapterCleanAll?.()
+        return
+      }
+      if (matchHotkey(e, hotkeys.chapterExportAll)) {
+        e.preventDefault()
+        onChapterExportAll?.()
+        return
+      }
+      if (matchHotkey(e, hotkeys.chapterExportJson)) {
+        e.preventDefault()
+        onChapterExportJson?.()
+        return
+      }
+      if (matchHotkey(e, hotkeys.chapterImportJson)) {
+        e.preventDefault()
+        onChapterImportJson?.()
+        return
+      }
+
+      // 6. Размер кисти (Стрелки вверх/вниз)
       if (matchHotkey(e, hotkeys.brushSizeUp)) {
         if (onBrushResize) {
           e.preventDefault()
@@ -134,12 +183,29 @@ export function useMangaHotkeys({
         }
       }
 
-      // Все последующие действия требуют активного выбранного бабла
+      // Все следующие хоткеи требуют выделенного бабла
       if (!selectedId) return
       const activeBlock = textBlocks.find((b) => b.id === selectedId)
       if (!activeBlock) return
 
-      // 5. Быстрый выбор шрифтов по цифрам 1..7
+      // 7. Смена типа бабла (C = Речь, V = Мысли, G = Текст/SFX)
+      if (matchHotkey(e, hotkeys.setClassBubble)) {
+        e.preventDefault()
+        onSetClass?.(0)
+        return
+      }
+      if (matchHotkey(e, hotkeys.setClassThought)) {
+        e.preventDefault()
+        onSetClass?.(1)
+        return
+      }
+      if (matchHotkey(e, hotkeys.setClassSfx)) {
+        e.preventDefault()
+        onSetClass?.(2)
+        return
+      }
+
+      // 8. Выбор шрифтов 1..7
       for (const font of MANGA_FONTS) {
         const actionKey = `font${font.index}` as HotkeyActionId
         const binding = hotkeys[actionKey]
@@ -150,7 +216,7 @@ export function useMangaHotkeys({
         }
       }
 
-      // 6. Точечный клин (Spot Clean)
+      // 9. Точечный клин
       if (matchHotkey(e, hotkeys.spotWhiteDel)) {
         e.preventDefault()
         onSpotClean?.(activeBlock, "white", true)
@@ -172,14 +238,14 @@ export function useMangaHotkeys({
         return
       }
 
-      // 7. Удаление бабла
+      // 10. Удаление бабла
       if (matchHotkey(e, hotkeys.deleteBlock)) {
         e.preventDefault()
         onDeleteBlock(selectedId)
         return
       }
 
-      // 8. Перемещение бабла в порядке чтения: A (выше) / D (ниже)
+      // 11. Порядок чтения
       if (matchHotkey(e, hotkeys.moveOrderUp)) {
         e.preventDefault()
         onMoveBlock(selectedId, "up")
@@ -191,7 +257,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 9. Размер шрифта (- / +)
+      // 12. Размер шрифта
       const currentEffectiveFont = activeBlock.fontSize ?? defaultFontSize
       if (matchHotkey(e, hotkeys.fontSizeDown)) {
         e.preventDefault()
@@ -204,35 +270,27 @@ export function useMangaHotkeys({
         return
       }
 
-      // 10. Форма бабла (R: Овал / Прямоугольник)
+      // 13. Геометрия и стили
       if (matchHotkey(e, hotkeys.toggleShape)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { shape: activeBlock.shape === "ellipse" ? "rect" : "ellipse" })
         return
       }
-
-      // 11. Обводка текста (S)
       if (matchHotkey(e, hotkeys.toggleStroke)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { hasStroke: !activeBlock.hasStroke })
         return
       }
-
-      // 12. Режим отступа (F: Fit / Safe)
       if (matchHotkey(e, hotkeys.togglePadding)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { paddingMode: activeBlock.paddingMode === "fit" ? "safe" : "fit" })
         return
       }
-
-      // 13. Режим переносов (H: Min Hyphens / Normal)
       if (matchHotkey(e, hotkeys.toggleHyphenation)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { minHyphens: !(activeBlock.minHyphens !== false) })
         return
       }
-
-      // 14. Стили текста (B, I, U)
       if (matchHotkey(e, hotkeys.toggleBold)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { isBold: !activeBlock.isBold })
@@ -261,10 +319,17 @@ export function useMangaHotkeys({
     onNextPage,
     onSave,
     onToggleViewMode,
+    onToggleTypeset,
+    onSetClass,
     onDeleteBlock,
     onMoveBlock,
     onUpdateBlock,
     onSpotClean,
     onBrushResize,
+    onChapterDetectAll,
+    onChapterCleanAll,
+    onChapterExportAll,
+    onChapterExportJson,
+    onChapterImportJson,
   ])
 }

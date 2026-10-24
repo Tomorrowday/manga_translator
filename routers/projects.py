@@ -13,7 +13,7 @@ from schemas import (
     GlossaryItemCreate,
     UpdateTitleSettingsRequest,
 )
-from config import natural_sort_key, get_available_detectors
+from config import natural_sort_key, get_available_detectors, get_available_cleaners
 from logger import logger
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
@@ -24,6 +24,99 @@ EXCLUDED_DIR_NAMES = {
     "raw", ".git", ".idea", "__pycache__", "logs"
 }
 
+
+# =====================================================================
+# ГЛОБАЛЬНЫЕ НАСТРОЙКИ ПРИЛОЖЕНИЯ
+# =====================================================================
+
+@router.get("/global-settings")
+async def get_global_settings_endpoint():
+    """Получить глобальные настройки приложения."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM global_settings WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+
+    settings = dict(row) if row else {
+        "default_font_size": 14,
+        "detector_model": "yolo_manga.pt",
+        "clean_model": "anime-manga-big-lama.pt",
+        "detect_conf": 0.25,
+        "auto_oval_bubble": 1,
+        "default_padding": "safe",
+        "default_hyphenation": 1,
+        "font_bubble": "v_CCFaceFront",
+        "font_thought": "v_CCFaceFront",
+        "font_sfx": "v_Mighty Zeo 2.0"
+    }
+
+    settings["auto_oval_bubble"] = bool(settings.get("auto_oval_bubble", 1))
+    settings["default_hyphenation"] = bool(settings.get("default_hyphenation", 1))
+    settings["available_detectors"] = get_available_detectors()
+    settings["available_cleaners"] = get_available_cleaners()
+
+    return {"success": True, "settings": settings}
+
+
+@router.put("/global-settings")
+async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
+    """Обновить глобальные настройки приложения."""
+    font_size = req.default_font_size if (req.default_font_size and 8 <= req.default_font_size <= 40) else 14
+    detector = req.detector_model.strip() if req.detector_model else "yolo_manga.pt"
+    cleaner = req.clean_model.strip() if req.clean_model else "anime-manga-big-lama.pt"
+    conf = float(req.detect_conf) if req.detect_conf is not None else 0.25
+    auto_oval = 1 if req.auto_oval_bubble else 0
+    padding = req.default_padding if req.default_padding in ["safe", "fit"] else "safe"
+    hyph = 1 if req.default_hyphenation else 0
+    font_b = req.font_bubble or "v_CCFaceFront"
+    font_t = req.font_thought or "v_CCFaceFront"
+    font_s = req.font_sfx or "v_Mighty Zeo 2.0"
+
+    with db_session() as cur:
+        cur.execute(
+            """
+            INSERT INTO global_settings (
+                id, default_font_size, detector_model, clean_model, detect_conf,
+                auto_oval_bubble, default_padding, default_hyphenation,
+                font_bubble, font_thought, font_sfx
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                default_font_size = excluded.default_font_size,
+                detector_model = excluded.detector_model,
+                clean_model = excluded.clean_model,
+                detect_conf = excluded.detect_conf,
+                auto_oval_bubble = excluded.auto_oval_bubble,
+                default_padding = excluded.default_padding,
+                default_hyphenation = excluded.default_hyphenation,
+                font_bubble = excluded.font_bubble,
+                font_thought = excluded.font_thought,
+                font_sfx = excluded.font_sfx
+            """,
+            (font_size, detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s)
+        )
+
+    logger.info("Глобальные настройки приложения успешно обновлены.")
+    return {
+        "success": True,
+        "settings": {
+            "default_font_size": font_size,
+            "detector_model": detector,
+            "clean_model": cleaner,
+            "detect_conf": conf,
+            "auto_oval_bubble": bool(auto_oval),
+            "default_padding": padding,
+            "default_hyphenation": bool(hyph),
+            "font_bubble": font_b,
+            "font_thought": font_t,
+            "font_sfx": font_s
+        }
+    }
+
+
+# =====================================================================
+# СКАНИРОВАНИЕ И УПРАВЛЕНИЕ ТАЙТЛАМИ
+# =====================================================================
 
 def _scan_and_insert_chapters(
     cur: sqlite3.Cursor,
@@ -118,13 +211,11 @@ async def scan_project(req: ScanProjectRequest):
     if not folder.exists() or not folder.is_dir():
         return {"success": False, "error": "Папка не найдена или путь указан неверно"}
 
-    default_detector = next(iter(get_available_detectors().keys()), "yolo_manga.pt")
-
     try:
         with db_session() as cursor:
             cursor.execute(
-                "INSERT INTO titles (name, folder_path, default_font_size, detector_model) VALUES (?, ?, 14, ?)",
-                (req.name, str(folder), default_detector)
+                "INSERT INTO titles (name, folder_path, default_font_size) VALUES (?, ?, 14)",
+                (req.name, str(folder))
             )
             title_id = cursor.lastrowid
 
@@ -153,9 +244,7 @@ async def rescan_project(title_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Тайтл не найден")
 
-    title_name = title_row["name"]
     folder = Path(title_row["folder_path"])
-
     if not folder.exists() or not folder.is_dir():
         conn.close()
         raise HTTPException(status_code=400, detail=f"Корневая папка тайтла не найдена: {folder}")
@@ -164,16 +253,8 @@ async def rescan_project(title_id: int):
     existing_rows = cursor.fetchall()
     conn.close()
 
-    existing_folders = {
-        os.path.normpath(r["folder_path"]).lower()
-        for r in existing_rows
-        if r["folder_path"]
-    }
-    existing_names = {
-        r["chapter_number"].strip().lower()
-        for r in existing_rows
-        if r["chapter_number"]
-    }
+    existing_folders = {os.path.normpath(r["folder_path"]).lower() for r in existing_rows if r["folder_path"]}
+    existing_names = {r["chapter_number"].strip().lower() for r in existing_rows if r["chapter_number"]}
 
     try:
         with db_session() as cur:
@@ -186,13 +267,9 @@ async def rescan_project(title_id: int):
                 existing_names=existing_names
             )
 
-        logger.info(
-            f"Рескан тайтла '{title_name}' (ID {title_id}): "
-            f"добавлено глав: {added_chapters}, страниц: {added_pages}, пропущено существующих: {skipped_chapters}"
-        )
         return {
             "success": True,
-            "message": f"Скан завершён. Добавлено новых глав: {added_chapters} (страниц: {added_pages}). Пропущено: {skipped_chapters}.",
+            "message": f"Скан завершён. Добавлено: {added_chapters} глав. Пропущено: {skipped_chapters}.",
             "added_chapters": added_chapters,
             "added_pages": added_pages,
             "skipped_chapters": skipped_chapters,
@@ -228,12 +305,8 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
             )
 
         if added_chapters == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="В указанной папке не найдено изображений (.jpg, .png, .webp, .jfif, .avif)"
-            )
+            raise HTTPException(status_code=400, detail="В папке не найдено изображений")
 
-        logger.info(f"В тайтл '{title_row['name']}' (ID {title_id}) добавлено глав: {added_chapters}, страниц: {added_pages}")
         return {
             "success": True,
             "message": f"Добавлено глав: {added_chapters}, страниц: {added_pages}",
@@ -251,9 +324,7 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
 async def get_projects():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, name, folder_path, description, default_font_size, detector_model, created_at FROM titles ORDER BY created_at DESC"
-    )
+    cursor.execute("SELECT * FROM titles ORDER BY created_at DESC")
     projects = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return {"success": True, "projects": projects}
@@ -261,8 +332,12 @@ async def get_projects():
 
 @router.get("/detectors")
 async def get_available_detectors_endpoint():
-    """Возвращает список доступных для выбора моделей детектора."""
     return {"success": True, "detectors": get_available_detectors()}
+
+
+@router.get("/cleaners")
+async def get_available_cleaners_endpoint():
+    return {"success": True, "cleaners": get_available_cleaners()}
 
 
 @router.get("/{title_id}/tree")
@@ -270,20 +345,13 @@ async def get_project_tree(title_id: int):
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT id, name, folder_path, description, default_font_size, detector_model, created_at FROM titles WHERE id = ?",
-        (title_id,)
-    )
+    cursor.execute("SELECT * FROM titles WHERE id = ?", (title_id,))
     title_row = cursor.fetchone()
     if not title_row:
         conn.close()
         return {"success": False, "error": "Тайтл не найден"}
 
     title = dict(title_row)
-    if title.get("default_font_size") is None:
-        title["default_font_size"] = 14
-    if not title.get("detector_model"):
-        title["detector_model"] = "yolo_manga.pt"
 
     cursor.execute("SELECT * FROM chapters WHERE title_id = ?", (title_id,))
     chapters = [dict(row) for row in cursor.fetchall()]
@@ -295,28 +363,19 @@ async def get_project_tree(title_id: int):
 
     title["chapters"] = chapters
     title["available_detectors"] = get_available_detectors()
+    title["available_cleaners"] = get_available_cleaners()
     conn.close()
     return {"success": True, "title": title}
 
 
 @router.put("/{title_id}/settings")
 async def update_title_settings(title_id: int, req: UpdateTitleSettingsRequest):
-    font_size = req.default_font_size if (req.default_font_size and 8 <= req.default_font_size <= 40) else 14
+    """Обновить описание/синопсис тайтла."""
     desc = req.description.strip() if req.description is not None else ""
-    detector = req.detector_model.strip() if req.detector_model else "yolo_manga.pt"
-
     with db_session() as cur:
-        cur.execute(
-            "UPDATE titles SET description = ?, default_font_size = ?, detector_model = ? WHERE id = ?",
-            (desc, font_size, detector, title_id)
-        )
-    logger.info(f"Обновлены настройки для тайтла ID {title_id}: font_size={font_size}, detector={detector}")
-    return {
-        "success": True,
-        "description": desc,
-        "default_font_size": font_size,
-        "detector_model": detector
-    }
+        cur.execute("UPDATE titles SET description = ? WHERE id = ?", (desc, title_id))
+
+    return {"success": True, "description": desc}
 
 
 @router.get("/{title_id}/speakers")
@@ -367,15 +426,11 @@ async def delete_project(title_id: int):
         conn = get_db()
         conn.execute("PRAGMA foreign_keys = ON")
         cur = conn.cursor()
-
         cur.execute("DELETE FROM titles WHERE id = ?", (title_id,))
         conn.commit()
-
         conn.execute("VACUUM")
         conn.close()
-
-        logger.info(f"Проект ID {title_id} полностью удалён. Выполнен VACUUM базы данных.")
-        return {"success": True, "message": "Проект успешно удалён, база данных оптимизирована"}
+        return {"success": True, "message": "Проект успешно удалён"}
     except Exception as e:
         logger.error(f"Ошибка при удалении проекта {title_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -407,7 +462,6 @@ async def add_glossary_item(title_id: int, req: GlossaryItemCreate):
         )
         item_id = cur.lastrowid
 
-    logger.info(f"В глоссарий тайтла {title_id} добавлен термин/спикер: '{jap_word_clean}' -> '{rus_word_clean}'")
     return {
         "success": True,
         "item": {

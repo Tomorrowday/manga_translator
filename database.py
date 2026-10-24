@@ -27,6 +27,34 @@ def db_session():
 
 def init_db():
     with db_session() as cursor:
+        # Единая таблица глобальных настроек приложения
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS global_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                default_font_size INTEGER DEFAULT 14,
+                detector_model TEXT DEFAULT 'yolo_manga.pt',
+                clean_model TEXT DEFAULT 'anime-manga-big-lama.pt',
+                detect_conf REAL DEFAULT 0.25,
+                auto_oval_bubble INTEGER DEFAULT 1,
+                default_padding TEXT DEFAULT 'safe',
+                default_hyphenation INTEGER DEFAULT 1,
+                font_bubble TEXT DEFAULT 'v_CCFaceFront',
+                font_thought TEXT DEFAULT 'v_CCFaceFront',
+                font_sfx TEXT DEFAULT 'v_Mighty Zeo 2.0'
+            )
+        ''')
+
+        # Гарантируем наличие дефолтной записи настроек с id=1
+        cursor.execute("SELECT COUNT(*) FROM global_settings WHERE id = 1")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO global_settings (
+                    id, default_font_size, detector_model, clean_model, detect_conf,
+                    auto_oval_bubble, default_padding, default_hyphenation,
+                    font_bubble, font_thought, font_sfx
+                ) VALUES (1, 14, 'yolo_manga.pt', 'anime-manga-big-lama.pt', 0.25, 1, 'safe', 1, 'v_CCFaceFront', 'v_CCFaceFront', 'v_Mighty Zeo 2.0')
+            ''')
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS titles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,48 +127,9 @@ def init_db():
             )
         ''')
 
-        # Проверка и миграции titles
-        cursor.execute("PRAGMA table_info(titles)")
-        title_cols = [row["name"] for row in cursor.fetchall()]
-        if "description" not in title_cols:
-            cursor.execute("ALTER TABLE titles ADD COLUMN description TEXT DEFAULT ''")
-            print("Миграция: добавлена колонка 'description' в titles")
-        if "default_font_size" not in title_cols:
-            cursor.execute("ALTER TABLE titles ADD COLUMN default_font_size INTEGER DEFAULT 14")
-            print("Миграция: добавлена колонка 'default_font_size' в titles")
-        if "detector_model" not in title_cols:
-            cursor.execute("ALTER TABLE titles ADD COLUMN detector_model TEXT DEFAULT 'yolo_manga.pt'")
-            print("Миграция: добавлена колонка 'detector_model' в titles")
-
-        # Проверка миграций text_blocks
-        cursor.execute("PRAGMA table_info(text_blocks)")
-        columns = [row["name"] for row in cursor.fetchall()]
-
-        migrations = {
-            "class_id": "INTEGER DEFAULT 0",
-            "speaker": "TEXT DEFAULT ''",
-            "order_index": "INTEGER DEFAULT 0",
-            "font_size": "INTEGER",
-            "font_family": "TEXT DEFAULT 'v_CCFaceFront'",
-            "is_bold": "INTEGER DEFAULT 0",
-            "is_italic": "INTEGER DEFAULT 0",
-            "is_uppercase": "INTEGER DEFAULT 0",
-            "has_stroke": "INTEGER DEFAULT 0",
-            "text_color": "TEXT DEFAULT 'black'",
-            "shape": "TEXT DEFAULT 'rect'",
-            "padding_mode": "TEXT DEFAULT 'safe'",
-            "rotation": "REAL DEFAULT 0.0",
-            "min_hyphens": "INTEGER DEFAULT 1"
-        }
-
-        for col, col_type in migrations.items():
-            if col not in columns:
-                cursor.execute(f"ALTER TABLE text_blocks ADD COLUMN {col} {col_type}")
-                print(f"Миграция: добавлена колонка '{col}' в text_blocks")
-
-        # Автоматическая очистка сиротских записей
+        # Очистка сиротских записей
         cursor.execute("DELETE FROM text_blocks WHERE page_id NOT IN (SELECT id FROM pages)")
         cursor.execute("DELETE FROM pages WHERE chapter_id NOT IN (SELECT id FROM chapters)")
         cursor.execute("DELETE FROM chapters WHERE title_id NOT IN (SELECT id FROM titles)")
 
-    print("База данных проверена, сиротские записи зачищены.")
+    print("База данных проверена, таблица глобальных настроек готова.")

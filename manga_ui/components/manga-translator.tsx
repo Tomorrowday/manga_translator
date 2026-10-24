@@ -1,10 +1,10 @@
 // manga_ui/components/manga-translator.tsx
-// Главный контейнер рабочего пространства с защитой от рассинхронизации страниц
+// Главный контейнер: точная передача тогглов, сохранение четкости моделей и хоткеи
 
 "use client"
 
-import { useState, useCallback, useRef } from "react"
-import type { PageItem, PageStatus } from "@/lib/types"
+import { useState, useCallback, useRef, useEffect } from "react"
+import type { PageItem, PageStatus, TitleSettings } from "@/lib/types"
 import { ImageViewer } from "@/components/image-viewer"
 import { Sidebar } from "@/components/sidebar"
 import { BatchChapterActions } from "@/components/batch-chapter-actions"
@@ -12,6 +12,7 @@ import { TranslatorHeader } from "@/components/translator-header"
 import { TranslationToolbar } from "@/components/translation-toolbar"
 import { TextBlocksList } from "@/components/text-blocks-list"
 import { HotkeysModal } from "@/components/hotkeys-modal"
+import { SettingsModal } from "@/components/settings-modal"
 import { cropRegion, mapDbBlockToTextBlock } from "@/lib/typeset"
 import { useMangaHotkeys } from "@/hooks/use-manga-hotkeys"
 import { usePageBlocks } from "@/hooks/use-page-blocks"
@@ -26,7 +27,7 @@ import {
   openTranslatedFolder,
   runBrushClean,
 } from "@/lib/api/pages"
-import { getProjectTree } from "@/lib/api/projects"
+import { getGlobalSettings, exportChapterScriptToFolder } from "@/lib/api"
 
 export function MangaTranslator() {
   const [currentPage, setCurrentPage] = useState<PageItem | null>(null)
@@ -36,17 +37,42 @@ export function MangaTranslator() {
   const [showTypeset, setShowTypeset] = useState(false)
   const [brushSize, setBrushSize] = useState<number>(32)
 
-  // Базовый размер шрифта тайтла
-  const [titleDefaultFontSize, setTitleDefaultFontSize] = useState<number>(14)
+  // Глобальные настройки приложения
+  const [globalSettings, setGlobalSettings] = useState<TitleSettings>({
+    default_font_size: 14,
+    auto_oval_bubble: true,
+    default_padding: "safe",
+    default_hyphenation: true,
+    font_bubble: "v_CCFaceFront",
+    font_thought: "v_CCFaceFront",
+    font_sfx: "v_Mighty Zeo 2.0",
+  })
 
   const [knownSpeakers, setKnownSpeakers] = useState<string[]>([])
   const [activePageUpdate, setActivePageUpdate] = useState<{ id: number; status: PageStatus; clean_path?: string } | null>(null)
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
+
+  // Модальные окна
   const [showHotkeysModal, setShowHotkeysModal] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
 
   const chapterPagesRef = useRef<PageItem[]>([])
   chapterPagesRef.current = chapterPages
   const isSwitchingPageRef = useRef(false)
+
+  useEffect(() => {
+    async function loadSettings() {
+      try {
+        const res = await getGlobalSettings()
+        if (res.success && res.settings) {
+          setGlobalSettings(res.settings)
+        }
+      } catch (err) {
+        console.warn("Не удалось загрузить глобальные настройки:", err)
+      }
+    }
+    loadSettings()
+  }, [])
 
   const refreshSpeakersList = useCallback(async (pageId: number) => {
     try {
@@ -86,7 +112,7 @@ export function MangaTranslator() {
     moveBlock,
     spotCleanBlock,
     addOrUpdateDrawnBlock,
-  } = usePageBlocks(currentPage, handlePageStatusUpdate, refreshSpeakersList)
+  } = usePageBlocks(currentPage, globalSettings, handlePageStatusUpdate, refreshSpeakersList)
 
   const pipelines = usePagePipelines({
     currentPage,
@@ -94,7 +120,7 @@ export function MangaTranslator() {
     textBlocks,
     setTextBlocks,
     textBlocksRef,
-    defaultFontSize: titleDefaultFontSize,
+    globalSettings,
     setSelectedId,
     saveBlocks,
     onPageStatusUpdate: handlePageStatusUpdate,
@@ -116,7 +142,6 @@ export function MangaTranslator() {
     isSwitchingPageRef.current = true
 
     try {
-      // Сохраняем предыдущую страницу перед переходом
       if (!skipSave && currentPage && isDirtyRef.current) {
         try {
           await saveBlocksExplicit(currentPage.id, textBlocksRef.current, false)
@@ -132,17 +157,6 @@ export function MangaTranslator() {
       setViewMode(freshPage.clean_path ? "clean" : "original")
       setCleanCacheBuster(Date.now())
       refreshSpeakersList(freshPage.id)
-
-      if (freshPage.title_id) {
-        try {
-          const tree = await getProjectTree(freshPage.title_id)
-          if (tree?.default_font_size) {
-            setTitleDefaultFontSize(tree.default_font_size)
-          }
-        } catch (err) {
-          console.warn("Не удалось загрузить настройки тайтла:", err)
-        }
-      }
 
       const rawUrl = getPageImageUrl(page.id)
       const dbBlocks = await getPageBlocks(page.id)
@@ -168,11 +182,19 @@ export function MangaTranslator() {
       } else {
         const isFreshPage = freshPage.status === "raw" || freshPage.status === "new"
         if (isFreshPage) {
-          const detectRes = await runPageAutoDetect(page.id)
+          const isAutoOvalEnabled = globalSettings.auto_oval_bubble ?? true
+          const detectRes = await runPageAutoDetect(
+            page.id,
+            globalSettings.detect_conf,
+            isAutoOvalEnabled
+          )
           if (detectRes?.boxes?.length) {
             const fresh = []
             for (const box of detectRes.boxes) {
               const cropped = await cropRegion(img, { ...box, rotation: 0 })
+              const isBubble = (box.class_id ?? 0) === 0
+              const resolvedShape = (isBubble && isAutoOvalEnabled) ? "ellipse" : (box.shape || "rect")
+
               fresh.push({
                 id: box.id || crypto.randomUUID(),
                 class_id: box.class_id ?? 0,
@@ -185,10 +207,12 @@ export function MangaTranslator() {
                 japText: box.jap_text || "",
                 rusText: "",
                 orderIndex: box.order_index,
+                fontSize: box.font_size || globalSettings.default_font_size || 14,
+                fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
                 textColor: "black" as const,
-                shape: "rect" as const,
-                paddingMode: "safe" as const,
-                minHyphens: true,
+                shape: resolvedShape,
+                paddingMode: box.padding_mode || globalSettings.default_padding || "safe",
+                minHyphens: box.min_hyphens !== undefined ? box.min_hyphens : (globalSettings.default_hyphenation ?? true),
                 status: (box.status as any) || (box.jap_text ? "ocr-done" : "new"),
               })
             }
@@ -257,22 +281,57 @@ export function MangaTranslator() {
     }
   }, [currentPage?.clean_path])
 
+  const handleToggleTypeset = useCallback(() => {
+    setShowTypeset((prev) => !prev)
+  }, [])
+
+  // Хоткеи C / V / G для типов баблов с учетом тоггла
+  const handleSetBlockClass = useCallback(
+    (classId: number) => {
+      if (!selectedId) return
+      const autoOval = globalSettings.auto_oval_bubble ?? true
+      const shape = classId === 0 && autoOval ? "ellipse" : "rect"
+
+      let fontFamily = globalSettings.font_bubble || "v_CCFaceFront"
+      if (classId === 1) fontFamily = globalSettings.font_thought || "v_CCFaceFront"
+      if (classId === 2) fontFamily = globalSettings.font_sfx || "v_Mighty Zeo 2.0"
+
+      updateBlock(selectedId, { class_id: classId, shape, fontFamily })
+    },
+    [selectedId, globalSettings, updateBlock]
+  )
+
+  // Хоткеи действий с главой
+  const handleChapterExportJson = useCallback(async () => {
+    const chId = chapterPages[0]?.chapter_id
+    if (!chId) return
+    try {
+      const res = await exportChapterScriptToFolder(chId)
+      alert(`Скрипты диалогов и контекста сохранены:\n${res.saved_path}`)
+    } catch (e) {
+      alert("Ошибка экспорта JSON: " + String(e))
+    }
+  }, [chapterPages])
+
   useMangaHotkeys({
     selectedId,
     textBlocks,
-    defaultFontSize: titleDefaultFontSize,
+    defaultFontSize: globalSettings.default_font_size || 14,
     onPrevPage: handlePrevPage,
     onNextPage: handleNextPage,
     onSave: () => saveBlocks(true),
     onToggleViewMode: handleToggleViewMode,
+    onToggleTypeset: handleToggleTypeset,
+    onSetClass: handleSetBlockClass,
     onDeleteBlock: deleteBlock,
     onMoveBlock: moveBlock,
     onUpdateBlock: updateBlock,
     onSpotClean: spotCleanBlock,
     onBrushResize: handleBrushResize,
+    onChapterExportJson: handleChapterExportJson,
   })
 
-  const translatedCount = textBlocks.filter((b) => b.status === "translated").length
+  const translatedCount = textBlocks.filter((b) => b.status === "translated" || Boolean(b.rusText?.trim())).length
   const currentSpeakers = textBlocks.map((b) => b.speaker?.trim()).filter((s): s is string => !!s)
   const allSpeakerSuggestions = Array.from(new Set([...knownSpeakers, ...currentSpeakers])).sort()
 
@@ -305,12 +364,13 @@ export function MangaTranslator() {
         onPrevPage={handlePrevPage}
         onNextPage={handleNextPage}
         onOpenHotkeys={() => setShowHotkeysModal(true)}
+        onOpenSettings={() => setShowSettingsModal(true)}
       />
 
       <BatchChapterActions
         pages={chapterPages}
         currentPageId={currentPage?.id ?? null}
-        titleDefaultFontSize={titleDefaultFontSize}
+        titleDefaultFontSize={globalSettings.default_font_size || 14}
         onSaveCurrentPage={() => saveBlocks(true)}
         onPageStatusUpdate={handlePageStatusUpdate}
         onCompleteBatch={() => setSidebarRefreshTrigger((prev) => prev + 1)}
@@ -337,7 +397,7 @@ export function MangaTranslator() {
           pageNumber={currentPage?.page_number}
           hasCleanScan={Boolean(currentPage?.clean_path)}
           viewMode={viewMode}
-          defaultFontSize={titleDefaultFontSize}
+          defaultFontSize={globalSettings.default_font_size || 14}
           brushSize={brushSize}
           onBrushResize={handleBrushResize}
           onToggleViewMode={handleToggleViewMode}
@@ -365,14 +425,15 @@ export function MangaTranslator() {
             onTranslateAll={pipelines.handleTranslateAll}
             onCleanPage={pipelines.handleCleanPage}
             onRevertClean={pipelines.handleRevertClean}
-            onToggleTypeset={() => setShowTypeset((prev) => !prev)}
+            onToggleTypeset={handleToggleTypeset}
           />
 
           <TextBlocksList
             currentPage={currentPage}
             textBlocks={textBlocks}
             selectedId={selectedId}
-            defaultFontSize={titleDefaultFontSize}
+            defaultFontSize={globalSettings.default_font_size || 14}
+            autoOvalBubble={globalSettings.auto_oval_bubble ?? true}
             onSelect={setSelectedId}
             onUpdate={updateBlock}
             onDelete={deleteBlock}
@@ -384,6 +445,15 @@ export function MangaTranslator() {
       </div>
 
       {showHotkeysModal && <HotkeysModal onClose={() => setShowHotkeysModal(false)} />}
+
+      {showSettingsModal && (
+        <SettingsModal
+          onClose={() => setShowSettingsModal(false)}
+          onSettingsUpdated={(newSettings) => {
+            setGlobalSettings((prev) => ({ ...prev, ...newSettings }))
+          }}
+        />
+      )}
     </div>
   )
 }

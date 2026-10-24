@@ -1,8 +1,8 @@
 // manga_ui/hooks/use-page-blocks.ts
-// Управление состоянием и операциями над текстовыми блоками страницы с защитой от рассинхронизации
+// Управление блоками страницы: авто-наследование настроек формы (овал/rect) и шрифтов при рисовании мышкой
 
 import { useState, useRef, useCallback } from "react"
-import type { TextBlock, PageItem, PageStatus } from "@/lib/types"
+import type { TextBlock, PageItem, PageStatus, TitleSettings } from "@/lib/types"
 import { cropRegion, insertBlockInMangaOrder } from "@/lib/typeset"
 import { savePageBlocks, runSpotClean } from "@/lib/api"
 
@@ -16,6 +16,7 @@ export interface DrawRect {
 
 export function usePageBlocks(
   currentPage: PageItem | null,
+  globalSettings: TitleSettings,
   onPageStatusUpdate: (pageId: number, status: PageStatus, cleanPath?: string) => void,
   onRefreshSpeakers: (pageId: number) => void
 ) {
@@ -28,10 +29,8 @@ export function usePageBlocks(
   const currentPageRef = useRef<PageItem | null>(null)
   currentPageRef.current = currentPage
 
-  // Флаг реальных пользовательских изменений
   const isDirtyRef = useRef(false)
 
-  // Явное сохранение блоков для конкретного pageId (исключает запись блоков в чужую страницу)
   const saveBlocksExplicit = useCallback(
     async (targetPageId: number, blocksToSave: TextBlock[], refreshSpeakers = true) => {
       setIsSaving(true)
@@ -81,7 +80,6 @@ export function usePageBlocks(
     [onPageStatusUpdate, onRefreshSpeakers]
   )
 
-  // Стандартное сохранение текущей страницы (по кнопке Save или Ctrl+S)
   const saveBlocks = useCallback(
     async (refreshSpeakers = true) => {
       if (!currentPageRef.current) return
@@ -90,14 +88,12 @@ export function usePageBlocks(
     [saveBlocksExplicit]
   )
 
-  // Безопасная загрузка блоков новой страницы (сбрасывает isDirty)
   const setNewPageBlocks = useCallback((newBlocks: TextBlock[]) => {
     setTextBlocks(newBlocks)
     textBlocksRef.current = newBlocks
     isDirtyRef.current = false
   }, [])
 
-  // Мгновенная очистка стейта перед переходом
   const clearBlocks = useCallback(() => {
     setTextBlocks([])
     textBlocksRef.current = []
@@ -170,6 +166,7 @@ export function usePageBlocks(
     [onPageStatusUpdate, deleteBlock]
   )
 
+  // Ручное рисование рамки мышкой — применение настроек по умолчанию (авто-овал, отступы, переносы, шрифты)
   const addOrUpdateDrawnBlock = useCallback(
     async (rect: DrawRect, img: HTMLImageElement, existingId?: string, rotation?: number) => {
       isDirtyRef.current = true
@@ -195,6 +192,12 @@ export function usePageBlocks(
         return
       }
 
+      const defaultShape = (globalSettings.auto_oval_bubble ?? true) ? "ellipse" : "rect"
+      const defaultFont = globalSettings.font_bubble || "v_CCFaceFront"
+      const defaultPadding = globalSettings.default_padding || "safe"
+      const defaultHyphens = globalSettings.default_hyphenation !== undefined ? globalSettings.default_hyphenation : true
+      const defaultFontSize = globalSettings.default_font_size || 14
+
       const id = crypto.randomUUID()
       const newBlock: TextBlock = {
         id,
@@ -207,17 +210,19 @@ export function usePageBlocks(
         imageCrop: dataUrl,
         japText: "",
         rusText: "",
+        fontSize: defaultFontSize,
+        fontFamily: defaultFont,
         textColor: "black",
-        shape: "rect",
-        paddingMode: "safe",
-        minHyphens: true,
+        shape: defaultShape,
+        paddingMode: defaultPadding,
+        minHyphens: defaultHyphens,
         status: "new",
       }
 
       setTextBlocks((prev) => insertBlockInMangaOrder(prev, newBlock))
       setSelectedId(id)
     },
-    []
+    [globalSettings]
   )
 
   return {

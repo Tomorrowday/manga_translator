@@ -1,5 +1,5 @@
 // manga_ui/components/hotkeys-modal.tsx
-// Интерактивное модальное окно переназначения горячих клавиш
+// Интерактивное окно переназначения горячих клавиш
 
 "use client"
 
@@ -18,11 +18,12 @@ interface HotkeysModalProps {
 }
 
 const CATEGORY_NAMES: Record<HotkeyCategory, string> = {
-  navigation: "Навигация и файл",
+  navigation: "Навигация и Тайпсет",
   font: "Шрифты и размер",
-  bubble: "Разметка и стили бабла",
+  bubble: "Типы и разметка бабла",
   cleaning: "Очистка (Spot Clean)",
   tools: "Инструменты кисти",
+  chapter: "Действия с главой",
 }
 
 export function HotkeysModal({ onClose }: HotkeysModalProps) {
@@ -54,7 +55,6 @@ export function HotkeysModal({ onClose }: HotkeysModalProps) {
       const formatted = formatKeyEvent(e)
       if (!formatted) return
 
-      // Проверка на конфликт с другими действиями
       const existingConflict = (Object.keys(hotkeys) as HotkeyActionId[]).find((key) => {
         if (key === recordingAction) return false
         const b = hotkeys[key]
@@ -88,7 +88,7 @@ export function HotkeysModal({ onClose }: HotkeysModalProps) {
 
   if (!mounted) return null
 
-  const categories: HotkeyCategory[] = ["navigation", "font", "bubble", "cleaning", "tools"]
+  const categories: HotkeyCategory[] = ["navigation", "bubble", "font", "cleaning", "tools", "chapter"]
 
   return createPortal(
     <div
@@ -97,7 +97,7 @@ export function HotkeysModal({ onClose }: HotkeysModalProps) {
       }}
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
     >
-      <div className="flex h-[620px] w-full max-w-2xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="flex h-[640px] w-full max-w-2xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-6 py-4">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600/30 text-indigo-400">

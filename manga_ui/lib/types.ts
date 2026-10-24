@@ -12,7 +12,7 @@ export type TextColor = "black" | "white"
 
 export interface TextBlock {
   id: string
-  class_id?: number // 0: Bubble, 1: Thought, 2: Free Text / SFX
+  class_id?: number // 0: Bubble (Речь), 1: Thought (Мысли), 2: Free Text / SFX (Арт)
   x: number
   y: number
   width: number
@@ -55,19 +55,31 @@ export interface ChapterItem {
   pages: PageItem[]
 }
 
-export interface TitleProject {
-  id: number
-  name: string
-  folder_path: string
+export interface TitleSettings {
   description?: string
   default_font_size?: number
   detector_model?: string
+  clean_model?: string
+  detect_conf?: number
+  auto_oval_bubble?: boolean
+  default_padding?: PaddingMode
+  default_hyphenation?: boolean
+  font_bubble?: string
+  font_thought?: string
+  font_sfx?: string
+}
+
+export interface TitleProject extends TitleSettings {
+  id: number
+  name: string
+  folder_path: string
   created_at: string
 }
 
 export interface ProjectTree extends TitleProject {
   chapters: ChapterItem[]
   available_detectors?: Record<string, string>
+  available_cleaners?: Record<string, string>
 }
 
 export interface GlossaryItem {

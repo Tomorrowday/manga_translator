@@ -12,6 +12,7 @@ interface TextBlocksListProps {
   textBlocks: TextBlock[]
   selectedId: string | null
   defaultFontSize?: number
+  autoOvalBubble?: boolean
   onSelect: (id: string) => void
   onUpdate: (id: string, patch: Partial<TextBlock>) => void
   onDelete: (id: string) => void
@@ -25,6 +26,7 @@ export function TextBlocksList({
   textBlocks,
   selectedId,
   defaultFontSize = 14,
+  autoOvalBubble = true,
   onSelect,
   onUpdate,
   onDelete,
@@ -72,6 +74,7 @@ export function TextBlocksList({
           index={index}
           pageId={currentPage.id}
           defaultFontSize={defaultFontSize}
+          autoOvalBubble={autoOvalBubble}
           isSelected={block.id === selectedId}
           onSelect={() => onSelect(block.id)}
           onChange={(patch) => onUpdate(block.id, patch)}

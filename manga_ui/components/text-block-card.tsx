@@ -1,22 +1,20 @@
 // manga_ui/components/text-block-card.tsx
-// Карточка бабла с React.memo, актуальными биндами и переключателем классов (0: Bubble, 1: Thought, 2: Free Text)
+// Карточка бабла: переключение класса учитывает тоггл овала, подсказки хоткеев обновлены
 
 "use client"
 
 import React, { useState, useRef, useEffect, memo } from "react"
 import {
   ScanText,
-  Languages,
   Trash2,
   Loader2,
-  Check,
   User,
   ChevronUp,
   ChevronDown,
   RotateCw,
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
-import { runOcr, runTranslate } from "@/lib/api"
+import { runOcr } from "@/lib/api"
 import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 import { BubbleStyleControls } from "@/components/text-block-card/bubble-style-controls"
 import { SpotCleanControls } from "@/components/text-block-card/spot-clean-controls"
@@ -26,6 +24,7 @@ interface TextBlockCardProps {
   index: number
   pageId?: number
   defaultFontSize?: number
+  autoOvalBubble?: boolean
   isSelected: boolean
   onSelect: () => void
   onChange: (patch: Partial<TextBlock>) => void
@@ -37,27 +36,21 @@ interface TextBlockCardProps {
   onSpotClean?: (method: "auto" | "lama" | "white", deleteAfter?: boolean) => Promise<void>
 }
 
-const STATUS_LABELS: Record<TextBlock["status"], { label: string; className: string }> = {
-  new: { label: "New", className: "bg-slate-700 text-slate-300" },
-  "ocr-done": { label: "OCR", className: "bg-sky-500/20 text-sky-300" },
-  translated: { label: "Translated", className: "bg-emerald-500/20 text-emerald-300" },
-}
-
 const CLASS_CONFIG: Record<number, { label: string; className: string; title: string }> = {
   0: {
     label: "Bubble",
     className: "border-emerald-500/50 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/60",
-    title: "Класс: Обычный бабл речи (клин: Белый). Кликните для смены на Мысли",
+    title: "Класс 0: Обычный бабл речи. Хоткей [C]",
   },
   1: {
     label: "Thought",
     className: "border-sky-500/50 bg-sky-950/40 text-sky-300 hover:bg-sky-900/60",
-    title: "Класс: Мысли / Прямоугольный блок (клин: Белый). Кликните для смены на Свободный текст",
+    title: "Класс 1: Мысли / Прямоугольный блок. Хоткей [V]",
   },
   2: {
     label: "Free Text",
     className: "border-purple-500/50 bg-purple-950/40 text-purple-300 hover:bg-purple-900/60",
-    title: "Класс: Текст/звук на арте или скринтоне (клин: LaMa). Кликните для смены на Бабл",
+    title: "Класс 2: Текст/SFX на арте. Хоткей [G]",
   },
 }
 
@@ -66,6 +59,7 @@ export const TextBlockCard = memo(function TextBlockCard({
   index,
   pageId,
   defaultFontSize = 14,
+  autoOvalBubble = true,
   isSelected,
   onSelect,
   onChange,
@@ -77,7 +71,6 @@ export const TextBlockCard = memo(function TextBlockCard({
   onSpotClean,
 }: TextBlockCardProps) {
   const [ocrLoading, setOcrLoading] = useState(false)
-  const [translateLoading, setTranslateLoading] = useState(false)
   const cardRef = useRef<HTMLElement>(null)
   const { hotkeys } = useHotkeysConfig()
 
@@ -105,28 +98,20 @@ export const TextBlockCard = memo(function TextBlockCard({
     }
   }
 
-  const handleTranslate = async () => {
-    setTranslateLoading(true)
-    try {
-      const text = await runTranslate(block.japText)
-      onChange({ rusText: text, status: "translated" })
-    } finally {
-      setTranslateLoading(false)
-    }
-  }
-
   const currentClassId = block.class_id ?? 0
   const classCfg = CLASS_CONFIG[currentClassId] || CLASS_CONFIG[0]
 
   const handleCycleClass = (e: React.MouseEvent) => {
     e.stopPropagation()
     const nextClass = (currentClassId + 1) % 3
-    onChange({ class_id: nextClass })
+    // Овал ставится только если включен тоггл autoOvalBubble, иначе остается rect
+    const nextShape = nextClass === 0 && autoOvalBubble ? "ellipse" : "rect"
+    onChange({ class_id: nextClass, shape: nextShape })
   }
 
-  const status = STATUS_LABELS[block.status]
   const isEllipse = block.shape === "ellipse"
   const hasRotation = Math.abs(block.rotation || 0) >= 0.5
+  const isTranslated = block.status === "translated" || Boolean(block.rusText && block.rusText.trim())
 
   return (
     <article
@@ -158,14 +143,18 @@ export const TextBlockCard = memo(function TextBlockCard({
               {classCfg.label}
             </button>
 
-            <span className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${status.className}`}>
-              {status.label}
-            </span>
+            {isTranslated && (
+              <span className="rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300">
+                Translated
+              </span>
+            )}
+
             {isEllipse && (
               <span className="rounded bg-indigo-950/60 px-1.5 py-0.5 text-[10px] text-indigo-300 border border-indigo-800/50">
                 Oval
               </span>
             )}
+
             {hasRotation && (
               <button
                 type="button"
@@ -278,25 +267,7 @@ export const TextBlockCard = memo(function TextBlockCard({
           className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
         >
           {ocrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanText className="h-4 w-4 text-sky-400" />}
-          1. OCR
-        </button>
-
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            handleTranslate()
-          }}
-          disabled={translateLoading || !block.japText.trim()}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-indigo-500 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-indigo-400 disabled:opacity-50"
-        >
-          {translateLoading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : block.status === "translated" ? (
-            <Check className="h-4 w-4" />
-          ) : (
-            <Languages className="h-4 w-4" />
-          )}
-          2. Translate
+          Перераспознать OCR
         </button>
       </div>
     </article>

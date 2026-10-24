@@ -1,8 +1,22 @@
 // manga_ui/lib/api/projects.ts
-// Управление проектами (тайтлами), настройками, глоссарием и статистикой БД
+// Управление проектами, едиными глобальными настройками, глоссарием и статистикой
 
-import type { GlossaryItem, ProjectStats, TitleProject, ProjectTree } from "../types"
+import type { GlossaryItem, ProjectStats, TitleProject, ProjectTree, TitleSettings } from "../types"
 import { API_BASE_URL, handleApiResponse } from "./client"
+
+export async function getGlobalSettings(): Promise<{ success: boolean; settings: TitleSettings & { available_detectors?: Record<string, string>; available_cleaners?: Record<string, string> } }> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/global-settings`)
+  return await handleApiResponse(res, "Ошибка загрузки глобальных настроек")
+}
+
+export async function updateGlobalSettings(settings: Partial<TitleSettings>): Promise<{ success: boolean; settings: TitleSettings }> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/global-settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  })
+  return await handleApiResponse(res, "Ошибка сохранения глобальных настроек")
+}
 
 export async function getProjects(): Promise<TitleProject[]> {
   const res = await fetch(`${API_BASE_URL}/api/projects`)
@@ -45,21 +59,25 @@ export async function getProjectTree(titleId: number): Promise<ProjectTree> {
   return data.title
 }
 
-export async function updateTitleSettings(
-  titleId: number,
-  settings: { description?: string; default_font_size?: number; detector_model?: string }
-) {
+export async function getAvailableDetectors(): Promise<Record<string, string>> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/detectors`)
+  const data = await handleApiResponse<{ detectors: Record<string, string> }>(res, "Ошибка загрузки детекторов")
+  return data.detectors || {}
+}
+
+export async function getAvailableCleaners(): Promise<Record<string, string>> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/cleaners`)
+  const data = await handleApiResponse<{ cleaners: Record<string, string> }>(res, "Ошибка загрузки клинеров")
+  return data.cleaners || {}
+}
+
+export async function updateTitleSettings(titleId: number, settings: { description?: string }) {
   const res = await fetch(`${API_BASE_URL}/api/projects/${titleId}/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
   })
-  return await handleApiResponse<{
-    success: boolean
-    description: string
-    default_font_size: number
-    detector_model: string
-  }>(res, "Ошибка обновления настроек тайтла")
+  return await handleApiResponse<{ success: boolean; description: string }>(res, "Ошибка обновления синопсиса")
 }
 
 export async function getTitleSpeakers(titleId: number, chapterId?: number): Promise<string[]> {

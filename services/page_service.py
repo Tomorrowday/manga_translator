@@ -1,10 +1,10 @@
 # services/page_service.py
-# Бизнес-логика работы со страницей: блоки, сохранение, клин и автодетект
+# Бизнес-логика работы со страницей с чтением из единых глобальных настроек
 
 import os
 import time
 import uuid
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import cv2
 import numpy as np
 from PIL import Image
@@ -17,11 +17,31 @@ from services.ocr import ocr_image_region
 from logger import logger
 
 
+def get_active_global_settings() -> Dict[str, Any]:
+    """Считывает актуальные глобальные настройки из БД."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM global_settings WHERE id = 1")
+    row = cur.fetchone()
+    conn.close()
+
+    if row:
+        return dict(row)
+    return {
+        "default_font_size": 14,
+        "detector_model": "yolo_manga.pt",
+        "clean_model": "anime-manga-big-lama.pt",
+        "detect_conf": 0.25,
+        "auto_oval_bubble": 1,
+        "default_padding": "safe",
+        "default_hyphenation": 1,
+        "font_bubble": "v_CCFaceFront",
+        "font_thought": "v_CCFaceFront",
+        "font_sfx": "v_Mighty Zeo 2.0"
+    }
+
+
 def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
-    """
-    Сохраняет блоки страницы с валидацией координат и вычисляет новый статус страницы.
-    Использует INSERT OR REPLACE для предотвращения коллизий первичных ключей.
-    """
     with db_session() as cursor:
         cursor.execute("SELECT status, clean_path FROM pages WHERE id = ?", (page_id,))
         page_row = cursor.fetchone()
@@ -87,20 +107,14 @@ def save_page_blocks_service(page_id: int, blocks: List[TextBlockItem]) -> str:
     return page_status
 
 
-def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str, float]:
-    """Выполняет детекцию баблов с учётом выбранной в тайтле модели детектора."""
+def detect_page_bubbles_service(
+    page_id: int,
+    conf_override: Optional[float] = None,
+    auto_oval_override: Optional[bool] = None
+) -> Tuple[List[Dict[str, Any]], str, float]:
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT p.file_path, p.status, t.detector_model
-        FROM pages p
-        JOIN chapters c ON c.id = p.chapter_id
-        JOIN titles t ON t.id = c.title_id
-        WHERE p.id = ?
-        """,
-        (page_id,)
-    )
+    cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
     row = cursor.fetchone()
     conn.close()
 
@@ -109,12 +123,33 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
 
     file_path = str(row["file_path"])
     current_status = str(row["status"])
-    detector_model = row["detector_model"] if row["detector_model"] else "yolo_manga.pt"
+
+    # Считываем глобальные настройки приложения
+    cfg = get_active_global_settings()
+
+    detector_model = cfg.get("detector_model") or "yolo_manga.pt"
+    detect_conf = conf_override if conf_override is not None else float(cfg.get("detect_conf", 0.25))
+
+    raw_auto_oval = cfg.get("auto_oval_bubble")
+    is_auto_oval_enabled = bool(raw_auto_oval) if raw_auto_oval is not None else True
+    auto_oval = auto_oval_override if auto_oval_override is not None else is_auto_oval_enabled
+
+    default_pad = cfg.get("default_padding") or "safe"
+    default_hyph = bool(cfg.get("default_hyphenation", 1))
+    default_font_size = int(cfg.get("default_font_size", 14))
+
+    font_bubble = cfg.get("font_bubble") or "v_CCFaceFront"
+    font_thought = cfg.get("font_thought") or "v_CCFaceFront"
+    font_sfx = cfg.get("font_sfx") or "v_Mighty Zeo 2.0"
 
     start_time = time.time()
     image = Image.open(file_path).convert("RGB")
 
-    raw_boxes = detect_and_filter_bubbles(image, model_name=detector_model)
+    raw_boxes = detect_and_filter_bubbles(
+        image,
+        model_name=detector_model,
+        conf_threshold=float(detect_conf)
+    )
     boxes: List[Dict[str, Any]] = [dict(b) for b in raw_boxes]
 
     with db_session() as cur:
@@ -123,11 +158,27 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
             block_id = str(uuid.uuid4())
             cls_id = int(b.get("class_id", 0))
 
+            # Авто-овал: для обычных баблов речи (класс 0) ставим овал
+            if cls_id == 0 and auto_oval:
+                block_shape = "ellipse"
+            else:
+                block_shape = "rect"
+
+            # Стандартный шрифт по классу
+            if cls_id == 0:
+                block_font = font_bubble
+            elif cls_id == 1:
+                block_font = font_thought
+            else:
+                block_font = font_sfx
+
             b["id"] = block_id
             b["class_id"] = cls_id
-            b["shape"] = "rect"
-            b["padding_mode"] = "safe"
-            b["min_hyphens"] = True
+            b["shape"] = block_shape
+            b["font_family"] = block_font
+            b["font_size"] = default_font_size
+            b["padding_mode"] = default_pad
+            b["min_hyphens"] = default_hyph
             b["text_color"] = "black"
             b["rotation"] = 0.0
 
@@ -145,15 +196,18 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
             cur.execute(
                 """
                 INSERT OR REPLACE INTO text_blocks (
-                    id, page_id, class_id, x, y, width, height, rotation, jap_text, order_index, text_color, shape, padding_mode, min_hyphens, status
+                    id, page_id, class_id, x, y, width, height, rotation, jap_text, order_index, 
+                    font_size, font_family, text_color, shape, padding_mode, min_hyphens, status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, 'black', 'rect', 'safe', 1, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?, 'black', ?, ?, ?, ?)
                 """,
-                (block_id, page_id, cls_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"], b["status"])
+                (
+                    block_id, page_id, cls_id, b["x"], b["y"], b["width"], b["height"], jap_text, b["order_index"],
+                    default_font_size, block_font, block_shape, default_pad, int(default_hyph), b["status"]
+                )
             )
 
         new_status = "detected" if boxes else "raw"
-
         if current_status not in ["cleaned", "translated", "done"]:
             cur.execute("UPDATE pages SET status = ? WHERE id = ?", (new_status, page_id))
         else:
@@ -164,7 +218,6 @@ def detect_page_bubbles_service(page_id: int) -> Tuple[List[Dict[str, Any]], str
 
 
 def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[str, str, Dict[str, int]]:
-    """Очищает баблы на странице с выбором режима: 'auto' | 'white' | 'lama'."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
@@ -173,6 +226,10 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
     if not page_row or not os.path.exists(str(page_row["file_path"])):
         conn.close()
         raise ValueError("Файл страницы не найден")
+
+    # Считываем глобальную модель клина
+    cfg = get_active_global_settings()
+    clean_model_name = cfg.get("clean_model") or "anime-manga-big-lama.pt"
 
     cursor.execute(
         "SELECT x, y, width, height, shape, rotation, rus_text, class_id FROM text_blocks WHERE page_id = ?",
@@ -193,7 +250,7 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
     stats = {"white": 0, "inpaint": 0}
     try:
         for box in blocks:
-            method = clean_speech_bubble(image, box, force_mode=clean_mode)
+            method = clean_speech_bubble(image, box, force_mode=clean_mode, clean_model_name=clean_model_name)
             if method in stats:
                 stats[method] += 1
     finally:
@@ -223,7 +280,6 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
 
 
 def revert_page_clean_service(page_id: int) -> str:
-    """Откатывает клин страницы, удаляя заклиненный файл."""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))

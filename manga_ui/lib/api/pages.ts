@@ -1,4 +1,4 @@
-// lib/api/pages.ts
+// manga_ui/lib/api/pages.ts
 // Операции с отдельными страницами манги, баблами и ретушью
 
 import type { PageItem } from "../types"
@@ -43,9 +43,14 @@ export async function getPageSpeakers(pageId: number): Promise<string[]> {
   }
 }
 
-export async function runPageAutoDetect(pageId: number) {
+export async function runPageAutoDetect(pageId: number, conf?: number, autoOval?: boolean) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/pages/${pageId}/detect`, {
+    const params = new URLSearchParams()
+    if (conf !== undefined) params.append("conf", String(conf))
+    if (autoOval !== undefined) params.append("auto_oval", String(autoOval))
+    const query = params.toString() ? `?${params.toString()}` : ""
+
+    const response = await fetch(`${API_BASE_URL}/api/pages/${pageId}/detect${query}`, {
       method: "POST",
     })
     return await handleApiResponse<any>(response, "Ошибка сервера детекции")

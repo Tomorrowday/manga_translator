@@ -1,12 +1,11 @@
 // manga_ui/hooks/use-page-pipelines.ts
-// Конвейеры обработки страницы с пулом параллельных запросов OCR и сохранением class_id
+// Пайплайны обработки страниц: детект строго учитывает тоггл auto_oval_bubble из настроек
 
 import { useState } from "react"
-import type { PageItem, PageStatus, TextBlock } from "@/lib/types"
+import type { PageItem, PageStatus, TextBlock, TitleSettings } from "@/lib/types"
 import { cropRegion, bakePageBlob, loadImage } from "@/lib/typeset"
 import {
   runOcr,
-  runBatchTranslate,
   runCleanPage,
   revertCleanPage,
   runPageAutoDetect,
@@ -14,6 +13,7 @@ import {
   getPageImageUrl,
   getPageCleanImageUrl,
 } from "@/lib/api"
+import { runOllamaBatchTranslate, checkOllamaConnection } from "@/lib/api/ollama"
 
 interface UsePagePipelinesProps {
   currentPage: PageItem | null
@@ -21,7 +21,7 @@ interface UsePagePipelinesProps {
   textBlocks: TextBlock[]
   setTextBlocks: React.Dispatch<React.SetStateAction<TextBlock[]>>
   textBlocksRef: React.MutableRefObject<TextBlock[]>
-  defaultFontSize?: number
+  globalSettings: TitleSettings
   setSelectedId: (id: string | null) => void
   saveBlocks: (refreshSpeakers?: boolean) => Promise<void>
   onPageStatusUpdate: (pageId: number, status: PageStatus, cleanPath?: string) => void
@@ -51,7 +51,7 @@ export function usePagePipelines({
   textBlocks,
   setTextBlocks,
   textBlocksRef,
-  defaultFontSize = 14,
+  globalSettings,
   setSelectedId,
   saveBlocks,
   onPageStatusUpdate,
@@ -72,13 +72,18 @@ export function usePagePipelines({
     if (!currentPage) return
 
     if (textBlocks.length > 0 || (currentPage.status !== "raw" && currentPage.status !== "new")) {
-      const ok = confirm("Пересканировать страницу с нуля? Все текущие баблы и переводы на этой странице будут заменены.")
+      const ok = confirm("Пересканировать страницу с нуля? Текущие баблы будут заменены.")
       if (!ok) return
     }
 
     setIsDetecting(true)
     try {
-      const detectRes = await runPageAutoDetect(currentPage.id)
+      const isAutoOvalEnabled = globalSettings.auto_oval_bubble ?? true
+      const detectRes = await runPageAutoDetect(
+        currentPage.id,
+        globalSettings.detect_conf,
+        isAutoOvalEnabled
+      )
       const boxes = detectRes.boxes || []
 
       if (!boxes || boxes.length === 0) {
@@ -101,6 +106,10 @@ export function usePagePipelines({
       const newBlocks: TextBlock[] = []
       for (const box of boxes) {
         const { dataUrl } = await cropRegion(img, { ...box, rotation: 0 })
+        const isBubble = (box.class_id ?? 0) === 0
+        // Форма строго зависит от тоггла: если включен - овал, если выключен - rect
+        const resolvedShape = (isBubble && isAutoOvalEnabled) ? "ellipse" : (box.shape || "rect")
+
         newBlocks.push({
           id: box.id || crypto.randomUUID(),
           class_id: box.class_id ?? 0,
@@ -113,8 +122,11 @@ export function usePagePipelines({
           japText: box.jap_text || "",
           rusText: "",
           orderIndex: box.order_index,
-          shape: "rect",
-          paddingMode: "safe",
+          fontSize: box.font_size || globalSettings.default_font_size || 14,
+          fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
+          shape: resolvedShape,
+          paddingMode: box.padding_mode || globalSettings.default_padding || "safe",
+          minHyphens: box.min_hyphens !== undefined ? box.min_hyphens : (globalSettings.default_hyphenation ?? true),
           status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
         })
       }
@@ -137,7 +149,6 @@ export function usePagePipelines({
     try {
       const currentBlocks = [...textBlocks]
 
-      // Параллельный запуск OCR (concurrency limit = 3)
       const ocrResults = await runConcurrent(currentBlocks, 3, async (b) => {
         const text = await runOcr(currentPage.id, b.x, b.y, b.width, b.height, b.rotation || 0)
         return {
@@ -206,11 +217,26 @@ export function usePagePipelines({
 
       const toTranslate = blocksToOcr
         .filter((b) => b.japText.trim().length > 0)
-        .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker, order_index: b.orderIndex }))
+        .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker }))
 
       if (toTranslate.length === 0) return
 
-      const translations = await runBatchTranslate(toTranslate, currentPage.id)
+      const check = await checkOllamaConnection("http://localhost:11434")
+      if (!check.ok) {
+        alert(
+          "Локальная нейросеть Ollama не запущена на http://localhost:11434.\n\n" +
+          "Для перевода:\n" +
+          "1. Запустите Ollama в командной строке: ollama run qwen2.5\n" +
+          "2. Либо используйте кнопку «Export JSON» для перевода через Claude / ChatGPT."
+        )
+        return
+      }
+
+      const translations = await runOllamaBatchTranslate(toTranslate, {
+        baseUrl: "http://localhost:11434",
+        model: check.models.find((m) => m.includes("qwen") || m.includes("llama")) || check.models[0] || "qwen2.5:7b",
+      })
+
       const updated = blocksToOcr.map((b) => {
         if (translations[b.id]) {
           return { ...b, rusText: translations[b.id], status: "translated" as const }
@@ -226,7 +252,7 @@ export function usePagePipelines({
       onPageStatusUpdate(currentPage.id, "translated")
     } catch (e) {
       console.error(e)
-      alert("Ошибка при переводе")
+      alert("Ошибка при локальном переводе: " + String(e))
     } finally {
       setIsBatchTranslating(false)
     }
@@ -234,7 +260,7 @@ export function usePagePipelines({
 
   const handleRevertClean = async () => {
     if (!currentPage || !currentPage.clean_path) return
-    if (!confirm("Откатить клин этой страницы и вернуться к исходному скану? Все баблы и переводы сохранятся.")) return
+    if (!confirm("Откатить клин этой страницы и вернуться к исходному скану?")) return
 
     setIsRevertingClean(true)
     try {
@@ -273,7 +299,7 @@ export function usePagePipelines({
         : getPageImageUrl(currentPage.id)
 
       const baseImg = await loadImage(baseImgUrl)
-      const blob = await bakePageBlob(baseImg, textBlocksRef.current, defaultFontSize)
+      const blob = await bakePageBlob(baseImg, textBlocksRef.current, globalSettings.default_font_size || 14)
 
       if (!blob) throw new Error("Не удалось создать Blob изображения в Canvas")
 
@@ -331,28 +357,34 @@ export function usePagePipelines({
       }
       setViewMode("clean")
 
-      const toTranslate = currentBlocks
-        .filter((b) => b.japText.trim().length > 0)
-        .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker, order_index: b.orderIndex }))
+      const check = await checkOllamaConnection("http://localhost:11434")
+      if (check.ok) {
+        const toTranslate = currentBlocks
+          .filter((b) => b.japText.trim().length > 0)
+          .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker }))
 
-      if (toTranslate.length > 0) {
-        const translations = await runBatchTranslate(toTranslate, currentPage.id)
-        currentBlocks = currentBlocks.map((b) => {
-          if (translations[b.id]) {
-            return { ...b, rusText: translations[b.id], status: "translated" as const }
-          }
-          return b
-        })
+        if (toTranslate.length > 0) {
+          const translations = await runOllamaBatchTranslate(toTranslate, {
+            baseUrl: "http://localhost:11434",
+            model: check.models[0] || "qwen2.5:7b",
+          })
+          currentBlocks = currentBlocks.map((b) => {
+            if (translations[b.id]) {
+              return { ...b, rusText: translations[b.id], status: "translated" as const }
+            }
+            return b
+          })
+        }
+        setTextBlocks([...currentBlocks])
+        textBlocksRef.current = currentBlocks
+        await saveBlocks(true)
       }
-      setTextBlocks([...currentBlocks])
-      textBlocksRef.current = currentBlocks
-      await saveBlocks(true)
 
       setShowTypeset(true)
 
       const cleanImgUrl = `${getPageCleanImageUrl(currentPage.id)}?t=${Date.now()}`
       const cleanImg = await loadImage(cleanImgUrl)
-      const blob = await bakePageBlob(cleanImg, textBlocksRef.current, defaultFontSize)
+      const blob = await bakePageBlob(cleanImg, textBlocksRef.current, globalSettings.default_font_size || 14)
 
       if (blob) {
         await saveTranslatedPage(currentPage.id, blob)

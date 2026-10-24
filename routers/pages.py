@@ -9,6 +9,7 @@ import time
 import base64
 import mimetypes
 from pathlib import Path
+from typing import Optional
 import numpy as np
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from fastapi.responses import Response
@@ -28,12 +29,6 @@ router = APIRouter(prefix="/api/pages", tags=["Pages"])
 
 
 def serve_image_file_safely(file_path: str) -> Response:
-    """
-    Безопасная отдача изображения клиенту:
-    Считывает байты перед отправкой, что полностью исключает ошибку
-    h11.LocalProtocolError: 'Too little data for declared Content-Length'
-    при быстром перелистывании страниц или одновременной перезаписи файла.
-    """
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Файл изображения не найден на диске")
 
@@ -58,7 +53,6 @@ def serve_image_file_safely(file_path: str) -> Response:
 
 @router.post("/release-vram")
 async def release_vram_endpoint():
-    """Принудительно очищает неиспользуемую видеопамять и кэш PyTorch."""
     try:
         release_vram()
         return {"success": True}
@@ -199,9 +193,17 @@ async def save_page_blocks_endpoint(page_id: int, req: SavePageBlocksRequest):
 
 
 @router.post("/{page_id}/detect")
-async def detect_page_bubbles_by_id(page_id: int):
+async def detect_page_bubbles_by_id(
+    page_id: int,
+    conf: Optional[float] = Query(None),
+    auto_oval: Optional[bool] = Query(None)
+):
     try:
-        boxes, new_status, elapsed = detect_page_bubbles_service(page_id)
+        boxes, new_status, elapsed = detect_page_bubbles_service(
+            page_id,
+            conf_override=conf,
+            auto_oval_override=auto_oval
+        )
         return {
             "success": True,
             "boxes": boxes,
@@ -246,7 +248,16 @@ async def revert_page_clean(page_id: int):
 async def spot_clean_page(page_id: int, req: SpotCleanRequest):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
+    cursor.execute(
+        """
+        SELECT p.file_path, p.clean_path, p.status, t.clean_model
+        FROM pages p
+        JOIN chapters c ON c.id = p.chapter_id
+        JOIN titles t ON t.id = c.title_id
+        WHERE p.id = ?
+        """,
+        (page_id,)
+    )
     page_row = cursor.fetchone()
     conn.close()
 
@@ -272,7 +283,8 @@ async def spot_clean_page(page_id: int, req: SpotCleanRequest):
         "rotation": req.rotation or 0.0,
         "shape": req.shape or "rect"
     }
-    used_method = spot_clean_region(image, box_dict, method=req.method or "auto")
+    clean_model_name = page_row["clean_model"] or "anime-manga-big-lama.pt"
+    used_method = spot_clean_region(image, box_dict, method=req.method or "auto", clean_model_name=clean_model_name)
 
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
     os.makedirs(clean_dir, exist_ok=True)
@@ -295,16 +307,18 @@ async def spot_clean_page(page_id: int, req: SpotCleanRequest):
 
 @router.post("/{page_id}/clean-brush")
 async def brush_clean_page(page_id: int, req: BrushCleanRequest):
-    """
-    Восстанавливающая/заливочная кисть.
-    Поддерживает режимы:
-    - 'lama': нейросетевая ретушь LaMa
-    - 'white': заливка белым цветом
-    - 'black': заливка чёрным цветом
-    """
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
+    cursor.execute(
+        """
+        SELECT p.file_path, p.clean_path, p.status, t.clean_model
+        FROM pages p
+        JOIN chapters c ON c.id = p.chapter_id
+        JOIN titles t ON t.id = c.title_id
+        WHERE p.id = ?
+        """,
+        (page_id,)
+    )
     page_row = cursor.fetchone()
     conn.close()
 
@@ -336,7 +350,8 @@ async def brush_clean_page(page_id: int, req: BrushCleanRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ошибка обработки маски: {e}")
 
-    inpaint_by_brush_mask(image, mask_img, mode=req.mode or "lama")
+    clean_model_name = page_row["clean_model"] or "anime-manga-big-lama.pt"
+    inpaint_by_brush_mask(image, mask_img, mode=req.mode or "lama", clean_model_name=clean_model_name)
 
     clean_dir = os.path.join(os.path.dirname(orig_path), "clean")
     os.makedirs(clean_dir, exist_ok=True)

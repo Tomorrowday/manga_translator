@@ -1,5 +1,5 @@
 // manga_ui/components/translator-header.tsx
-// Шапка редактора с кнопкой вызова настроек хоткеев и динамическими тултипами
+// Шапка редактора с кнопкой вызова Настроек и Хоткеев
 
 "use client"
 
@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Keyboard,
+  Sliders,
 } from "lucide-react"
 import type { PageItem } from "@/lib/types"
 import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
@@ -34,6 +35,7 @@ interface TranslatorHeaderProps {
   onPrevPage?: () => void
   onNextPage?: () => void
   onOpenHotkeys?: () => void
+  onOpenSettings?: () => void
 }
 
 export function TranslatorHeader({
@@ -51,6 +53,7 @@ export function TranslatorHeader({
   onPrevPage,
   onNextPage,
   onOpenHotkeys,
+  onOpenSettings,
 }: TranslatorHeaderProps) {
   const { hotkeys } = useHotkeysConfig()
   const hasPrev = currentIndex > 0
@@ -103,6 +106,15 @@ export function TranslatorHeader({
       </div>
 
       <div className="flex items-center gap-3 text-xs text-slate-400">
+        <button
+          onClick={onOpenSettings}
+          className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          title="Глобальные настройки тайтла (тогглы, модели, шрифты)"
+        >
+          <Sliders className="h-3.5 w-3.5 text-amber-400" />
+          Настройки
+        </button>
+
         <button
           onClick={onOpenHotkeys}
           className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"

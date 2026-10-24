@@ -1,12 +1,19 @@
 # main.py
-# Точка входа FastAPI бэкенда
+# Точка входа FastAPI бэкенда с чистым выводом в консоль
 
 from contextlib import asynccontextmanager
 from typing import Any, cast
+import warnings
+import logging
 from fastapi import FastAPI
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 import pillow_heif
+
+# Отключаем предупреждения при старте
+warnings.filterwarnings("ignore")
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
 import database
 from ml.models import load_ml_models
@@ -19,14 +26,21 @@ pillow_heif.register_heif_opener()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Инициализация базы данных и загрузка ML-моделей при старте приложения."""
+    print("\n" + "=" * 50)
+    print("  Manga Translator Backend (FastAPI)")
+    print("=" * 50)
+
     database.init_db()
+    print("[1/3] База данных SQLite подключена.")
+
     load_ml_models()
-    print("🚀 Manga Translator BFF готов к обработке запросов!")
+    print("[2/3] Модели MangaOCR и YOLO загружены.")
+    print("[3/3] Модуль LaMa Inpainting готов к работе.")
+    print("🚀 Сервер успешно запущен: http://127.0.0.1:8000")
+    print("=" * 50 + "\n")
     yield
 
 
-# Настройка CORS через официальный контейнер Starlette Middleware
-# noinspection PyTypeChecker
 middleware = [
     Middleware(
         cast(Any, CORSMiddleware),
