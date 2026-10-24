@@ -1,0 +1,181 @@
+// manga_ui/lib/typeset/baker_impl.ts
+// Рендеринг и запекание тайпсета на Canvas с поддержкой поворота, цвета текста и контрастной обводки
+
+import type { TextBlock } from "../types"
+import type { CropRect } from "./baker"
+import { layoutBubbleTextLines } from "./layout"
+
+// Переиспользуемый offscreen canvas для устранения утечек памяти DOM-узлов
+let sharedCropCanvas: HTMLCanvasElement | null = null
+
+function getSharedCropCanvas(): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null
+  if (!sharedCropCanvas) {
+    sharedCropCanvas = document.createElement("canvas")
+  }
+  return sharedCropCanvas
+}
+
+export function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.src = src
+    if (img.complete && img.naturalWidth > 0) {
+      resolve(img)
+      return
+    }
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error(`Не удалось загрузить картинку: ${src}`))
+  })
+}
+
+export function cropRegion(img: HTMLImageElement, rect: CropRect): Promise<{ dataUrl: string }> {
+  if (!img || !img.complete || img.naturalWidth === 0 || img.naturalHeight === 0) {
+    return Promise.resolve({ dataUrl: "" })
+  }
+
+  const canvas = getSharedCropCanvas()
+  if (!canvas) return Promise.resolve({ dataUrl: "" })
+
+  const nw = img.naturalWidth
+  const nh = img.naturalHeight
+  const targetW = Math.max(1, Math.round(rect.width * nw))
+  const targetH = Math.max(1, Math.round(rect.height * nh))
+
+  canvas.width = targetW
+  canvas.height = targetH
+  const ctx = canvas.getContext("2d")
+
+  if (ctx) {
+    try {
+      ctx.clearRect(0, 0, targetW, targetH)
+      const rot = rect.rotation || 0
+      if (Math.abs(rot) >= 0.5) {
+        ctx.save()
+        ctx.translate(canvas.width / 2, canvas.height / 2)
+        ctx.rotate((-rot * Math.PI) / 180)
+        ctx.drawImage(
+          img,
+          rect.x * nw,
+          rect.y * nh,
+          rect.width * nw,
+          rect.height * nh,
+          -canvas.width / 2,
+          -canvas.height / 2,
+          canvas.width,
+          canvas.height
+        )
+        ctx.restore()
+      } else {
+        ctx.drawImage(
+          img,
+          rect.x * nw,
+          rect.y * nh,
+          rect.width * nw,
+          rect.height * nh,
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        )
+      }
+    } catch {
+      return Promise.resolve({ dataUrl: "" })
+    }
+  }
+
+  try {
+    return Promise.resolve({ dataUrl: canvas.toDataURL("image/png") })
+  } catch {
+    return Promise.resolve({ dataUrl: "" })
+  }
+}
+
+export async function bakePageBlob(
+  img: HTMLImageElement,
+  blocks: TextBlock[],
+  defaultFontSize: number = 14
+): Promise<Blob | null> {
+  if (typeof document !== "undefined" && document.fonts) {
+    await document.fonts.ready
+  }
+
+  const canvas = document.createElement("canvas")
+  canvas.width = img.naturalWidth
+  canvas.height = img.naturalHeight
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return null
+
+  ctx.drawImage(img, 0, 0)
+
+  for (const box of blocks) {
+    const rawText = (box.rusText || "").trim()
+    if (!rawText) continue
+
+    const displayText = box.isUppercase ? rawText.toUpperCase() : rawText
+    const bx = box.x * canvas.width
+    const by = box.y * canvas.height
+    const bw = box.width * canvas.width
+    const bh = box.height * canvas.height
+    const rot = box.rotation || 0
+    const minHyphens = box.minHyphens !== undefined ? box.minHyphens : true
+    const isWhiteText = box.textColor === "white"
+
+    const baseSize = box.fontSize || defaultFontSize
+    const currentFontSize = Math.round(baseSize * (canvas.height / 1200))
+    const fontName = box.fontFamily || "v_CCFaceFront"
+
+    const { lines, actualFontSize, lineHeight } = layoutBubbleTextLines(
+      ctx,
+      displayText,
+      bw,
+      bh,
+      currentFontSize,
+      fontName,
+      box.shape || "rect",
+      box.paddingMode || "safe",
+      box.isBold,
+      box.isItalic,
+      minHyphens
+    )
+
+    const totalHeight = lines.length * lineHeight
+    const startY = by + (bh - totalHeight) / 2 + lineHeight / 2
+    const centerX = bx + bw / 2
+    const centerY = by + bh / 2
+
+    ctx.save()
+    if (Math.abs(rot) >= 0.5) {
+      ctx.translate(centerX, centerY)
+      ctx.rotate((rot * Math.PI) / 180)
+      ctx.translate(-centerX, -centerY)
+    }
+
+    const isBold = box.isBold ? "bold " : ""
+    const isItalic = box.isItalic ? "italic " : ""
+    ctx.font = `${isItalic}${isBold}${actualFontSize}px '${fontName}', sans-serif`
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+
+    lines.forEach((line, idx) => {
+      const ly = startY + idx * lineHeight
+
+      if (box.hasStroke) {
+        ctx.strokeStyle = isWhiteText ? "#000000" : "#FFFFFF"
+        ctx.lineWidth = Math.max(3, actualFontSize * 0.18)
+        ctx.lineJoin = "round"
+        ctx.strokeText(line, centerX, ly)
+      }
+
+      ctx.fillStyle = isWhiteText ? "#FFFFFF" : "#000000"
+      ctx.fillText(line, centerX, ly)
+    })
+
+    ctx.restore()
+  }
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), "image/png")
+  })
+}

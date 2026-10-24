@@ -1,5 +1,52 @@
+# Repomix отчёты, дампы и текстовые файлы
+repomix/**
+**/*.xml
+**/*.txt
+**/*.bat
+.repomixignore.bak
+
+# Изображения, иконки и шрифты
 **/*.svg
 **/*.png
 **/*.jpg
+**/*.jpeg
+**/*.webp
+**/*.ico
+**/*.woff
+**/*.woff2
+**/*.ttf
+**/*.eot
+
+# Сборка и временные директории фронтенда
 manga_ui/.next/**
 manga_ui/public/**
+manga_ui/node_modules/**
+manga_ui/out/**
+
+# Python окружение, кэши и локальные данные
+venv/**
+.venv/**
+**/__pycache__/**
+**/*.pyc
+data/**
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+weights/**
+logs/**
+scripts/**
+
+# IDE и системные файлы
+.git/**
+.idea/**
+.vscode/**
+**/.DS_Store
+**/Thumbs.db
+
+# Конфиги фронтенда и локфайлы
+manga_ui/next-env.d.ts
+manga_ui/postcss.config.mjs
+manga_ui/components.json
+manga_ui/pnpm-workspace.yaml
+**/package-lock.json
+**/pnpm-lock.yaml
