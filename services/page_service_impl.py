@@ -209,7 +209,8 @@ def detect_page_bubbles_service(
 def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[str, str, Dict[str, int]]:
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
+    # 1. Запрашиваем и file_path, и clean_path
+    cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
     page_row = cursor.fetchone()
 
     if not page_row or not os.path.exists(str(page_row["file_path"])):
@@ -230,8 +231,13 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
         raise ValueError("Нет размеченных баблов для очистки")
 
     orig_path = str(page_row["file_path"])
+    clean_path_raw = str(page_row["clean_path"]) if page_row["clean_path"] else ""
+
+    # 2. Если уже есть clean-файл (после кисти или Spot Clean) — берем его как базу!
+    source_path = clean_path_raw if clean_path_raw and os.path.exists(clean_path_raw) else orig_path
+
     try:
-        image = load_image_cv2(orig_path)
+        image = load_image_cv2(source_path)
     except Exception as e:
         raise RuntimeError(f"Не удалось открыть изображение: {e}")
 

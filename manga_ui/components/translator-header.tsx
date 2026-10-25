@@ -1,8 +1,7 @@
 // manga_ui/components/translator-header.tsx
 /**
- * Контракт шапки редактора (навигация по страницам, кегль тайтла, кнопки сохранения/экспорта).
+ * Контракт шапки редактора (навигация по страницам, кегль тайтла, таймер главы, вызов статистики, сохранение/экспорт).
  * Реализация: manga_ui/components/translator-header_impl.tsx
- * Зависимости реализации: react, lucide-react, @/lib/types (PageItem), @/hooks/use-manga-hotkeys
  */
 
 import type { PageItem } from "@/lib/types"
@@ -11,8 +10,7 @@ export interface TranslatorHeaderProps {
   currentPage: PageItem | null
   currentIndex?: number
   totalPages?: number
-  totalBlocks: number
-  translatedCount: number
+  currentChapterId?: number | null
   titleFontSize: number
   onTitleFontSizeChange: (newSize: number) => void
   onApplyFontSizeToChapter: () => void
@@ -20,6 +18,10 @@ export interface TranslatorHeaderProps {
   isSaving: boolean
   isExporting: boolean
   isExportSuccess: boolean
+  isTimerRunning: boolean
+  timerSeconds: number
+  onStartTimer: () => void
+  onStopTimer: () => void
   onOpenFolder: () => void
   onExportPage: () => void
   onSaveBlocks: () => void
@@ -27,6 +29,7 @@ export interface TranslatorHeaderProps {
   onNextPage?: () => void
   onOpenHotkeys?: () => void
   onOpenSettings?: () => void
+  onOpenStatistics?: () => void
 }
 
 export { TranslatorHeader } from "./translator-header_impl"

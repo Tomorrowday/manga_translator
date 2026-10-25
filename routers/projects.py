@@ -1,8 +1,7 @@
 # routers/projects.py
 """
-Каркас роутера проектов манги (сканирование, настройки тайтлов, спикеры, глоссарий, статистика).
+Каркас роутера проектов манги (сканирование, настройки тайтлов, спикеры, глоссарий, расширенная статистика).
 Реализация: routers/projects_impl.py
-Зависимости реализации: database, schemas, config, ml.models, logger, pathlib
 """
 
 from typing import Optional
@@ -113,3 +112,17 @@ async def delete_glossary_item(title_id: int, entry_id: int):
 async def get_project_stats(title_id: int):
     """Статистика проекта: количество глав, страниц и процент перевода."""
     return await _impl.get_project_stats(title_id)
+
+
+# ---- Расширенная статистика по тайтлам и главам ----
+
+@router.get("/all-detailed-stats")
+async def get_all_detailed_stats():
+    """Детальная статистика по всем тайтлам и каждой их главе (страницы, реплики, слова, время)."""
+    return await _impl.get_all_detailed_stats()
+
+
+@router.post("/{title_id}/recalculate-all")
+async def recalculate_title_stats(title_id: int):
+    """Пересчитать реплики и слова во всех главах выбранного тайтла."""
+    return await _impl.recalculate_title_stats(title_id)

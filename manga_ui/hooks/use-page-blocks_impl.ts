@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-page-blocks_impl.ts
-// Управление блоками страницы: новые баблы создаются строго в режиме Auto
+// Управление блоками страницы: корректное сохранение и очистка от nullpx
 
 import { useState, useRef, useCallback } from "react"
 import type { TextBlock, PageItem, PageStatus, TitleSettings } from "@/lib/types"
@@ -40,16 +40,16 @@ export function usePageBlocks(
           rus_text: b.rusText,
           speaker: b.speaker || "",
           order_index: b.orderIndex || 0,
-          font_size: b.fontSize,
-          font_family: b.fontFamily,
-          is_bold: b.isBold,
-          is_italic: b.isItalic,
-          is_uppercase: b.isUppercase,
-          has_stroke: b.hasStroke,
+          font_size: b.fontSize !== undefined && b.fontSize !== null ? Number(b.fontSize) : undefined,
+          font_family: b.fontFamily || "v_CCFaceFront",
+          is_bold: Boolean(b.isBold),
+          is_italic: Boolean(b.isItalic),
+          is_uppercase: Boolean(b.isUppercase),
+          has_stroke: Boolean(b.hasStroke),
           text_color: b.textColor || "black",
           shape: b.shape || "rect",
           padding_mode: b.paddingMode || "safe",
-          min_hyphens: b.minHyphens !== undefined ? b.minHyphens : true,
+          min_hyphens: b.minHyphens !== undefined ? Boolean(b.minHyphens) : true,
           status: b.status,
         }))
 
@@ -82,8 +82,13 @@ export function usePageBlocks(
   )
 
   const setNewPageBlocks = useCallback((newBlocks: TextBlock[]) => {
-    setTextBlocks(newBlocks)
-    textBlocksRef.current = newBlocks
+    // Гарантируем, что ни один блок не получит fontSize: null
+    const sanitized = newBlocks.map((b) => ({
+      ...b,
+      fontSize: b.fontSize != null ? Number(b.fontSize) : undefined,
+    }))
+    setTextBlocks(sanitized)
+    textBlocksRef.current = sanitized
     isDirtyRef.current = false
   }, [])
 
@@ -96,7 +101,16 @@ export function usePageBlocks(
 
   const updateBlock = useCallback((id: string, patch: Partial<TextBlock>) => {
     isDirtyRef.current = true
-    setTextBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)))
+    setTextBlocks((prev) =>
+      prev.map((b) => {
+        if (b.id !== id) return b
+        const updated = { ...b, ...patch }
+        if (patch.fontSize === null) {
+          updated.fontSize = undefined
+        }
+        return updated
+      })
+    )
   }, [])
 
   const deleteBlock = useCallback((id: string) => {

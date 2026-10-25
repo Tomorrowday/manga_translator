@@ -1,8 +1,7 @@
 // manga_ui/lib/api/projects.ts
 /**
- * Контракт API-запросов тайтлов, сканирования, глобальных настроек и глоссария.
+ * Контракт API-запросов тайтлов, сканирования, глобальных настроек, глоссария и детальной статистики.
  * Реализация: manga_ui/lib/api/projects_impl.ts
- * Зависимости реализации: manga_ui/lib/api/client (API_BASE_URL, handleApiResponse), types
  */
 
 export {
@@ -22,4 +21,8 @@ export {
   addGlossaryItem,
   deleteGlossaryItem,
   getProjectStats,
+  getAllDetailedStats,
+  recalculateTitleStats,
 } from "./projects_impl"
+
+export type { TitleDetailedItem, ChapterDetailedItem } from "./projects_impl"

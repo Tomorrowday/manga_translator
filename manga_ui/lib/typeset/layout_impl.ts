@@ -1,8 +1,17 @@
 // manga_ui/lib/typeset/layout_impl.ts
-// Автоматический перенос строк, поддержка ручных переносов (\n),
+// Автоматический перенос строк с честной поддержкой ручных переносов (\n),
 // подбор размера шрифта под геометрию бабла и строгое оптическое центрирование
 
 import { cleanLeadingPunct, getWordHyphenSplits, appendHyphenSafe } from "./hyphenation"
+
+// Короткие предлоги, союзы и частицы, которые нежелательно оставлять висящими на конце строки
+const NON_BREAKING_SHORT_WORDS = new Set([
+  "а", "в", "и", "к", "о", "с", "у", "я",
+  "не", "ни", "на", "но", "по", "за", "из", "от", "до", "во", "со", "ко", "об", "ну", "ах", "ох", "эх", "уж", "ух",
+])
+
+// Частицы и тире, которые не должны отрываться от предыдущего слова на новую строку
+const ATTACH_TO_PREV_WORDS = new Set(["—", "–", "-", "же", "бы", "б", "ли", "ль", "то"])
 
 export function getEllipseWidthAtY(yOffset: number, rx: number, ry: number): number {
   if (ry <= 0 || Math.abs(yOffset) >= ry) {
@@ -22,7 +31,8 @@ function cleanAndTrimLines(rawLines: string[]): string[] {
   // Удаляем висячую пунктуацию на отдельных строках (точки, запятые, многоточия, тире)
   for (let i = result.length - 1; i > 0; i--) {
     const cur = result[i]
-    if (/^[.,!?:;…«»"'\s]+$/.test(cur)) {
+    if (!cur) continue
+    if (/^[.,!?:;…«»"'\)\]\s]+$/.test(cur)) {
       result[i - 1] = (result[i - 1] + cur).trim()
       result.splice(i, 1)
     } else if (/^[-—–−]+$/.test(cur)) {
@@ -34,14 +44,59 @@ function cleanAndTrimLines(rawLines: string[]): string[] {
   return result
 }
 
+/**
+ * Токенизирует абзац на слова, склеивая тире и частицы ("же", "бы", "ли") с предыдущим словом,
+ * чтобы они не оказывались в начале новой строки.
+ */
+function tokenizeParagraphWords(paragraph: string): string[] {
+  const rawTokens = paragraph.trim().split(/\s+/).filter(Boolean)
+  if (rawTokens.length <= 1) return rawTokens
+
+  const tokens: string[] = []
+  for (let i = 0; i < rawTokens.length; i++) {
+    const token = rawTokens[i]
+    const cleanLower = token.replace(/[.,!?:;…«»"'\)\]]+$/g, "").toLowerCase()
+
+    if (tokens.length > 0 && ATTACH_TO_PREV_WORDS.has(cleanLower)) {
+      tokens[tokens.length - 1] = `${tokens[tokens.length - 1]} ${token}`
+    } else {
+      tokens.push(token)
+    }
+  }
+
+  return tokens
+}
+
+/**
+ * Проверяет, заканчивается ли текущая строка коротким висячим предлогом/союзом,
+ * который лучше перенести вместе со следующим словом.
+ */
+function endsWithHangingShortWord(line: string): { hasHanging: boolean; withoutLast: string; lastWord: string } {
+  const parts = line.trim().split(/\s+/)
+  if (parts.length < 2) {
+    return { hasHanging: false, withoutLast: line, lastWord: "" }
+  }
+  const last = parts[parts.length - 1]
+  const cleanLast = last.replace(/^[«"(\[…]+/, "").toLowerCase()
+  if (NON_BREAKING_SHORT_WORDS.has(cleanLast)) {
+    return {
+      hasHanging: true,
+      withoutLast: parts.slice(0, -1).join(" "),
+      lastWord: last,
+    }
+  }
+  return { hasHanging: false, withoutLast: line, lastWord: "" }
+}
+
 function _layoutParagraphs(
   ctx: CanvasRenderingContext2D,
   paragraphs: string[],
   minHyphens: boolean,
   getAllowedWidth: (lineIdx: number) => number
-): { lines: string[]; hadHyphenation: boolean } {
+): { lines: string[]; hadHyphenation: boolean; hadForcedCharSplit: boolean } {
   const lines: string[] = []
   let hadHyphenation = false
+  let hadForcedCharSplit = false
 
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const paragraph = paragraphs[pIdx].trim()
@@ -50,7 +105,7 @@ function _layoutParagraphs(
       continue
     }
 
-    const remainingWords = paragraph.split(/\s+/)
+    const remainingWords = tokenizeParagraphWords(paragraph)
     let curLine = ""
 
     while (remainingWords.length > 0 && lines.length < 35) {
@@ -69,14 +124,26 @@ function _layoutParagraphs(
         continue
       }
 
-      // Не поместилось: если включен режим минимальных переносов и строка уже не пуста — переносим слово целиком
+      // Если в конце curLine остался короткий предлог ("в", "на", "не", "и", "к"),
+      // переносим его на следующую строку вместе со словом w.
+      if (curLine.length > 0) {
+        const hanging = endsWithHangingShortWord(curLine)
+        if (hanging.hasHanging && hanging.withoutLast.length > 0) {
+          lines.push(hanging.withoutLast.trim())
+          curLine = ""
+          remainingWords.unshift(hanging.lastWord)
+          continue
+        }
+      }
+
+      // Если включен режим минимальных переносов и строка уже не пуста — переносим слово целиком
       if (minHyphens && curLine.length > 0) {
         lines.push(curLine.trim())
         curLine = ""
         continue
       }
 
-      // Пробуем слоговой дефисный перенос слова
+      // Пробуем слоговой дефисный перенос слова по правилам русской орфографии
       let hyphenated = false
       const splits = getWordHyphenSplits(w)
 
@@ -112,6 +179,7 @@ function _layoutParagraphs(
         }
 
         hadHyphenation = true
+        hadForcedCharSplit = true
         if (splitIdx !== -1) {
           lines.push(appendHyphenSafe(part).trim())
           curLine = ""
@@ -129,7 +197,7 @@ function _layoutParagraphs(
     }
   }
 
-  return { lines: cleanAndTrimLines(lines), hadHyphenation }
+  return { lines: cleanAndTrimLines(lines), hadHyphenation, hadForcedCharSplit }
 }
 
 export function layoutBubbleTextLines(
@@ -149,7 +217,13 @@ export function layoutBubbleTextLines(
   const isEllipse = shape === "ellipse"
   const widthRatio = padMode === "fit" ? 0.98 : 0.92
   const targetMaxW = isEllipse ? boxW * 0.9 : boxW * widthRatio
-  const paragraphs = text.split(/\r?\n/)
+
+  // Ручные переносы строк (\n) пользователя сохраняются на 100% честно:
+  // каждая строка — это отдельный смысловой абзац.
+  const paragraphs = text
+    .split(/\r?\n/)
+    .map((p) => p.trim())
+    .filter((p, idx, arr) => (idx === arr.length - 1 && p === "" ? false : true))
 
   let lastLines: string[] = []
   let lastLineHeight = Math.round(curSize * 1.15)
@@ -158,19 +232,23 @@ export function layoutBubbleTextLines(
     ctx.font = `${isItalic ? "italic " : ""}${isBold ? "bold " : ""}${curSize}px '${fontFamily}', sans-serif`
     const lineHeight = Math.round(curSize * 1.15)
 
+    let lines: string[] = []
+    let hadHyphenation = false
+    let hadForcedCharSplit = false
     let getAllowedW: (idx: number) => number
 
     if (isEllipse) {
       const rx = (boxW / 2) * widthRatio
       const ry = (boxH / 2) * widthRatio
-      const estLines = Math.max(
-        1,
+
+      let estLines = Math.max(
+        paragraphs.length,
         Math.min(
-          25,
+          28,
           paragraphs.reduce((acc, p) => {
             const pTrim = p.trim()
             if (!pTrim) return acc + 1
-            return acc + Math.max(1, Math.ceil(ctx.measureText(pTrim).width / (boxW * 0.78)))
+            return acc + Math.max(1, Math.ceil(ctx.measureText(pTrim).width / Math.max(20, boxW * 0.76)))
           }, 0)
         )
       )
@@ -179,19 +257,42 @@ export function layoutBubbleTextLines(
         const yPos = (idx - (estLines - 1) / 2) * lineHeight
         return getEllipseWidthAtY(yPos, rx, ry)
       }
+
+      const pass1 = _layoutParagraphs(ctx, paragraphs, minHyphens, getAllowedW)
+
+      if (pass1.lines.length > 0 && pass1.lines.length !== estLines) {
+        estLines = pass1.lines.length
+        const pass2 = _layoutParagraphs(ctx, paragraphs, minHyphens, getAllowedW)
+        lines = pass2.lines
+        hadHyphenation = pass2.hadHyphenation
+        hadForcedCharSplit = pass2.hadForcedCharSplit
+      } else {
+        lines = pass1.lines
+        hadHyphenation = pass1.hadHyphenation
+        hadForcedCharSplit = pass1.hadForcedCharSplit
+      }
     } else {
       getAllowedW = () => targetMaxW
+      const res = _layoutParagraphs(ctx, paragraphs, minHyphens, getAllowedW)
+      lines = res.lines
+      hadHyphenation = res.hadHyphenation
+      hadForcedCharSplit = res.hadForcedCharSplit
     }
 
-    const { lines, hadHyphenation } = _layoutParagraphs(ctx, paragraphs, minHyphens, getAllowedW)
     lastLines = lines
     lastLineHeight = lineHeight
 
-    const allLinesFitWidth = lines.every((line) => ctx.measureText(line).width <= targetMaxW * 1.02)
+    const allLinesFitWidth = lines.every((line, idx) => {
+      const lineLimit = isEllipse ? Math.min(targetMaxW, getAllowedW(idx) * 1.04) : targetMaxW * 1.02
+      return ctx.measureText(line).width <= lineLimit
+    })
     const fitsHeight = lines.length * lineHeight <= boxH * 0.96
 
     if (allLinesFitWidth && fitsHeight) {
-      // Если включен режим без дефисов, но переносы всё равно возникли — пробуем уменьшить еще на 1px
+      if (hadForcedCharSplit && curSize > 9) {
+        curSize -= 1
+        continue
+      }
       if (minHyphens && hadHyphenation && curSize > 10) {
         curSize -= 1
         continue
@@ -201,12 +302,10 @@ export function layoutBubbleTextLines(
 
     if (curSize <= 8) break
 
-    // Адаптивный шаг уменьшения шрифта: при крупном кегле шагаем быстрее
     const step = curSize > 24 ? 2 : 1
     curSize = Math.max(8, curSize - step)
   }
 
-  // При достижении минимального размера (8px) возвращаем строки, разбитые под рамку, а не сырой неразбитый текст
   return {
     lines: lastLines.length > 0 ? lastLines : paragraphs.map((p) => p.trim()),
     actualFontSize: 8,

@@ -4,6 +4,8 @@
 const RUS_VOWELS = new Set("аеёиоуыэюяАЕЁИОУЫЭЮЯ")
 const RUS_CONSONANTS = new Set("бвгджзклмнпрстфхцчшщБВГДЖЗКЛМНПРСТФХЦЧШЩ")
 const RUS_SIGNS = new Set("ьъйЬЪЙ")
+const RUS_MODIFIERS = new Set("ьъЬЪ")
+const RUS_YOT = new Set("йЙ")
 const RUS_SONORANTS = new Set("рлмнйРЛМНЙ")
 
 export function appendHyphenSafe(str: string): string {
@@ -18,7 +20,6 @@ export function appendHyphenSafe(str: string): string {
 
 export function cleanLeadingPunct(str: string): string {
   if (!str) return str
-  // Если строка состоит только из дефисов, тире или пробелов (например, отдельное "—"), не стираем её
   if (/^[-—–−\s]+$/.test(str)) {
     return str.trim()
   }
@@ -32,92 +33,140 @@ function hasVowel(s: string): boolean {
   return false
 }
 
-export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffix: string }> {
-  // 1. Если в слове уже есть дефис (например: "где-то", "темно-синий") — делим по нему
-  if (word.includes("-")) {
-    const dashIdx = word.indexOf("-")
-    const pfx = word.slice(0, dashIdx + 1)
-    const sfx = cleanLeadingPunct(word.slice(dashIdx + 1))
-    if (pfx && sfx && pfx.length >= 2 && sfx.length >= 2) {
-      return [{ prefix: pfx, suffix: sfx }]
-    }
-  }
+function isConsonantOrSign(ch: string): boolean {
+  return RUS_CONSONANTS.has(ch) || RUS_SIGNS.has(ch)
+}
 
-  // Выделяем ведущую пунктуацию, корневую буквенную часть и хвостовую пунктуацию
-  const match = word.match(/^([.«"(\[…\s]*)([а-яА-ЯёЁa-zA-Z]+)(.*)$/)
-  if (!match) return []
-
-  const leadPunct = match[1]
-  const core = match[2]
-  const trailPunct = match[3]
-
-  // По правилам переноса: минимум 4 буквы в слове (по 2 буквы с каждой стороны)
-  if (core.length < 4) return []
-
-  const splits: Array<{ prefix: string; suffix: string }> = []
+function findRussianCoreSplitIndices(core: string): number[] {
   const n = core.length
+  if (n < 4) return []
 
-  for (let i = 1; i <= n - 2; i++) {
+  const indices: number[] = []
+
+  for (let i = 2; i <= n - 2; i++) {
     const leftPart = core.slice(0, i)
     const rightPart = core.slice(i)
 
-    // Правило 1: Нельзя оставлять или переносить 1 букву
-    if (leftPart.length < 2 || rightPart.length < 2) continue
-
-    // Правило 2: В обеих частях слова обязательно должна быть хотя бы одна гласная
+    // Правило 1: В обеих частях слова обязательно должна быть хотя бы одна гласная
     if (!hasVowel(leftPart) || !hasVowel(rightPart)) continue
 
     const charBefore = core[i - 1]
     const charAfter = core[i]
 
-    // Правило 3: Знаки ь, ъ, й никогда не отрываются от предшествующей буквы
+    // Правило 2: Знаки ь, ъ, й никогда не отрываются от предшествующей буквы
     if (RUS_SIGNS.has(charAfter)) continue
 
-    // Правило 4: Не отрывать согласную от следующей за ней гласной, если перед ней гласная (гла-за, а не гл-аза)
+    // Правило 3: Одиночная согласная между двумя гласными не отрывается от следующей гласной (ко-ро-ва, а не кор-ова)
+    if (RUS_CONSONANTS.has(charBefore) && RUS_VOWELS.has(charAfter)) {
+      const prevPrev = i >= 2 ? core[i - 2] : ""
+      if (RUS_VOWELS.has(prevPrev) || RUS_MODIFIERS.has(prevPrev)) {
+        continue
+      }
+    }
+
+    // Правило 4: Перенос после ь и ъ (маль-чик, боль-шой, подъ-езд, объ-явление)
+    if (RUS_MODIFIERS.has(charBefore)) {
+      indices.push(i)
+      continue
+    }
+
+    // Правило 5: Перенос после "й" перед согласной (вой-на, тай-на, май-ка, сей-час)
+    if (RUS_YOT.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
+      indices.push(i)
+      continue
+    }
+
+    // Правило 6: Стык двух гласных (на-ука, по-эзия, ха-ос)
     if (RUS_VOWELS.has(charBefore) && RUS_VOWELS.has(charAfter)) {
-      // Перенос между двумя гласными допустим (ха-ос, на-ука)
-      const prefix = appendHyphenSafe(leadPunct + leftPart)
-      const suffix = cleanLeadingPunct(rightPart + trailPunct)
-      splits.push({ prefix, suffix })
+      indices.push(i)
       continue
     }
 
-    // Правило 5: Стык удвоенных согласных разрывается (мас-са, рус-ский)
-    if (
-      charBefore.toLowerCase() === charAfter.toLowerCase() &&
-      RUS_CONSONANTS.has(charBefore)
-    ) {
-      const prefix = appendHyphenSafe(leadPunct + leftPart)
-      const suffix = cleanLeadingPunct(rightPart + trailPunct)
-      splits.push({ prefix, suffix })
-      continue
-    }
-
-    // Правило 6: Сонорная согласная (р, л, м, н, й) перед шумной согласной отходит влево (пар-та, пол-ка, бан-ка)
-    if (RUS_SONORANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
-      const prefix = appendHyphenSafe(leadPunct + leftPart)
-      const suffix = cleanLeadingPunct(rightPart + trailPunct)
-      splits.push({ prefix, suffix })
-      continue
-    }
-
-    // Правило 7: Базовый слогораздел — после гласной перед согласной (ко-ро-ва)
+    // Правило 7: Открытый слог — после гласной перед согласной (мо-ло-ко, пе-ре-ма-ты-ва-ла)
     if (RUS_VOWELS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
-      const prefix = appendHyphenSafe(leadPunct + leftPart)
-      const suffix = cleanLeadingPunct(rightPart + trailPunct)
-      splits.push({ prefix, suffix })
+      indices.push(i)
       continue
     }
 
-    // Правило 8: Перенос между группой шумных согласных (сес-тра или се-стра)
-    if (RUS_CONSONANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
-      const prefix = appendHyphenSafe(leadPunct + leftPart)
-      const suffix = cleanLeadingPunct(rightPart + trailPunct)
-      splits.push({ prefix, suffix })
+    // Правило 8: Стык удвоенных согласных (мас-са, рус-ский, груп-па)
+    if (
+      RUS_CONSONANTS.has(charBefore) &&
+      RUS_CONSONANTS.has(charAfter) &&
+      charBefore.toLowerCase() === charAfter.toLowerCase()
+    ) {
+      indices.push(i)
       continue
+    }
+
+    // Правило 9: Сонорная согласная перед другой согласной (пар-та, пол-ка, бан-ка, свадь-бе)
+    if (RUS_SONORANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
+      indices.push(i)
+      continue
+    }
+
+    // Правило 10: Стечение шумных согласных (сес-тра, под-толк-нуть), кроме оставления двойных согласных в начале переноса
+    if (RUS_CONSONANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
+      const nextAfter = i + 1 < n ? core[i + 1] : ""
+      if (
+        nextAfter &&
+        RUS_CONSONANTS.has(nextAfter) &&
+        charAfter.toLowerCase() === nextAfter.toLowerCase()
+      ) {
+        continue
+      }
+      if (isConsonantOrSign(charBefore) && isConsonantOrSign(charAfter)) {
+        indices.push(i)
+        continue
+      }
     }
   }
 
-  // Возвращаем варианты от самых длинных префиксов к коротким
+  return indices
+}
+
+export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffix: string }> {
+  if (!word || word.length < 4) return []
+
+  const match = word.match(/^([.«"(\[…\s]*)([а-яА-ЯёЁa-zA-Z]+(?:-[а-яА-ЯёЁa-zA-Z]+)*)(.*)$/)
+  if (!match) return []
+
+  const leadPunct = match[1]
+  const fullCore = match[2]
+  const trailPunct = match[3]
+
+  const splits: Array<{ prefix: string; suffix: string }> = []
+  const parts = fullCore.split("-")
+
+  let accumulatedLeft = ""
+  for (let pIdx = 0; pIdx < parts.length; pIdx++) {
+    const part = parts[pIdx]
+    const remainingRightParts = parts.slice(pIdx + 1).join("-")
+    const rightTail = remainingRightParts ? "-" + remainingRightParts + trailPunct : trailPunct
+
+    if (part.length >= 4) {
+      const indices = findRussianCoreSplitIndices(part)
+      for (const idx of indices) {
+        const subLeft = part.slice(0, idx)
+        const subRight = part.slice(idx)
+        const prefix = appendHyphenSafe(leadPunct + accumulatedLeft + subLeft)
+        const suffix = cleanLeadingPunct(subRight + rightTail)
+        if (prefix && suffix) {
+          splits.push({ prefix, suffix })
+        }
+      }
+    }
+
+    if (pIdx < parts.length - 1) {
+      const leftWithDash = accumulatedLeft + part + "-"
+      if (part.length >= 2 && remainingRightParts.length >= 2) {
+        splits.push({
+          prefix: leadPunct + leftWithDash,
+          suffix: cleanLeadingPunct(remainingRightParts + trailPunct),
+        })
+      }
+      accumulatedLeft = leftWithDash
+    }
+  }
+
   return splits.reverse()
 }

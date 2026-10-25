@@ -68,7 +68,13 @@ export function Sidebar({
 
   const loadProjects = useCallback(async () => {
     try {
-      const list = await getProjects()
+      const response: any = await getProjects()
+      const list: TitleProject[] = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.projects)
+        ? response.projects
+        : []
+
       setProjects(list)
       setSelectedTitleId((prev) => {
         if (prev !== null && list.some((p: TitleProject) => p.id === prev)) {
@@ -78,6 +84,7 @@ export function Sidebar({
       })
     } catch (e) {
       console.error("Ошибка загрузки проектов:", e)
+      setProjects([])
     }
   }, [])
 
@@ -141,7 +148,7 @@ export function Sidebar({
         await loadProjects()
         return true
       }
-      alert("Ошибка: " + res.error)
+      alert("Ошибка: " + (res.error || "Неизвестная ошибка"))
       return false
     } catch (e) {
       alert("Не удалось отсканировать папку: " + String(e))
@@ -157,7 +164,7 @@ export function Sidebar({
         await loadTree(selectedTitleId)
         return true
       }
-      alert("Ошибка: " + (res.error || res.detail))
+      alert("Ошибка: " + (res.error || res.detail || "Неизвестная ошибка"))
       return false
     } catch (e) {
       alert("Не удалось добавить главу: " + String(e))
@@ -203,7 +210,8 @@ export function Sidebar({
     await loadProjects()
   }
 
-  const selectedProject = projects.find((p) => p.id === selectedTitleId)
+  const projectList = Array.isArray(projects) ? projects : []
+  const selectedProject = projectList.find((p) => p.id === selectedTitleId)
 
   if (!isOpen) {
     return (
@@ -249,10 +257,10 @@ export function Sidebar({
             onChange={(e) => setSelectedTitleId(Number(e.target.value))}
             className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
           >
-            {projects.length === 0 ? (
+            {projectList.length === 0 ? (
               <option value="">No titles scanned</option>
             ) : (
-              projects.map((p) => (
+              projectList.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>

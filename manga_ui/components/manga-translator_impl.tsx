@@ -1,5 +1,5 @@
 // manga_ui/components/manga-translator_impl.tsx
-// Главный контейнер с интерактивным изменением ширины правой панели (Resizable Splitter)
+// Главный контейнер Manga Translator с поддержкой таймера текущей главы и модалки статистики
 
 "use client"
 
@@ -13,6 +13,7 @@ import { TranslationToolbar } from "@/components/translation-toolbar"
 import { TextBlocksList } from "@/components/text-blocks-list"
 import { HotkeysModal } from "@/components/hotkeys-modal"
 import { SettingsModal } from "@/components/settings-modal"
+import { StatisticsModal } from "@/components/statistics-modal"
 import { cropRegion, mapDbBlockToTextBlock } from "@/lib/typeset"
 import { useMangaHotkeys } from "@/hooks/use-manga-hotkeys"
 import { usePageBlocks } from "@/hooks/use-page-blocks"
@@ -30,6 +31,9 @@ import {
   resetChapterBubbleFonts,
   getGlobalSettings,
   exportChapterScriptToFolder,
+  getChapterTimerStatus,
+  startChapterTimer,
+  stopChapterTimer,
 } from "@/lib/api"
 import type { MangaTranslatorProps } from "./manga-translator"
 
@@ -49,6 +53,10 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
   const [titleFontSize, setTitleFontSize] = useState<number>(14)
   const [isApplyingChapterFont, setIsApplyingChapterFont] = useState(false)
 
+  // Трекинг времени текущей главы
+  const [isTimerRunning, setIsTimerRunning] = useState(false)
+  const [timerSeconds, setTimerSeconds] = useState(0)
+
   // Ширина правой панели (свободно изменяемая сплиттером)
   const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH)
   const [isResizing, setIsResizing] = useState<boolean>(false)
@@ -63,9 +71,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
           setPanelWidth(val)
         }
       }
-    } catch {
-      // Игнорируем ошибки доступа к localStorage
-    }
+    } catch {}
   }, [])
 
   // Глобальные настройки приложения
@@ -85,12 +91,73 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
   // Модальные окна
   const [showHotkeysModal, setShowHotkeysModal] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [showStatisticsModal, setShowStatisticsModal] = useState(false)
 
   const chapterPagesRef = useRef<PageItem[]>([])
   chapterPagesRef.current = chapterPages
   const isSwitchingPageRef = useRef(false)
 
-  // Обработчик перетаскивания границы панели
+  // Получение актуального id текущей главы
+  const currentChapterId = currentPage?.chapter_id || chapterPages[0]?.chapter_id || null
+
+  // Загрузка состояния таймера при переключении главы
+  useEffect(() => {
+    if (!currentChapterId) {
+      setIsTimerRunning(false)
+      setTimerSeconds(0)
+      return
+    }
+
+    let active = true
+    getChapterTimerStatus(currentChapterId)
+      .then((res) => {
+        if (!active) return
+        setIsTimerRunning(res.is_running)
+        setTimerSeconds(res.total_seconds)
+      })
+      .catch((e) => console.warn("Не удалось получить статус таймера:", e))
+
+    return () => {
+      active = false
+    }
+  }, [currentChapterId])
+
+  // Тикание таймера раз в секунду при активной сессии
+  useEffect(() => {
+    if (!isTimerRunning) return
+    const interval = setInterval(() => {
+      setTimerSeconds((prev) => prev + 1)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [isTimerRunning])
+
+  const handleStartTimer = useCallback(async () => {
+    if (!currentChapterId) return
+    try {
+      const res = await startChapterTimer(currentChapterId)
+      if (res.success) {
+        setIsTimerRunning(true)
+        setTimerSeconds(res.total_seconds)
+      }
+    } catch (e) {
+      console.error("Ошибка старта таймера:", e)
+    }
+  }, [currentChapterId])
+
+  const handleStopTimer = useCallback(async () => {
+    if (!currentChapterId) return
+    try {
+      const res = await stopChapterTimer(currentChapterId)
+      if (res.success) {
+        setIsTimerRunning(false)
+        setTimerSeconds(res.total_seconds)
+      }
+    } catch (e) {
+      console.error("Ошибка остановки таймера:", e)
+    }
+  }, [currentChapterId])
+
+  // Обработчик сплиттера
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setIsResizing(true)
@@ -104,7 +171,6 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
       const minW = 360
       const maxW = Math.max(minW, Math.floor(window.innerWidth * 0.55))
       const clamped = Math.min(Math.max(newWidth, minW), maxW)
-
       setPanelWidth(clamped)
     }
 
@@ -161,7 +227,6 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     }
   }, [])
 
-  // При смене базового кегля тайтла — обновляем состояние и сохраняем в БД
   const handleTitleFontSizeChange = useCallback(async (newSize: number) => {
     setTitleFontSize(newSize)
     if (currentTitleId) {
@@ -173,7 +238,6 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     }
   }, [currentTitleId])
 
-  // Кнопка: применить базовый кегль ко всей главе (сброс всех баблов в Auto)
   const handleApplyFontSizeToChapter = useCallback(async () => {
     const chId = currentPage?.chapter_id || chapterPages[0]?.chapter_id
     if (!chId) return
@@ -288,7 +352,9 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
         const loaded: TextBlock[] = []
         for (const b of dbBlocks) {
           const cropped = img.naturalWidth > 0 ? await cropRegion(img, { ...b, rotation: b.rotation || 0 }) : { dataUrl: "" }
-          loaded.push(mapDbBlockToTextBlock(b, cropped.dataUrl))
+          const mapped = mapDbBlockToTextBlock({ ...b, imageCrop: cropped.dataUrl, image_crop: cropped.dataUrl })
+          mapped.imageCrop = cropped.dataUrl
+          loaded.push(mapped)
         }
         setNewPageBlocks(loaded)
         setSelectedId(loaded[0]?.id || null)
@@ -317,7 +383,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
                 japText: box.jap_text || "",
                 rusText: "",
                 orderIndex: box.order_index,
-                fontSize: undefined, // СТРОГО AUTO
+                fontSize: undefined,
                 fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
                 textColor: "black",
                 shape: "rect",
@@ -441,7 +507,6 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     onChapterExportJson: handleChapterExportJson,
   })
 
-  const translatedCount = textBlocks.filter((b) => b.status === "translated" || Boolean(b.rusText?.trim())).length
   const currentSpeakers = textBlocks.map((b) => b.speaker?.trim()).filter((s): s is string => !!s)
   const allSpeakerSuggestions = Array.from(new Set([...knownSpeakers, ...currentSpeakers])).sort()
 
@@ -463,8 +528,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
         currentPage={currentPage}
         currentIndex={currentPageIdx}
         totalPages={chapterPages.length}
-        totalBlocks={textBlocks.length}
-        translatedCount={translatedCount}
+        currentChapterId={currentChapterId}
         titleFontSize={titleFontSize}
         onTitleFontSizeChange={handleTitleFontSizeChange}
         onApplyFontSizeToChapter={handleApplyFontSizeToChapter}
@@ -472,6 +536,10 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
         isSaving={isSaving}
         isExporting={pipelines.isExporting}
         isExportSuccess={pipelines.isExportSuccess}
+        isTimerRunning={isTimerRunning}
+        timerSeconds={timerSeconds}
+        onStartTimer={handleStartTimer}
+        onStopTimer={handleStopTimer}
         onOpenFolder={() => currentPage && openTranslatedFolder(currentPage.id)}
         onExportPage={pipelines.handleExportPage}
         onSaveBlocks={() => saveBlocks(true)}
@@ -479,6 +547,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
         onNextPage={handleNextPage}
         onOpenHotkeys={() => setShowHotkeysModal(true)}
         onOpenSettings={() => setShowSettingsModal(true)}
+        onOpenStatistics={() => setShowStatisticsModal(true)}
       />
 
       <BatchChapterActions
@@ -581,6 +650,13 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
           onSettingsUpdated={(newSettings) => {
             setGlobalSettings((prev) => ({ ...prev, ...newSettings }))
           }}
+        />
+      )}
+
+      {showStatisticsModal && (
+        <StatisticsModal
+          currentChapterId={currentChapterId}
+          onClose={() => setShowStatisticsModal(false)}
         />
       )}
     </div>

@@ -1,7 +1,9 @@
 # routers/projects_impl.py
-# Реализация бизнес-логики управления проектами, сканирования папок, глоссария и настроек
+# Реализация бизнес-логики управления проектами, сканирования папок, глоссария и детальной статистики
 
 import os
+import re
+import time
 import sqlite3
 from pathlib import Path
 from typing import Optional, Tuple, Set
@@ -54,8 +56,10 @@ async def get_global_settings_endpoint():
     settings["available_detectors"] = get_available_detectors()
     settings["available_cleaners"] = get_available_cleaners()
 
-    ml.lama_precision = settings["lama_precision"]
-    ml.lama_downscale = settings["lama_downscale"]
+    if hasattr(ml, "lama_precision"):
+        ml.lama_precision = settings["lama_precision"]
+    if hasattr(ml, "lama_downscale"):
+        ml.lama_downscale = settings["lama_downscale"]
 
     return {"success": True, "settings": settings}
 
@@ -71,7 +75,7 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
     font_b = req.font_bubble or "v_CCFaceFront"
     font_t = req.font_thought or "v_CCFaceFront"
     font_s = req.font_sfx or "v_Mighty Zeo 2.0"
-    precision = req.lama_precision if req.lama_precision in ["fp32", "fp16", "bf16"] else "fp32"
+    precision = getattr(req, "lama_precision", "fp32") or "fp32"
     downscale = 1 if req.lama_downscale else 0
 
     with db_session() as cur:
@@ -80,8 +84,8 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
             INSERT INTO global_settings (
                 id, detector_model, clean_model, detect_conf,
                 auto_oval_bubble, default_padding, default_hyphenation,
-                font_bubble, font_thought, font_sfx, lama_precision, lama_downscale
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                font_bubble, font_thought, font_sfx, lama_downscale
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 detector_model = excluded.detector_model,
                 clean_model = excluded.clean_model,
@@ -92,16 +96,15 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
                 font_bubble = excluded.font_bubble,
                 font_thought = excluded.font_thought,
                 font_sfx = excluded.font_sfx,
-                lama_precision = excluded.lama_precision,
                 lama_downscale = excluded.lama_downscale
             """,
-            (detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s, precision, downscale)
+            (detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s, downscale)
         )
 
-    ml.lama_precision = precision
-    ml.lama_downscale = bool(downscale)
+    if hasattr(ml, "lama_downscale"):
+        ml.lama_downscale = bool(downscale)
 
-    logger.info(f"Глобальные настройки обновлены: точность={precision}, сжатие={bool(downscale)}.")
+    logger.info(f"Глобальные настройки обновлены: сжатие={bool(downscale)}.")
     return {
         "success": True,
         "settings": {
@@ -529,4 +532,110 @@ async def get_project_stats(title_id: int):
             "translated_blocks": translated_blocks,
             "total_glossary": total_glossary,
         }
+    }
+
+
+async def get_all_detailed_stats():
+    """
+    Возвращает список всех проектов со структурированными главами:
+    страницы, реплики, русские слова, затраченное время (с учётом активного таймера).
+    """
+    now = int(time.time())
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT id, name, folder_path, created_at FROM titles ORDER BY name ASC")
+    titles = [dict(r) for r in cur.fetchall()]
+
+    result_titles = []
+
+    for t in titles:
+        t_id = t["id"]
+        cur.execute(
+            """
+            SELECT id, chapter_number, folder_path, work_seconds, timer_started_at,
+                   cached_replicas_count, cached_words_count
+            FROM chapters
+            WHERE title_id = ?
+            """,
+            (t_id,)
+        )
+        chapters = [dict(r) for r in cur.fetchall()]
+        chapters.sort(key=lambda c: natural_sort_key(c["chapter_number"]))
+
+        total_title_pages = 0
+        total_title_replicas = 0
+        total_title_words = 0
+        total_title_seconds = 0
+
+        chapters_data = []
+        for ch in chapters:
+            ch_id = ch["id"]
+            cur.execute("SELECT COUNT(*) FROM pages WHERE chapter_id = ?", (ch_id,))
+            pages_count = cur.fetchone()[0] or 0
+
+            base_sec = ch.get("work_seconds") or 0
+            timer_start = ch.get("timer_started_at")
+            is_timer_running = timer_start is not None
+            session_sec = max(0, now - int(timer_start)) if is_timer_running else 0
+            total_ch_sec = base_sec + session_sec
+
+            reps = ch.get("cached_replicas_count")
+            words = ch.get("cached_words_count")
+
+            total_title_pages += pages_count
+            total_title_seconds += total_ch_sec
+            if reps is not None:
+                total_title_replicas += reps
+            if words is not None:
+                total_title_words += words
+
+            chapters_data.append({
+                "id": ch_id,
+                "chapter_number": ch["chapter_number"],
+                "pages_count": pages_count,
+                "replicas_count": reps,
+                "words_count": words,
+                "work_seconds": total_ch_sec,
+                "is_timer_running": is_timer_running,
+            })
+
+        result_titles.append({
+            "id": t_id,
+            "name": t["name"],
+            "total_pages": total_title_pages,
+            "total_replicas": total_title_replicas,
+            "total_words": total_title_words,
+            "total_seconds": total_title_seconds,
+            "chapters": chapters_data,
+        })
+
+    conn.close()
+    return {"success": True, "projects": result_titles}
+
+
+async def recalculate_title_stats(title_id: int):
+    """Пересчитывает реплики и слова во всех главах указанного тайтла."""
+    import routers.chapters_impl as ch_impl
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM chapters WHERE title_id = ?", (title_id,))
+    chapter_ids = [r[0] for r in cur.fetchall()]
+    conn.close()
+
+    total_replicas = 0
+    total_words = 0
+
+    for ch_id in chapter_ids:
+        res = await ch_impl.recalculate_chapter_stats(ch_id)
+        total_replicas += res["replicas_count"]
+        total_words += res["words_count"]
+
+    return {
+        "success": True,
+        "title_id": title_id,
+        "chapters_recalculated": len(chapter_ids),
+        "total_replicas": total_replicas,
+        "total_words": total_words,
     }

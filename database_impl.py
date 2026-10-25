@@ -86,9 +86,25 @@ def init_db():
                 volume_number TEXT DEFAULT '1',
                 chapter_number TEXT NOT NULL,
                 folder_path TEXT,
+                work_seconds INTEGER DEFAULT 0,
+                timer_started_at INTEGER DEFAULT NULL,
+                cached_replicas_count INTEGER DEFAULT NULL,
+                cached_words_count INTEGER DEFAULT NULL,
                 FOREIGN KEY (title_id) REFERENCES titles(id) ON DELETE CASCADE
             )
         ''')
+
+        # Миграция: добавляем поля таймера и кэша слов/реплик для существующих баз
+        for col_def in [
+            "work_seconds INTEGER DEFAULT 0",
+            "timer_started_at INTEGER DEFAULT NULL",
+            "cached_replicas_count INTEGER DEFAULT NULL",
+            "cached_words_count INTEGER DEFAULT NULL",
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE chapters ADD COLUMN {col_def}")
+            except Exception:
+                pass
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS pages (
@@ -144,4 +160,4 @@ def init_db():
         cursor.execute("DELETE FROM pages WHERE chapter_id NOT IN (SELECT id FROM chapters)")
         cursor.execute("DELETE FROM chapters WHERE title_id NOT IN (SELECT id FROM titles)")
 
-    print("База данных проверена, таблица глобальных настроек готова.")
+    print("База данных проверена, миграции таймера и статистики применены.")

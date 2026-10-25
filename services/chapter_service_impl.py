@@ -1,5 +1,5 @@
 # services/chapter_service_impl.py
-# Бизнес-логика работы с главами: экспорт в 2 раздельных JSON и чистый импорт
+# Бизнес-логика работы с главами: экспорт в 2 раздельных JSON, чистый авто-импорт и управление шрифтами
 
 import os
 import json
@@ -141,18 +141,43 @@ def get_chapter_folder_path(chapter_id: int) -> Optional[str]:
 
 
 def find_latest_dialogue_json_in_folder(chapter_id: int) -> Optional[str]:
+    """
+    Приоритетно ищет файл *_dialogues.json в папке главы.
+    Если не найден, ищет любой .json, кроме файлов _context.json.
+    """
     folder = get_chapter_folder_path(chapter_id)
     if not folder or not os.path.exists(folder):
         return None
 
-    json_files = [f for f in Path(folder).glob("*.json") if not f.name.endswith("_context.json")]
-    if not json_files:
-        json_files = list(Path(folder).glob("*.json"))
-    if not json_files:
-        return None
+    # 1. Приоритетный поиск файлов с суффиксом _dialogues.json
+    dialogue_files = list(Path(folder).glob("*_dialogues.json"))
+    if dialogue_files:
+        dialogue_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+        return str(dialogue_files[0])
 
-    json_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-    return str(json_files[0])
+    # 2. Поиск любых других json-файлов за исключением _context.json
+    other_json = [f for f in Path(folder).glob("*.json") if not f.name.endswith("_context.json")]
+    if other_json:
+        other_json.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+        return str(other_json[0])
+
+    return None
+
+
+def apply_font_size_to_chapter_service(chapter_id: int, font_size: Optional[int]) -> int:
+    """Устанавливает конкретный размер кегля (или NULL для Auto) всем баблам главы."""
+    with db_session() as cur:
+        cur.execute(
+            """
+            UPDATE text_blocks
+            SET font_size = ?
+            WHERE page_id IN (SELECT id FROM pages WHERE chapter_id = ?)
+            """,
+            (font_size, chapter_id)
+        )
+        affected = cur.rowcount
+    logger.info(f"Для главы {chapter_id} обновлён кегль шрифта (size={font_size}) для {affected} блоков.")
+    return affected
 
 
 def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[str, int]:
@@ -183,7 +208,7 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
 
     cur.execute(
         """
-        SELECT tb.id, tb.rus_text, tb.speaker, tb.order_index, tb.class_id, tb.shape, p.page_number
+        SELECT tb.id, tb.rus_text, tb.speaker, tb.order_index, tb.class_id, tb.shape, tb.font_size, p.page_number
         FROM text_blocks tb
         JOIN pages p ON p.id = tb.page_id
         WHERE p.chapter_id = ?
@@ -248,7 +273,11 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
                 new_shape = "ellipse" if final_ru else "rect"
 
             cur_session.execute(
-                "UPDATE text_blocks SET rus_text = ?, speaker = ?, shape = ?, status = ? WHERE id = ?",
+                """
+                UPDATE text_blocks 
+                SET rus_text = ?, speaker = ?, shape = ?, status = ? 
+                WHERE id = ?
+                """,
                 (final_ru, final_spk, new_shape, new_status, real_block_id)
             )
             updated_count += 1

@@ -1,5 +1,5 @@
 // manga_ui/components/batch-chapter-actions_impl.tsx
-// Пакетные действия с главой (Detect, Clean, Translate, Export, экспорт и импорт JSON-скриптов)
+// Пакетные действия с главой (Detect, Clean, Translate, Export, умный импорт JSON)
 
 "use client"
 
@@ -190,7 +190,7 @@ export function BatchChapterActions({
     if (!chapterId || isRunning) return
     await ensureCurrentPageSaved()
 
-    setProgress({ action: "script-import", done: 0, total: 1, label: "Opening chapter folder..." })
+    setProgress({ action: "script-import", done: 0, total: 1, label: "Checking chapter folder for dialogues JSON..." })
     try {
       const res = await pickAndImportChapterScript(chapterId)
 
@@ -207,6 +207,7 @@ export function BatchChapterActions({
         })
 
         const msg = [
+          res.auto_found ? "⚡ Файл найден автоматически в папке главы!" : null,
           `Файл: ${res.file_path}`,
           `Успешно импортировано реплик: ${res.updated_count}`,
           res.updated_speakers_count ? `Распознано спикеров: ${res.updated_speakers_count}` : null,
@@ -328,7 +329,7 @@ export function BatchChapterActions({
           onClick={handleImportClick}
           disabled={disabled || isRunning}
           className="flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800 hover:text-white disabled:opacity-50"
-          title="Выбрать и импортировать JSON из папки текущей главы"
+          title="Автоматически импортировать файл диалогов из папки главы или выбрать файл"
         >
           {progress?.action === "script-import" ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

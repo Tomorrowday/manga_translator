@@ -1,5 +1,6 @@
 // manga_ui/components/image-viewer/bubble-overlay-item_impl.tsx
-// Рендеринг бабла на скане: авто-овал при появлении русского перевода
+// Рендеринг бабла на скане: авто-овал при появлении русского перевода,
+// точное инлайн-редактирование без обрезания текста и честное сохранение ручных \n
 
 "use client"
 
@@ -54,8 +55,10 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    setLocalText(box.rusText || "")
-  }, [box.rusText])
+    if (!isInlineEditing) {
+      setLocalText(box.rusText || "")
+    }
+  }, [box.rusText, isInlineEditing])
 
   useEffect(() => {
     if (isInlineEditing && textareaRef.current) {
@@ -90,7 +93,11 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const { screenLines, masterActualFontSize, masterLineHeight } = useMemo(() => {
     const ctx = previewCanvas?.getContext("2d")
     if (!ctx || !displayText.trim()) {
-      return { screenLines: [], masterActualFontSize: masterFontSize, masterLineHeight: Math.round(masterFontSize * 1.15) }
+      return {
+        screenLines: [],
+        masterActualFontSize: masterFontSize,
+        masterLineHeight: Math.round(masterFontSize * 1.15),
+      }
     }
 
     const res = layoutBubbleTextLines(
@@ -139,23 +146,19 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     if (isDraft) return
     e.stopPropagation()
     onSelect(box.id)
-
-    if (screenLines.length > 0 && !box.rusText?.includes("\n")) {
-      setLocalText(screenLines.join("\n"))
-    } else {
-      setLocalText(box.rusText || "")
-    }
-
+    setLocalText(box.rusText || "")
     setIsInlineEditing(true)
   }
 
   const commitInlineEdit = () => {
     setIsInlineEditing(false)
-    if (localText !== box.rusText && onUpdate) {
+    const trimmed = localText.trim()
+
+    if (trimmed !== (box.rusText || "").trim() && onUpdate) {
       const isSpeech = (box.class_id ?? 0) === 0
-      const hasText = localText.trim().length > 0
+      const hasText = trimmed.length > 0
       const patch: Partial<TextBlock> = {
-        rusText: localText,
+        rusText: trimmed,
         status: hasText ? "translated" : box.japText ? "ocr-done" : "new",
       }
       if (isSpeech) {
@@ -218,8 +221,8 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   }
 
   if (isInlineEditing) {
-    const editLinesCount = Math.max(1, localText.split("\n").length)
-    const totalEditH = editLinesCount * finalScreenLineHeight
+    const editLinesCount = Math.max(2, localText.split("\n").length)
+    const dynamicEditH = Math.max(masterBoxPixelH * scale, editLinesCount * (finalScreenLineHeight + 4) + 16)
 
     return (
       <div
@@ -237,8 +240,8 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div
-          className="relative flex items-center justify-center w-full"
-          style={{ height: `${Math.min(masterBoxPixelH * scale, totalEditH + 8)}px` }}
+          className="relative flex items-center justify-center w-full min-w-[120px]"
+          style={{ height: `${dynamicEditH}px` }}
         >
           <textarea
             ref={textareaRef}
@@ -248,7 +251,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
             onBlur={commitInlineEdit}
             placeholder="Текст..."
             className={[
-              "w-full h-full resize-none p-0 text-center outline-none border-2 border-indigo-500 rounded shadow-2xl backdrop-blur-sm overflow-hidden",
+              "w-full h-full p-2 text-center outline-none border-2 border-indigo-500 rounded-md shadow-2xl backdrop-blur-md overflow-y-auto",
               isWhiteText
                 ? "bg-slate-900/95 text-white placeholder:text-slate-400"
                 : "bg-white/95 text-black placeholder:text-slate-500",
@@ -257,8 +260,8 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
             ].join(" ")}
             style={{
               fontFamily: `'${currentFont}', sans-serif`,
-              fontSize: `${finalScreenFontSize}px`,
-              lineHeight: `${finalScreenLineHeight}px`,
+              fontSize: `${Math.max(12, finalScreenFontSize)}px`,
+              lineHeight: `${Math.max(14, finalScreenLineHeight)}px`,
             }}
           />
         </div>

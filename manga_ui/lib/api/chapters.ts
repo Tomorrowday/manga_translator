@@ -1,15 +1,19 @@
 // manga_ui/lib/api/chapters.ts
 /**
- * Контракт API-запросов операций с главами, экспорта и импорта диалогов.
+ * Контракт API-запросов операций с главами, экспорта/импорта скриптов, таймера и статистики.
  * Реализация: manga_ui/lib/api/chapters_impl.ts
- * Зависимости реализации: manga_ui/lib/api/client (API_BASE_URL, handleApiResponse), FormData
  */
 
 export {
   runTranslateChapter,
   deleteChapter,
   resetChapterBubbleFonts,
+  applyChapterFontSize,
   exportChapterScriptToFolder,
   uploadChapterScript,
   pickAndImportChapterScript,
+  getChapterTimerStatus,
+  startChapterTimer,
+  stopChapterTimer,
+  recalculateChapterStats,
 } from "./chapters_impl"

@@ -1,6 +1,6 @@
 # services/chapter_service.py
 """
-Каркас сервиса глав манги: экспорт в JSON-скрипты и импорт переводов со спикерами.
+Каркас сервиса глав манги: экспорт в JSON-скрипты, умный импорт переводов и управление кеглем.
 Реализация: services/chapter_service_impl.py
 Зависимости реализации: os, json, re, pathlib, database, services.prompts, logger
 """
@@ -25,8 +25,13 @@ def get_chapter_folder_path(chapter_id: int) -> Optional[str]:
 
 
 def find_latest_dialogue_json_in_folder(chapter_id: int) -> Optional[str]:
-    """Ищет последний измененный JSON файл с диалогами в папке главы."""
+    """Ищет приоритетно файл *_dialogues.json или любой подходящий JSON в папке главы."""
     return _impl.find_latest_dialogue_json_in_folder(chapter_id)
+
+
+def apply_font_size_to_chapter_service(chapter_id: int, font_size: Optional[int]) -> int:
+    """Устанавливает кегль шрифта для всех блоков всех страниц указанной главы."""
+    return _impl.apply_font_size_to_chapter_service(chapter_id, font_size)
 
 
 def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[str, int]:
