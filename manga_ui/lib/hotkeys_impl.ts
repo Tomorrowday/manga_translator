@@ -141,7 +141,10 @@ export function saveHotkeys(config: HotkeyConfig) {
   if (typeof window === "undefined") return
   try {
     localStorage.setItem(HOTKEYS_STORAGE_KEY, JSON.stringify(config))
-    window.dispatchEvent(new Event(HOTKEYS_UPDATED_EVENT))
+    // Асинхронная отправка события предотвращает ошибку вызова setState во время рендеринга других компонентов
+    queueMicrotask(() => {
+      window.dispatchEvent(new Event(HOTKEYS_UPDATED_EVENT))
+    })
   } catch (err) {
     console.error("Ошибка сохранения хоткеев:", err)
   }

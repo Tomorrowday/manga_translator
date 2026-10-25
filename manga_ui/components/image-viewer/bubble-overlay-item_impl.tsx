@@ -1,6 +1,7 @@
 // manga_ui/components/image-viewer/bubble-overlay-item_impl.tsx
-// Рендеринг бабла на скане: авто-овал при появлении русского перевода,
-// точное инлайн-редактирование без обрезания текста и честное сохранение ручных \n
+// Рендеринг бабла на скане: цвета классов в точности как в приложении разметки
+// (Зеленый = Бабл, Голубой = Мысли, Фиолетовый = Текст, Янтарный = Выделенный)
+// с наглядным бейджем [№ + Тип] и поддержкой овала/трансформаций
 
 "use client"
 
@@ -26,6 +27,37 @@ const RESIZE_HANDLES: Array<{
   { dir: "w", cursor: "cursor-ew-resize", className: "top-1/2 -left-1.5 -translate-y-1/2" },
 ]
 
+// Цветовые стили классов разметки (Бабл, Мысли, Текст)
+const CLASS_THEMES = {
+  0: {
+    label: "Б",
+    title: "Бабл речи",
+    border: "border-emerald-500",
+    bg: "bg-emerald-500/10 hover:bg-emerald-500/20",
+    stroke: "#10b981",
+    fill: "rgba(16, 185, 129, 0.10)",
+    badgeBg: "bg-emerald-600 text-white shadow-emerald-950/50",
+  },
+  1: {
+    label: "М",
+    title: "Мысли",
+    border: "border-sky-500",
+    bg: "bg-sky-500/10 hover:bg-sky-500/20",
+    stroke: "#0ea5e9",
+    fill: "rgba(14, 165, 233, 0.10)",
+    badgeBg: "bg-sky-600 text-white shadow-sky-950/50",
+  },
+  2: {
+    label: "Т",
+    title: "Текст / SFX",
+    border: "border-purple-500",
+    bg: "bg-purple-500/10 hover:bg-purple-500/20",
+    stroke: "#a855f7",
+    fill: "rgba(168, 85, 247, 0.10)",
+    badgeBg: "bg-purple-600 text-white shadow-purple-950/50",
+  },
+} as const
+
 let previewCanvas: HTMLCanvasElement | null = null
 
 export const BubbleOverlayItem = memo(function BubbleOverlayItem({
@@ -49,6 +81,9 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const padMode = box.paddingMode || "safe"
   const isMinHyphens = box.minHyphens !== false
   const isWhiteText = box.textColor === "white"
+
+  const classId = ((box.class_id ?? 0) in CLASS_THEMES ? box.class_id ?? 0 : 0) as 0 | 1 | 2
+  const theme = CLASS_THEMES[classId]
 
   const [isInlineEditing, setIsInlineEditing] = useState(false)
   const [localText, setLocalText] = useState(box.rusText || "")
@@ -220,6 +255,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     )
   }
 
+  // Режим быстрого инлайн-редактирования двойным кликом
   if (isInlineEditing) {
     const editLinesCount = Math.max(2, localText.split("\n").length)
     const dynamicEditH = Math.max(masterBoxPixelH * scale, editLinesCount * (finalScreenLineHeight + 4) + 16)
@@ -272,6 +308,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     )
   }
 
+  // Режим включенного тайпсета (готовый русский текст поверх скана)
   if (showTypeset && !isDraft && hasTranslation) {
     return (
       <div
@@ -291,7 +328,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
           isSelected ? "z-20" : "z-10",
           !isEllipse &&
             (isSelected
-              ? "outline outline-2 outline-dashed outline-amber-400 bg-indigo-500/10"
+              ? "outline outline-2 outline-amber-400 bg-amber-400/10"
               : "hover:outline hover:outline-1 hover:outline-dashed hover:outline-slate-400/70"),
         ]
           .filter(Boolean)
@@ -316,10 +353,10 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
               cy="50"
               rx="49"
               ry="49"
-              fill={isSelected ? "rgba(99, 102, 241, 0.1)" : "none"}
+              fill={isSelected ? "rgba(245, 158, 11, 0.1)" : "none"}
               stroke={isSelected ? "#f59e0b" : "currentColor"}
               strokeWidth={isSelected ? "2" : "1.2"}
-              strokeDasharray={isSelected ? "4 3" : "3 3"}
+              strokeDasharray={isSelected ? "none" : "3 3"}
               vectorEffect="non-scaling-stroke"
               className={isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-70 text-slate-400"}
             />
@@ -339,6 +376,31 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     )
   }
 
+  // Режим разметки / выделения рамок бабла (с цветами классов)
+  const rectBorderClass = isDraft
+    ? "border-indigo-400 bg-indigo-400/20"
+    : isSelected
+      ? "border-amber-400 bg-amber-400/20 shadow-md"
+      : `${theme.border} ${theme.bg}`
+
+  const ellipseStrokeColor = isDraft
+    ? "#818cf8"
+    : isSelected
+      ? "#f59e0b"
+      : theme.stroke
+
+  const ellipseFillColor = isDraft
+    ? "rgba(129, 140, 248, 0.2)"
+    : isSelected
+      ? "rgba(245, 158, 11, 0.2)"
+      : theme.fill
+
+  const badgeStyle = isDraft
+    ? "bg-indigo-600 text-white"
+    : isSelected
+      ? "bg-amber-400 text-slate-950 font-black ring-1 ring-amber-300"
+      : theme.badgeBg
+
   return (
     <div
       id={`box-${box.id}`}
@@ -348,16 +410,9 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
       }}
       onDoubleClick={handleDoubleClick}
       className={[
-        "group absolute flex items-start justify-start",
-        isSelected ? "z-10 cursor-move" : "cursor-pointer",
-        !isEllipse && [
-          "border-2 rounded-sm transition-colors",
-          isDraft
-            ? "border-indigo-400 bg-indigo-400/20"
-            : isSelected
-              ? "border-amber-400 bg-amber-400/20"
-              : "border-indigo-500/80 bg-indigo-500/10 hover:bg-indigo-500/20",
-        ].join(" "),
+        "group absolute flex items-start justify-start select-none",
+        isSelected ? "z-20 cursor-move" : "cursor-pointer",
+        !isEllipse && ["border-2 rounded-sm transition-colors", rectBorderClass].join(" "),
       ]
         .filter(Boolean)
         .join(" ")}
@@ -369,7 +424,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
         transform: `rotate(${currentRot}deg)`,
         transformOrigin: "center center",
       }}
-      title="Двойной клик — редактировать текст"
+      title={`[${theme.title}] — Двойной клик для редактирования текста`}
     >
       {isEllipse && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -378,25 +433,25 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
             cy="50"
             rx="49"
             ry="49"
-            fill={
-              isDraft
-                ? "rgba(129, 140, 248, 0.2)"
-                : isSelected
-                  ? "rgba(245, 158, 11, 0.2)"
-                  : "rgba(99, 102, 241, 0.1)"
-            }
-            stroke={isDraft ? "#818cf8" : isSelected ? "#f59e0b" : "#6366f1"}
+            fill={ellipseFillColor}
+            stroke={ellipseStrokeColor}
             strokeWidth="2"
             vectorEffect="non-scaling-stroke"
-            className="transition-colors group-hover:stroke-indigo-400"
+            className="transition-colors"
           />
         </svg>
       )}
 
       {!isDraft && (
         <>
-          <span className="relative z-10 m-1 rounded bg-slate-950/80 px-1.5 py-0.5 text-[10px] font-bold leading-none text-indigo-300 pointer-events-none">
-            {index + 1}
+          <span
+            className={[
+              "relative z-10 m-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold leading-none pointer-events-none shadow select-none",
+              badgeStyle,
+            ].join(" ")}
+          >
+            <span>{index + 1}</span>
+            <span className="opacity-90 font-mono text-[9px]">[{theme.label}]</span>
           </span>
           {renderHandles()}
         </>

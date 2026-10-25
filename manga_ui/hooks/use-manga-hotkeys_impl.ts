@@ -34,14 +34,20 @@ export function useHotkeysConfig(): UseHotkeysConfigReturn {
         ...prev,
         [action]: { ...prev[action], ...patch },
       }
-      saveHotkeys(next)
+      // Вызываем сохранение асинхронно, чтобы не вызывать сайд-эффект в процессе вычисления состояния
+      queueMicrotask(() => {
+        saveHotkeys(next)
+      })
       return next
     })
   }, [])
 
   const resetHotkeys = useCallback(() => {
-    saveHotkeys({ ...DEFAULT_HOTKEYS })
-    setHotkeys({ ...DEFAULT_HOTKEYS })
+    const next = { ...DEFAULT_HOTKEYS }
+    setHotkeys(next)
+    queueMicrotask(() => {
+      saveHotkeys(next)
+    })
   }, [])
 
   return { hotkeys, updateHotkey, resetHotkeys }
