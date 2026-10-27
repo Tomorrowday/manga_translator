@@ -26,6 +26,7 @@ class UpdateTitleSettingsRequest(BaseModel):
     font_thought: Optional[str] = "v_CCFaceFront"
     font_sfx: Optional[str] = "v_Mighty Zeo 2.0"
     lama_downscale: Optional[bool] = False
+    show_sfx: Optional[bool] = False
 
 
 class GlossaryItemCreate(BaseModel):

@@ -34,10 +34,12 @@ def expand_box_to_bubble(
 def detect_and_filter_bubbles(
     image: Image.Image,
     model_name: str = "yolo_manga.pt",
-    conf_threshold: float = 0.25
+    conf_threshold: float = 0.25,
+    detect_sfx: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Выполняет детекцию речевых баблов и текста нейросетью YOLO,
     фильтрует вложенные рамки, подтягивает контуры к овалу и сортирует в порядке чтения.
+    Если detect_sfx=False, то звуки SFX (класс 3) отбрасываются.
     """
-    return _impl.detect_and_filter_bubbles(image, model_name, conf_threshold)
+    return _impl.detect_and_filter_bubbles(image, model_name, conf_threshold, detect_sfx)

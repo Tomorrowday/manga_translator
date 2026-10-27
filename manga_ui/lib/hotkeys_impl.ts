@@ -28,9 +28,10 @@ export const DEFAULT_HOTKEYS: HotkeyConfig = {
   fontSizeDown: { code: "Minus", label: "-", name: "Уменьшить шрифт", category: "font" },
 
   // Стили и типы бабла
-  setClassBubble: { code: "KeyC", label: "C", name: "Тип: Бабл речи (Класс 0)", category: "bubble" },
-  setClassThought: { code: "KeyV", label: "V", name: "Тип: Мысли (Класс 1)", category: "bubble" },
-  setClassSfx: { code: "KeyG", label: "G", name: "Тип: Текст / SFX (Класс 2)", category: "bubble" },
+  setClassBubble: { code: "KeyC", label: "C", name: "Класс: Бабл (0)", category: "bubble" },
+  setClassThought: { code: "KeyV", label: "V", name: "Класс: Мысли (1)", category: "bubble" },
+  setClassText: { code: "KeyG", label: "G", name: "Класс: Текст (2)", category: "bubble" },
+  setClassSfx: { code: "F4", label: "F4", name: "Класс: Звук SFX (3)", category: "bubble" },
   deleteBlock: { code: "Delete", label: "Delete", name: "Удалить бабл", category: "bubble" },
   moveOrderUp: { code: "KeyA", label: "A", name: "Порядок: выше", category: "bubble" },
   moveOrderDown: { code: "KeyD", label: "D", name: "Порядок: ниже", category: "bubble" },

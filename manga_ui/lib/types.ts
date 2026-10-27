@@ -12,7 +12,7 @@ export type TextColor = "black" | "white"
 
 export interface TextBlock {
   id: string
-  class_id?: number // 0: Bubble (Речь), 1: Thought (Мысли), 2: Free Text / SFX (Арт)
+  class_id?: number // 0: Bubble (Речь), 1: Thought (Мысли), 2: Free Text (Арт), 3: SFX (Звуки)
   x: number
   y: number
   width: number
@@ -68,6 +68,9 @@ export interface TitleSettings {
   font_thought?: string
   font_sfx?: string
   lama_downscale?: boolean
+  show_sfx?: boolean
+  available_detectors?: Record<string, string>
+  available_cleaners?: Record<string, string>
 }
 
 export interface TitleProject extends TitleSettings {

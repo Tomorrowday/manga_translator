@@ -1,5 +1,5 @@
 # services/detector_impl.py
-# Детекция речевых баблов и текста (YOLO) с поддержкой порога уверенности (conf_threshold)
+# Детекция речевых баблов и текста (YOLO) с поддержкой порога уверенности и фильтра SFX
 
 from typing import List, Dict, Any, Tuple, Optional
 from collections import Counter
@@ -431,7 +431,7 @@ def expand_box_to_bubble(
     orig_y1: int,
     orig_x2: int,
     orig_y2: int,
-    other_boxes: List[Tuple[int, int, int, int]] = None
+    other_boxes: Optional[List[Tuple[int, int, int, int]]] = None
 ) -> Tuple[int, int, int, int]:
     try:
         img_h, img_w = gray_img.shape[:2]
@@ -542,16 +542,17 @@ def expand_box_to_bubble(
 def detect_and_filter_bubbles(
     image: Image.Image,
     model_name: str = "yolo_manga.pt",
-    conf_threshold: float = 0.25
+    conf_threshold: float = 0.25,
+    detect_sfx: bool = False
 ) -> List[Dict[str, Any]]:
-    """Детекция объектов с учётом порога confidence (по умолчанию 0.25)."""
+    """Детекция объектов (YOLO). Если detect_sfx=False, то SFX (класс 3) полностью игнорируется."""
     yolo = ml.get_yolo(model_name)
     if yolo is None:
         raise RuntimeError(f"Модель YOLO ({model_name}) не загружена")
 
     model_classes = getattr(yolo, "names", {})
     logger.info(
-        f"[YOLO Детектор] Запуск '{model_name}' с порогом conf={conf_threshold}. "
+        f"[YOLO Детектор] Запуск '{model_name}' с порогом conf={conf_threshold}, detect_sfx={detect_sfx}. "
         f"Классы: {model_classes}"
     )
 
@@ -561,8 +562,13 @@ def detect_and_filter_bubbles(
         results = yolo.predict(image, conf=conf_threshold, verbose=False)
         raw_items = []
         for box in results[0].boxes:
-            xyxy = box.xyxy[0].tolist()
             cls_id = int(box.cls[0].item()) if (box.cls is not None and len(box.cls) > 0) else 0
+
+            # Если детект SFX отключен — полностью игнорируем класс 3
+            if not detect_sfx and cls_id == 3:
+                continue
+
+            xyxy = box.xyxy[0].tolist()
             raw_items.append((xyxy, cls_id))
 
     del results

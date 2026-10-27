@@ -27,10 +27,22 @@ EXCLUDED_DIR_NAMES = {
 }
 
 
+def _ensure_global_settings_columns(cur: sqlite3.Cursor):
+    """Гарантирует существование всех требуемых колонок в таблице global_settings."""
+    cur.execute("PRAGMA table_info(global_settings)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "show_sfx" not in cols:
+        try:
+            cur.execute("ALTER TABLE global_settings ADD COLUMN show_sfx INTEGER DEFAULT 0")
+        except Exception as e:
+            logger.debug(f"Колонка show_sfx уже существует или ошибка добавления: {e}")
+
+
 async def get_global_settings_endpoint():
     """Получить глобальные настройки приложения."""
     conn = get_db()
     cursor = conn.cursor()
+    _ensure_global_settings_columns(cursor)
     cursor.execute("SELECT * FROM global_settings WHERE id = 1")
     row = cursor.fetchone()
     conn.close()
@@ -47,12 +59,14 @@ async def get_global_settings_endpoint():
         "font_sfx": "v_Mighty Zeo 2.0",
         "lama_precision": "fp32",
         "lama_downscale": 0,
+        "show_sfx": 0,
     }
 
     settings["auto_oval_bubble"] = bool(settings.get("auto_oval_bubble", 1))
     settings["default_hyphenation"] = bool(settings.get("default_hyphenation", 1))
     settings["lama_downscale"] = bool(settings.get("lama_downscale", 0))
     settings["lama_precision"] = str(settings.get("lama_precision") or "fp32")
+    settings["show_sfx"] = bool(row["show_sfx"]) if (row and "show_sfx" in row.keys()) else False
     settings["available_detectors"] = get_available_detectors()
     settings["available_cleaners"] = get_available_cleaners()
 
@@ -77,8 +91,10 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
     font_s = req.font_sfx or "v_Mighty Zeo 2.0"
     precision = getattr(req, "lama_precision", "fp32") or "fp32"
     downscale = 1 if req.lama_downscale else 0
+    show_sfx_val = getattr(req, "show_sfx", None)
 
     with db_session() as cur:
+        _ensure_global_settings_columns(cur)
         cur.execute(
             """
             INSERT INTO global_settings (
@@ -101,10 +117,17 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
             (detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s, downscale)
         )
 
+        if show_sfx_val is not None:
+            cur.execute("UPDATE global_settings SET show_sfx = ? WHERE id = 1", (1 if show_sfx_val else 0,))
+
+        cur.execute("SELECT show_sfx FROM global_settings WHERE id = 1")
+        row_sfx = cur.fetchone()
+        actual_show_sfx = bool(row_sfx["show_sfx"]) if (row_sfx and "show_sfx" in row_sfx.keys()) else False
+
     if hasattr(ml, "lama_downscale"):
         ml.lama_downscale = bool(downscale)
 
-    logger.info(f"Глобальные настройки обновлены: сжатие={bool(downscale)}.")
+    logger.info(f"Глобальные настройки обновлены: сжатие={bool(downscale)}, show_sfx={actual_show_sfx}.")
     return {
         "success": True,
         "settings": {
@@ -118,7 +141,8 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
             "font_thought": font_t,
             "font_sfx": font_s,
             "lama_precision": precision,
-            "lama_downscale": bool(downscale)
+            "lama_downscale": bool(downscale),
+            "show_sfx": actual_show_sfx,
         }
     }
 

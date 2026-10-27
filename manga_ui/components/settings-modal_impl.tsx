@@ -1,5 +1,4 @@
 // manga_ui/components/settings-modal_impl.tsx
-// Единое окно ГЛОБАЛЬНЫХ настроек с интеграцией моделей, тогглов сжатия и Ollama
 
 "use client"
 
@@ -20,6 +19,7 @@ import {
   Bot,
   RefreshCw,
   Layers,
+  Volume2,
 } from "lucide-react"
 import type { TitleSettings } from "@/lib/types"
 import { MANGA_FONTS } from "@/lib/hotkeys"
@@ -47,6 +47,9 @@ export function SettingsModal({
 
   // Тогглы клинера (LaMa)
   const [lamaDownscale, setLamaDownscale] = useState<boolean>(false)
+
+  // Тоггл: детектировать звуки SFX (класс 3)
+  const [showSfx, setShowSfx] = useState<boolean>(false)
 
   // Параметры моделей и шрифтов
   const [detectorModel, setDetectorModel] = useState<string>("yolo_manga.pt")
@@ -103,6 +106,7 @@ export function SettingsModal({
           if (s.default_hyphenation !== undefined) setDefaultHyphenation(Boolean(s.default_hyphenation))
 
           if (s.lama_downscale !== undefined) setLamaDownscale(Boolean(s.lama_downscale))
+          if (s.show_sfx !== undefined) setShowSfx(Boolean(s.show_sfx))
 
           if (s.font_bubble) setFontBubble(s.font_bubble)
           if (s.font_thought) setFontThought(s.font_thought)
@@ -129,6 +133,7 @@ export function SettingsModal({
         default_padding: defaultPadding,
         default_hyphenation: defaultHyphenation,
         lama_downscale: lamaDownscale,
+        show_sfx: showSfx,
         font_bubble: fontBubble,
         font_thought: fontThought,
         font_sfx: fontSfx,
@@ -220,6 +225,38 @@ export function SettingsModal({
             </div>
           ) : activeTab === "toggles" ? (
             <div className="space-y-4">
+
+              {/* Тоггл: Детектирование звуков SFX */}
+              <div className="flex items-start justify-between rounded-xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700">
+                <div className="space-y-1 pr-4">
+                  <div className="flex items-center gap-2">
+                    <Volume2 className="h-4 w-4 text-orange-400" />
+                    <label className="text-xs font-semibold text-slate-200">
+                      Детектировать звуки (SFX, класс 3)
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <strong>Выключено (по умолчанию):</strong> нейросеть при поиске баблов игнорирует звуковые эффекты (они не попадают в разметку, OCR и под автоклин).<br />
+                    <strong>Включено:</strong> находить звуки SFX на скане для их последующего перевода и тайпсета.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowSfx(!showSfx)}
+                  className={[
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none",
+                    showSfx ? "bg-orange-600" : "bg-slate-800",
+                  ].join(" ")}
+                >
+                  <span
+                    className={[
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out",
+                      showSfx ? "translate-x-5" : "translate-x-0",
+                    ].join(" ")}
+                  />
+                </button>
+              </div>
 
               {/* Тоггл: Сжатие перед клином */}
               <div className="flex items-start justify-between rounded-xl border border-slate-800 bg-slate-950 p-4 transition-colors hover:border-slate-700">

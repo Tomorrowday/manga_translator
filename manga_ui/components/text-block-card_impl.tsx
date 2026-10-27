@@ -1,5 +1,4 @@
 // manga_ui/components/text-block-card_impl.tsx
-// Ультракомпактная карточка с авто-овалом и умным пересчётом хвоста при ручных переносах
 
 "use client"
 
@@ -24,19 +23,24 @@ import type { TextBlockCardProps } from "./text-block-card"
 
 const CLASS_CONFIG: Record<number, { label: string; className: string; title: string }> = {
   0: {
-    label: "Bubble",
-    className: "border-emerald-500/50 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/60",
+    label: "[1] Бабл",
+    className: "border-emerald-500/60 bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/60",
     title: "Класс 0: Обычный бабл речи. Хоткей [C]",
   },
   1: {
-    label: "Thought",
-    className: "border-sky-500/50 bg-sky-950/40 text-sky-300 hover:bg-sky-900/60",
+    label: "[2] Мысли",
+    className: "border-sky-500/60 bg-sky-950/60 text-sky-300 hover:bg-sky-900/60",
     title: "Класс 1: Мысли / Прямоугольный блок. Хоткей [V]",
   },
   2: {
-    label: "Free Text",
-    className: "border-purple-500/50 bg-purple-950/40 text-purple-300 hover:bg-purple-900/60",
-    title: "Класс 2: Текст/SFX на арте. Хоткей [G]",
+    label: "[3] Текст",
+    className: "border-purple-500/60 bg-purple-950/60 text-purple-300 hover:bg-purple-900/60",
+    title: "Класс 2: Текст на арте (Free Text). Хоткей [G]",
+  },
+  3: {
+    label: "[4] Звук",
+    className: "border-amber-700/80 bg-amber-950/60 text-orange-400 hover:bg-amber-900/60",
+    title: "Класс 3: Звуковой эффект (SFX)",
   },
 }
 
@@ -162,7 +166,8 @@ export const TextBlockCard = memo(function TextBlockCard({
 
   const handleCycleClass = (e: React.MouseEvent) => {
     e.stopPropagation()
-    const nextClass = (currentClassId + 1) % 3
+    // Цикл по всем 4-м классам: 0 (bubble), 1 (thought), 2 (text_free), 3 (sfx)
+    const nextClass = (currentClassId + 1) % 4
     const hasTranslation = Boolean(block.rusText && block.rusText.trim())
     const nextShape = nextClass === 0 && autoOvalBubble && hasTranslation ? "ellipse" : "rect"
     onChange({ class_id: nextClass, shape: nextShape })
@@ -268,7 +273,7 @@ export const TextBlockCard = memo(function TextBlockCard({
       onClick={onSelect}
       className={[
         "cursor-pointer rounded-lg border bg-slate-800/60 p-2.5 transition-colors",
-        isSelected ? "border-amber-400/70 ring-1 ring-amber-400/30" : "border-slate-700/80 hover:border-slate-600",
+        isSelected ? "border-amber-400/80 ring-1 ring-amber-400/40" : "border-slate-700/80 hover:border-slate-600",
       ].join(" ")}
     >
       <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -280,7 +285,7 @@ export const TextBlockCard = memo(function TextBlockCard({
           <button
             type="button"
             onClick={handleCycleClass}
-            className={`rounded border px-1.5 py-0.5 text-[10px] font-bold tracking-wide transition-colors ${classCfg.className}`}
+            className={`rounded border px-2 py-0.5 text-[10px] font-bold tracking-wide transition-colors ${classCfg.className}`}
             title={classCfg.title}
           >
             {classCfg.label}

@@ -50,6 +50,7 @@ export type HotkeyActionId =
   | "toggleUppercase"
   | "setClassBubble"
   | "setClassThought"
+  | "setClassText"
   | "setClassSfx"
   | "spotWhite"
   | "spotLama"

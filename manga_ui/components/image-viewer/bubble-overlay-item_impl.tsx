@@ -1,5 +1,4 @@
 // manga_ui/components/image-viewer/bubble-overlay-item_impl.tsx
-// Рендеринг бабла на скане с честным сохранением ручных переносов и автопересчётом хвоста
 
 "use client"
 
@@ -46,12 +45,21 @@ const CLASS_THEMES = {
   },
   2: {
     label: "Т",
-    title: "Текст / SFX",
+    title: "Текст (Free Text)",
     border: "border-purple-500",
     bg: "bg-purple-500/10 hover:bg-purple-500/20",
     stroke: "#a855f7",
     fill: "rgba(168, 85, 247, 0.10)",
     badgeBg: "bg-purple-600 text-white shadow-purple-950/50",
+  },
+  3: {
+    label: "З",
+    title: "Звук (SFX)",
+    border: "border-orange-600",
+    bg: "bg-orange-600/10 hover:bg-orange-600/20",
+    stroke: "#ea580c",
+    fill: "rgba(234, 88, 12, 0.12)",
+    badgeBg: "bg-amber-800 text-orange-200 shadow-amber-950/50 border border-orange-500/40",
   },
 } as const
 
@@ -79,7 +87,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const isMinHyphens = box.minHyphens !== false
   const isWhiteText = box.textColor === "white"
 
-  const classId = ((box.class_id ?? 0) in CLASS_THEMES ? box.class_id ?? 0 : 0) as 0 | 1 | 2
+  const classId = ((box.class_id ?? 0) in CLASS_THEMES ? box.class_id ?? 0 : 0) as 0 | 1 | 2 | 3
   const theme = CLASS_THEMES[classId]
 
   const [isInlineEditing, setIsInlineEditing] = useState(false)
@@ -246,9 +254,6 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     setIsInlineEditing(true)
   }
 
-  // Возвращает:
-  // 1) storageText — текст для сохранения в БД (с \n только на намеренных переносах пользователя и свободным хвостом)
-  // 2) previewLines — как это прямо сейчас выглядит после пересчёта хвоста
   const computeReflowedState = (rawInput: string): { storageText: string; previewLines: string[] } => {
     const trimmed = rawInput.trim()
     if (!trimmed) return { storageText: "", previewLines: [] }
@@ -312,8 +317,6 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
       return
     }
 
-    // При нажатии Enter — разрываем строку ровно под курсором, фиксируем верхнюю часть,
-    // а весь остальной хвост сразу же пересчитываем и показываем пользователю!
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       const ta = textareaRef.current
       if (ta) {
@@ -326,7 +329,6 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
         const nextRaw = `${before}\n${after}`
         const { storageText, previewLines } = computeReflowedState(nextRaw)
 
-        // Сохраняем в стейт блока текст с точкой перетекания, а в textarea показываем новые пересчитанные строки
         if (onUpdate) {
           onUpdate(box.id, { rusText: storageText, status: "translated" })
         }
@@ -468,7 +470,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
           isSelected ? "z-20" : "z-10",
           !isEllipse &&
             (isSelected
-              ? "outline outline-2 outline-amber-400 bg-amber-400/10"
+              ? "outline outline-2 outline-amber-400"
               : "hover:outline hover:outline-1 hover:outline-dashed hover:outline-slate-400/70"),
         ]
           .filter(Boolean)
@@ -497,7 +499,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
               cy="50"
               rx="49"
               ry="49"
-              fill={isSelected ? "rgba(245, 158, 11, 0.1)" : "none"}
+              fill="none"
               stroke={isSelected ? "#f59e0b" : "currentColor"}
               strokeWidth={isSelected ? "2" : "1.2"}
               strokeDasharray={isSelected ? "none" : "3 3"}
@@ -520,19 +522,17 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     )
   }
 
+  // Золотая рамка при выборе, но фон сохраняется от соответствующей темы
   const rectBorderClass = isDraft
     ? "border-indigo-400 bg-indigo-400/20"
     : isSelected
-      ? "border-amber-400 bg-amber-400/20 shadow-md"
+      ? `border-amber-400 ring-1 ring-amber-400/40 shadow-lg ${theme.bg}`
       : `${theme.border} ${theme.bg}`
 
   const ellipseStrokeColor = isDraft ? "#818cf8" : isSelected ? "#f59e0b" : theme.stroke
 
-  const ellipseFillColor = isDraft
-    ? "rgba(129, 140, 248, 0.2)"
-    : isSelected
-      ? "rgba(245, 158, 11, 0.2)"
-      : theme.fill
+  // При выборе эллипса фон также сохраняется неизменным (theme.fill)
+  const ellipseFillColor = isDraft ? "rgba(129, 140, 248, 0.2)" : theme.fill
 
   const badgeStyle = isDraft
     ? "bg-indigo-600 text-white"

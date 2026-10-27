@@ -82,6 +82,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     font_bubble: "v_CCFaceFront",
     font_thought: "v_CCFaceFront",
     font_sfx: "v_Mighty Zeo 2.0",
+    show_sfx: false,
   })
 
   const [knownSpeakers, setKnownSpeakers] = useState<string[]>([])
@@ -471,7 +472,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
 
       let fontFamily = globalSettings.font_bubble || "v_CCFaceFront"
       if (classId === 1) fontFamily = globalSettings.font_thought || "v_CCFaceFront"
-      if (classId === 2) fontFamily = globalSettings.font_sfx || "v_Mighty Zeo 2.0"
+      if (classId === 2 || classId === 3) fontFamily = globalSettings.font_sfx || "v_Mighty Zeo 2.0"
 
       updateBlock(selectedId, { class_id: classId, shape, fontFamily })
     },

@@ -1,5 +1,5 @@
 # services/page_service_impl.py
-# Бизнес-логика работы со страницей с поддержкой Unicode путей сохранения
+# Бизнес-логика работы со страницей с поддержкой Unicode путей сохранения и флага detect_sfx
 
 import os
 import time
@@ -36,7 +36,8 @@ def get_active_global_settings() -> Dict[str, Any]:
         "font_thought": "v_CCFaceFront",
         "font_sfx": "v_Mighty Zeo 2.0",
         "lama_precision": "fp32",
-        "lama_downscale": 0
+        "lama_downscale": 0,
+        "show_sfx": 0,
     }
 
 
@@ -126,6 +127,7 @@ def detect_page_bubbles_service(
     cfg = get_active_global_settings()
     detector_model = cfg.get("detector_model") or "yolo_manga.pt"
     detect_conf = conf_override if conf_override is not None else float(cfg.get("detect_conf", 0.25))
+    detect_sfx = bool(cfg.get("show_sfx", 0))
 
     default_pad = cfg.get("default_padding") or "safe"
     default_hyph = bool(cfg.get("default_hyphenation", 1))
@@ -141,7 +143,8 @@ def detect_page_bubbles_service(
         raw_boxes = detect_and_filter_bubbles(
             image,
             model_name=detector_model,
-            conf_threshold=float(detect_conf)
+            conf_threshold=float(detect_conf),
+            detect_sfx=detect_sfx
         )
         boxes: List[Dict[str, Any]] = [dict(b) for b in raw_boxes]
 
@@ -209,7 +212,6 @@ def detect_page_bubbles_service(
 def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[str, str, Dict[str, int]]:
     conn = get_db()
     cursor = conn.cursor()
-    # 1. Запрашиваем и file_path, и clean_path
     cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
     page_row = cursor.fetchone()
 
@@ -233,7 +235,6 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
     orig_path = str(page_row["file_path"])
     clean_path_raw = str(page_row["clean_path"]) if page_row["clean_path"] else ""
 
-    # 2. Если уже есть clean-файл (после кисти или Spot Clean) — берем его как базу!
     source_path = clean_path_raw if clean_path_raw and os.path.exists(clean_path_raw) else orig_path
 
     try:

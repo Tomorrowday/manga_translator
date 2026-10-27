@@ -4,7 +4,7 @@
 "use client"
 
 import type React from "react"
-import { useRef, useState, useCallback, useEffect } from "react"
+import { useRef, useState, useCallback, useEffect, useMemo } from "react"
 import {
   FolderOpen,
   MousePointerSquareDashed,
@@ -22,6 +22,10 @@ import { useBrushTool, type BrushMode } from "@/hooks/use-brush-tool"
 import { BubbleOverlayItem } from "@/components/image-viewer/bubble-overlay-item"
 import type { ImageViewerProps } from "./image-viewer"
 
+interface ExtendedImageViewerProps extends ImageViewerProps {
+  showSfx?: boolean
+}
+
 function normalize(a: number, b: number) {
   return { start: Math.min(a, b), size: Math.abs(a - b) }
 }
@@ -31,6 +35,7 @@ export function ImageViewer({
   textBlocks,
   selectedId,
   showTypeset = false,
+  showSfx = true,
   pageNumber,
   hasCleanScan = false,
   viewMode,
@@ -42,7 +47,7 @@ export function ImageViewer({
   onDrawComplete,
   onUpdateBlock,
   onBrushClean,
-}: ImageViewerProps) {
+}: ExtendedImageViewerProps) {
   const imgRef = useRef<HTMLImageElement>(null)
   const { hotkeys } = useHotkeysConfig()
 
@@ -127,7 +132,10 @@ export function ImageViewer({
     setDraft(null)
   }
 
-  const boxes = draft ? [...textBlocks, { id: "__draft__", ...draft } as TextBlock] : textBlocks
+  const visibleBoxes = useMemo(() => {
+    const filtered = showSfx ? textBlocks : textBlocks.filter((b) => (b.class_id ?? 0) !== 3)
+    return draft ? [...filtered, { id: "__draft__", ...draft } as TextBlock] : filtered
+  }, [textBlocks, showSfx, draft])
 
   return (
     <section className="flex min-h-0 flex-1 min-w-0 flex-col overflow-hidden">
@@ -345,7 +353,7 @@ export function ImageViewer({
             )}
 
             {activeTool === "box" &&
-              boxes.map((box, index) => (
+              visibleBoxes.map((box, index) => (
                 <BubbleOverlayItem
                   key={box.id}
                   box={box}

@@ -173,20 +173,25 @@ export function useMangaHotkeys({
       const activeBlock = textBlocks.find((b) => b.id === selectedId)
       if (!activeBlock) return
 
-      // 7. Смена типа бабла (C = Речь, V = Мысли, G = Текст/SFX)
+      // 7. Смена типа бабла
       if (matchHotkey(e, hotkeys.setClassBubble)) {
         e.preventDefault()
-        onSetClass?.(0)
+        onSetClass?.(0) // Бабл
         return
       }
       if (matchHotkey(e, hotkeys.setClassThought)) {
         e.preventDefault()
-        onSetClass?.(1)
+        onSetClass?.(1) // Мысли
+        return
+      }
+      if (matchHotkey(e, hotkeys.setClassText)) {
+        e.preventDefault()
+        onSetClass?.(2) // Текст
         return
       }
       if (matchHotkey(e, hotkeys.setClassSfx)) {
         e.preventDefault()
-        onSetClass?.(2)
+        onSetClass?.(3) // SFX (Звук по F4)
         return
       }
 
