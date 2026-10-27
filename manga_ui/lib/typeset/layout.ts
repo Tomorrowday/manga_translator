@@ -14,4 +14,5 @@ export interface BubbleLayoutResult {
 export {
   getEllipseWidthAtY,
   layoutBubbleTextLines,
+  reflowFromManualLines,
 } from "./layout_impl"

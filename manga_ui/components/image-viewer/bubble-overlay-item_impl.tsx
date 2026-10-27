@@ -1,13 +1,11 @@
 // manga_ui/components/image-viewer/bubble-overlay-item_impl.tsx
-// Рендеринг бабла на скане: цвета классов в точности как в приложении разметки
-// (Зеленый = Бабл, Голубой = Мысли, Фиолетовый = Текст, Янтарный = Выделенный)
-// с наглядным бейджем [№ + Тип] и поддержкой овала/трансформаций
+// Рендеринг бабла на скане с честным сохранением ручных переносов и автопересчётом хвоста
 
 "use client"
 
 import React, { useState, useRef, useEffect, useMemo, memo } from "react"
 import { RotateCw } from "lucide-react"
-import { layoutBubbleTextLines } from "@/lib/typeset"
+import { layoutBubbleTextLines, reflowFromManualLines } from "@/lib/typeset"
 import type { EditAction, ResizeDirection } from "@/hooks/use-box-transform"
 import type { BubbleOverlayItemProps } from "./bubble-overlay-item"
 import type { TextBlock } from "@/lib/types"
@@ -27,7 +25,6 @@ const RESIZE_HANDLES: Array<{
   { dir: "w", cursor: "cursor-ew-resize", className: "top-1/2 -left-1.5 -translate-y-1/2" },
 ]
 
-// Цветовые стили классов разметки (Бабл, Мысли, Текст)
 const CLASS_THEMES = {
   0: {
     label: "Б",
@@ -87,21 +84,46 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
 
   const [isInlineEditing, setIsInlineEditing] = useState(false)
   const [localText, setLocalText] = useState(box.rusText || "")
+  const [imgMetrics, setImgMetrics] = useState({
+    naturalW: 1100,
+    naturalH: 1600,
+    clientH: 1600,
+  })
+  const [fontsLoadedTick, setFontsLoadedTick] = useState(0)
+
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const snapshotLinesOnOpenRef = useRef<string[]>([])
 
   useEffect(() => {
-    if (!isInlineEditing) {
-      setLocalText(box.rusText || "")
+    if (!imgElement) return
+
+    const updateMetrics = () => {
+      setImgMetrics({
+        naturalW: imgElement.naturalWidth || 1100,
+        naturalH: imgElement.naturalHeight || 1600,
+        clientH: imgElement.clientHeight || imgElement.naturalHeight || 1600,
+      })
     }
-  }, [box.rusText, isInlineEditing])
+
+    updateMetrics()
+
+    const observer = new ResizeObserver(updateMetrics)
+    observer.observe(imgElement)
+    window.addEventListener("resize", updateMetrics)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener("resize", updateMetrics)
+    }
+  }, [imgElement])
 
   useEffect(() => {
-    if (isInlineEditing && textareaRef.current) {
-      textareaRef.current.focus()
-      const len = textareaRef.current.value.length
-      textareaRef.current.setSelectionRange(len, len)
+    if (typeof document !== "undefined" && document.fonts) {
+      document.fonts.ready.then(() => {
+        setFontsLoadedTick((t) => t + 1)
+      })
     }
-  }, [isInlineEditing])
+  }, [box.fontFamily])
 
   const currentX = isEditingCurrent && activeBox ? activeBox.x : box.x
   const currentY = isEditingCurrent && activeBox ? activeBox.y : box.y
@@ -109,9 +131,10 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const currentH = isEditingCurrent && activeBox ? activeBox.height : box.height
   const currentRot = isEditingCurrent && editType === "rotate" ? activeRotation : box.rotation || 0
 
-  const naturalH = imgElement?.naturalHeight || 1600
-  const naturalW = imgElement?.naturalWidth || 1100
-  const displayH = imgElement?.clientHeight || naturalH
+  const naturalH = imgElement?.naturalHeight || imgMetrics.naturalH
+  const naturalW = imgElement?.naturalWidth || imgMetrics.naturalW
+  const displayH = imgElement?.clientHeight || imgMetrics.clientH
+
   const baseSize = box.fontSize || defaultFontSize
   const masterFontSize = Math.round(baseSize * (naturalH / 1200))
   const masterBoxPixelW = currentW * naturalW
@@ -125,11 +148,12 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   const rawDisplayText = box.rusText || ""
   const displayText = box.isUppercase ? rawDisplayText.toUpperCase() : rawDisplayText
 
-  const { screenLines, masterActualFontSize, masterLineHeight } = useMemo(() => {
+  const { screenLines, editableLines, masterActualFontSize, masterLineHeight } = useMemo(() => {
     const ctx = previewCanvas?.getContext("2d")
     if (!ctx || !displayText.trim()) {
       return {
         screenLines: [],
+        editableLines: [],
         masterActualFontSize: masterFontSize,
         masterLineHeight: Math.round(masterFontSize * 1.15),
       }
@@ -148,13 +172,34 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
       box.isItalic,
       isMinHyphens
     )
+
+    let editLines = res.lines
+    if (box.isUppercase && rawDisplayText.trim()) {
+      const rawRes = layoutBubbleTextLines(
+        ctx,
+        rawDisplayText,
+        masterBoxPixelW,
+        masterBoxPixelH,
+        masterFontSize,
+        currentFont,
+        box.shape || "rect",
+        padMode,
+        box.isBold,
+        box.isItalic,
+        isMinHyphens
+      )
+      editLines = rawRes.lines
+    }
+
     return {
       screenLines: res.lines,
+      editableLines: editLines,
       masterActualFontSize: res.actualFontSize,
       masterLineHeight: res.lineHeight,
     }
   }, [
     displayText,
+    rawDisplayText,
     masterBoxPixelW,
     masterBoxPixelH,
     masterFontSize,
@@ -163,12 +208,26 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     padMode,
     box.isBold,
     box.isItalic,
+    box.isUppercase,
     isMinHyphens,
+    fontsLoadedTick,
   ])
 
-  const scale = displayH / naturalH
-  const finalScreenFontSize = Math.max(7, Math.round(masterActualFontSize * scale))
-  const finalScreenLineHeight = Math.max(8, Math.round(masterLineHeight * scale))
+  useEffect(() => {
+    if (!isInlineEditing) {
+      setLocalText(editableLines.length > 0 ? editableLines.join("\n") : box.rusText || "")
+    }
+  }, [box.rusText, editableLines, isInlineEditing])
+
+  useEffect(() => {
+    if (isInlineEditing && textareaRef.current) {
+      textareaRef.current.focus()
+    }
+  }, [isInlineEditing])
+
+  const scale = naturalH > 0 ? displayH / naturalH : 1
+  const finalScreenFontSize = Math.max(6, Number((masterActualFontSize * scale).toFixed(2)))
+  const finalScreenLineHeight = Math.max(7, Number((masterLineHeight * scale).toFixed(2)))
 
   const handleMouseDown = (e: React.MouseEvent, action: EditAction) => {
     if (isInlineEditing) return
@@ -181,22 +240,63 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     if (isDraft) return
     e.stopPropagation()
     onSelect(box.id)
-    setLocalText(box.rusText || "")
+    const exactVisibleState = editableLines.length > 0 ? editableLines.join("\n") : box.rusText || ""
+    snapshotLinesOnOpenRef.current = [...editableLines]
+    setLocalText(exactVisibleState)
     setIsInlineEditing(true)
+  }
+
+  // Возвращает:
+  // 1) storageText — текст для сохранения в БД (с \n только на намеренных переносах пользователя и свободным хвостом)
+  // 2) previewLines — как это прямо сейчас выглядит после пересчёта хвоста
+  const computeReflowedState = (rawInput: string): { storageText: string; previewLines: string[] } => {
+    const trimmed = rawInput.trim()
+    if (!trimmed) return { storageText: "", previewLines: [] }
+
+    const storageText = reflowFromManualLines(snapshotLinesOnOpenRef.current, trimmed)
+    const ctx = previewCanvas?.getContext("2d")
+    if (!ctx) {
+      return { storageText, previewLines: storageText.split("\n") }
+    }
+
+    const res = layoutBubbleTextLines(
+      ctx,
+      storageText,
+      masterBoxPixelW,
+      masterBoxPixelH,
+      masterFontSize,
+      currentFont,
+      box.shape || "rect",
+      padMode,
+      box.isBold,
+      box.isItalic,
+      isMinHyphens
+    )
+
+    return {
+      storageText,
+      previewLines: res.lines,
+    }
   }
 
   const commitInlineEdit = () => {
     setIsInlineEditing(false)
     const trimmed = localText.trim()
 
-    if (trimmed !== (box.rusText || "").trim() && onUpdate) {
+    if (trimmed === snapshotLinesOnOpenRef.current.join("\n").trim()) {
+      return
+    }
+
+    const { storageText } = computeReflowedState(trimmed)
+
+    if (onUpdate) {
       const isSpeech = (box.class_id ?? 0) === 0
-      const hasText = trimmed.length > 0
+      const hasText = storageText.length > 0
       const patch: Partial<TextBlock> = {
-        rusText: trimmed,
+        rusText: storageText,
         status: hasText ? "translated" : box.japText ? "ocr-done" : "new",
       }
-      if (isSpeech) {
+      if (isSpeech && !box.shape) {
         patch.shape = hasText ? "ellipse" : "rect"
       }
       onUpdate(box.id, patch)
@@ -205,14 +305,49 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
 
   const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     e.stopPropagation()
+
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       commitInlineEdit()
       return
     }
+
+    // При нажатии Enter — разрываем строку ровно под курсором, фиксируем верхнюю часть,
+    // а весь остальной хвост сразу же пересчитываем и показываем пользователю!
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const ta = textareaRef.current
+      if (ta) {
+        e.preventDefault()
+        const start = ta.selectionStart ?? localText.length
+        const end = ta.selectionEnd ?? localText.length
+        const before = localText.slice(0, start).trimEnd()
+        const after = localText.slice(end).trimStart()
+
+        const nextRaw = `${before}\n${after}`
+        const { storageText, previewLines } = computeReflowedState(nextRaw)
+
+        // Сохраняем в стейт блока текст с точкой перетекания, а в textarea показываем новые пересчитанные строки
+        if (onUpdate) {
+          onUpdate(box.id, { rusText: storageText, status: "translated" })
+        }
+
+        const nextVisible = previewLines.join("\n")
+        snapshotLinesOnOpenRef.current = [...previewLines]
+        setLocalText(nextVisible)
+
+        const newCursorPos = Math.min(nextVisible.length, before.length + 1)
+        requestAnimationFrame(() => {
+          if (textareaRef.current) {
+            textareaRef.current.setSelectionRange(newCursorPos, newCursorPos)
+          }
+        })
+        return
+      }
+    }
+
     if (e.key === "Escape") {
       e.preventDefault()
-      setLocalText(box.rusText || "")
+      setLocalText(editableLines.length > 0 ? editableLines.join("\n") : box.rusText || "")
       setIsInlineEditing(false)
       return
     }
@@ -255,10 +390,12 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     )
   }
 
-  // Режим быстрого инлайн-редактирования двойным кликом
   if (isInlineEditing) {
     const editLinesCount = Math.max(2, localText.split("\n").length)
-    const dynamicEditH = Math.max(masterBoxPixelH * scale, editLinesCount * (finalScreenLineHeight + 4) + 16)
+    const dynamicEditH = Math.max(
+      masterBoxPixelH * scale,
+      editLinesCount * (finalScreenLineHeight + 2) + 12
+    )
 
     return (
       <div
@@ -285,30 +422,33 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
             onChange={(e) => setLocalText(e.target.value)}
             onKeyDown={handleTextareaKeyDown}
             onBlur={commitInlineEdit}
+            wrap="off"
             placeholder="Текст..."
             className={[
-              "w-full h-full p-2 text-center outline-none border-2 border-indigo-500 rounded-md shadow-2xl backdrop-blur-md overflow-y-auto",
+              "w-full h-full p-1.5 text-center outline-none border-2 border-indigo-500 rounded-md shadow-2xl backdrop-blur-md overflow-x-auto overflow-y-auto resize-none",
               isWhiteText
                 ? "bg-slate-900/95 text-white placeholder:text-slate-400"
                 : "bg-white/95 text-black placeholder:text-slate-500",
               box.isBold ? "font-bold" : "font-normal",
               box.isItalic ? "italic" : "not-italic",
-            ].join(" ")}
+              box.isUppercase ? "uppercase" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             style={{
               fontFamily: `'${currentFont}', sans-serif`,
-              fontSize: `${Math.max(12, finalScreenFontSize)}px`,
-              lineHeight: `${Math.max(14, finalScreenLineHeight)}px`,
+              fontSize: `${Math.max(11, finalScreenFontSize)}px`,
+              lineHeight: `${Math.max(13, finalScreenLineHeight)}px`,
             }}
           />
         </div>
         <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-slate-950 px-1.5 py-0.5 text-[9px] text-slate-300 border border-slate-700 pointer-events-none shadow">
-          Enter: перенос | Ctrl+Enter: готово | Esc: отмена
+          Enter: перенос + пересчёт хвоста | Ctrl+Enter: готово | Esc: отмена
         </div>
       </div>
     )
   }
 
-  // Режим включенного тайпсета (готовый русский текст поверх скана)
   if (showTypeset && !isDraft && hasTranslation) {
     return (
       <div
@@ -347,7 +487,11 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
         title="Двойной клик — редактировать текст прямо на скане"
       >
         {isEllipse && (
-          <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <svg
+            className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
             <ellipse
               cx="50"
               cy="50"
@@ -376,18 +520,13 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     )
   }
 
-  // Режим разметки / выделения рамок бабла (с цветами классов)
   const rectBorderClass = isDraft
     ? "border-indigo-400 bg-indigo-400/20"
     : isSelected
       ? "border-amber-400 bg-amber-400/20 shadow-md"
       : `${theme.border} ${theme.bg}`
 
-  const ellipseStrokeColor = isDraft
-    ? "#818cf8"
-    : isSelected
-      ? "#f59e0b"
-      : theme.stroke
+  const ellipseStrokeColor = isDraft ? "#818cf8" : isSelected ? "#f59e0b" : theme.stroke
 
   const ellipseFillColor = isDraft
     ? "rgba(129, 140, 248, 0.2)"
@@ -427,7 +566,11 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
       title={`[${theme.title}] — Двойной клик для редактирования текста`}
     >
       {isEllipse && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <svg
+          className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+        >
           <ellipse
             cx="50"
             cy="50"

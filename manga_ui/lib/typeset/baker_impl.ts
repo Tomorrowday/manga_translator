@@ -1,5 +1,5 @@
 // manga_ui/lib/typeset/baker_impl.ts
-// Рендеринг и запекание тайпсета на Canvas с поддержкой поворота, цвета текста и контрастной обводки
+// Рендеринг и запекание тайпсета на Canvas с гарантией 100% совпадения с экранным превью
 
 import type { TextBlock } from "../types"
 import type { CropRect } from "./baker"

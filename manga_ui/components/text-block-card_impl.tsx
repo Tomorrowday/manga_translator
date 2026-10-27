@@ -1,9 +1,9 @@
 // manga_ui/components/text-block-card_impl.tsx
-// Ультракомпактная карточка с авто-овалом при появлении русского перевода
+// Ультракомпактная карточка с авто-овалом и умным пересчётом хвоста при ручных переносах
 
 "use client"
 
-import React, { useState, useRef, useEffect, memo } from "react"
+import React, { useState, useRef, useEffect, useMemo, memo } from "react"
 import {
   ScanText,
   Trash2,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { runOcr } from "@/lib/api"
+import { layoutBubbleTextLines, reflowFromManualLines } from "@/lib/typeset"
 import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 import { BubbleStyleControls } from "@/components/text-block-card/bubble-style-controls"
 import type { TextBlockCardProps } from "./text-block-card"
@@ -39,6 +40,8 @@ const CLASS_CONFIG: Record<number, { label: string; className: string; title: st
   },
 }
 
+let cardPreviewCanvas: HTMLCanvasElement | null = null
+
 export const TextBlockCard = memo(function TextBlockCard({
   block,
   index,
@@ -57,8 +60,68 @@ export const TextBlockCard = memo(function TextBlockCard({
 }: TextBlockCardProps) {
   const [ocrLoading, setOcrLoading] = useState(false)
   const [spotLoading, setSpotLoading] = useState(false)
+  const [isFocusedRus, setIsFocusedRus] = useState(false)
+  const [localRusText, setLocalRusText] = useState(block.rusText || "")
+
   const cardRef = useRef<HTMLElement>(null)
+  const rusTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const snapshotLinesRef = useRef<string[]>([])
   const { hotkeys } = useHotkeysConfig()
+
+  const renderedLines = useMemo(() => {
+    if (typeof document === "undefined") return (block.rusText || "").split(/\r?\n/)
+    if (!cardPreviewCanvas) {
+      cardPreviewCanvas = document.createElement("canvas")
+    }
+    const ctx = cardPreviewCanvas.getContext("2d")
+    const raw = (block.rusText || "").trim()
+    if (!ctx || !raw) return []
+
+    const imgEl = document.querySelector<HTMLImageElement>("img[alt='Manga page']")
+    const naturalW = imgEl?.naturalWidth || 1100
+    const naturalH = imgEl?.naturalHeight || 1600
+
+    const baseSize = block.fontSize || defaultFontSize
+    const masterFontSize = Math.round(baseSize * (naturalH / 1200))
+    const masterBoxPixelW = block.width * naturalW
+    const masterBoxPixelH = block.height * naturalH
+    const currentFont = block.fontFamily || "v_CCFaceFront"
+
+    const res = layoutBubbleTextLines(
+      ctx,
+      raw,
+      masterBoxPixelW,
+      masterBoxPixelH,
+      masterFontSize,
+      currentFont,
+      block.shape || "rect",
+      block.paddingMode || "safe",
+      block.isBold,
+      block.isItalic,
+      block.minHyphens !== false
+    )
+    return res.lines
+  }, [
+    block.rusText,
+    block.width,
+    block.height,
+    block.fontSize,
+    block.fontFamily,
+    block.shape,
+    block.paddingMode,
+    block.isBold,
+    block.isItalic,
+    block.minHyphens,
+    defaultFontSize,
+  ])
+
+  useEffect(() => {
+    if (!isFocusedRus) {
+      const displayStr = renderedLines.length > 0 ? renderedLines.join("\n") : block.rusText || ""
+      setLocalRusText(displayStr)
+      snapshotLinesRef.current = [...renderedLines]
+    }
+  }, [renderedLines, block.rusText, isFocusedRus])
 
   useEffect(() => {
     if (isSelected && cardRef.current) {
@@ -105,15 +168,74 @@ export const TextBlockCard = memo(function TextBlockCard({
     onChange({ class_id: nextClass, shape: nextShape })
   }
 
-  const handleRussianTextChange = (text: string) => {
+  const saveStorageTextToBlock = (storageText: string) => {
     const patch: Partial<TextBlock> = {
-      rusText: text,
-      status: text.trim() ? "translated" : block.japText ? "ocr-done" : "new",
+      rusText: storageText,
+      status: storageText.trim() ? "translated" : block.japText ? "ocr-done" : "new",
     }
-    if (currentClassId === 0 && autoOvalBubble) {
-      patch.shape = text.trim().length > 0 ? "ellipse" : "rect"
+    if (currentClassId === 0 && autoOvalBubble && !block.shape) {
+      patch.shape = storageText.trim().length > 0 ? "ellipse" : "rect"
+    } else if (
+      currentClassId === 0 &&
+      autoOvalBubble &&
+      storageText.trim().length > 0 &&
+      block.shape === "rect" &&
+      !block.rusText
+    ) {
+      patch.shape = "ellipse"
     }
     onChange(patch)
+  }
+
+  const handleRusKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const ta = rusTextareaRef.current
+      if (ta && cardPreviewCanvas) {
+        e.preventDefault()
+        const start = ta.selectionStart ?? localRusText.length
+        const end = ta.selectionEnd ?? localRusText.length
+        const before = localRusText.slice(0, start).trimEnd()
+        const after = localRusText.slice(end).trimStart()
+
+        const nextRaw = `${before}\n${after}`
+        const storageText = reflowFromManualLines(snapshotLinesRef.current, nextRaw)
+
+        const ctx = cardPreviewCanvas.getContext("2d")
+        const imgEl = document.querySelector<HTMLImageElement>("img[alt='Manga page']")
+        const naturalW = imgEl?.naturalWidth || 1100
+        const naturalH = imgEl?.naturalHeight || 1600
+        const baseSize = block.fontSize || defaultFontSize
+        const masterFontSize = Math.round(baseSize * (naturalH / 1200))
+
+        if (ctx) {
+          const res = layoutBubbleTextLines(
+            ctx,
+            storageText,
+            block.width * naturalW,
+            block.height * naturalH,
+            masterFontSize,
+            block.fontFamily || "v_CCFaceFront",
+            block.shape || "rect",
+            block.paddingMode || "safe",
+            block.isBold,
+            block.isItalic,
+            block.minHyphens !== false
+          )
+          const formattedVisible = res.lines.join("\n")
+          snapshotLinesRef.current = [...res.lines]
+          setLocalRusText(formattedVisible)
+          saveStorageTextToBlock(storageText)
+
+          const newCursorPos = Math.min(formattedVisible.length, before.length + 1)
+          requestAnimationFrame(() => {
+            if (rusTextareaRef.current) {
+              rusTextareaRef.current.setSelectionRange(newCursorPos, newCursorPos)
+            }
+          })
+          return
+        }
+      }
+    }
   }
 
   const handleClearManualBreaks = (e: React.MouseEvent) => {
@@ -123,16 +245,22 @@ export const TextBlockCard = memo(function TextBlockCard({
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter(Boolean)
-      .join(" ")
+      .reduce((acc, line) => {
+        if (!acc) return line
+        if (acc.endsWith("-") && !acc.endsWith(" -") && !acc.endsWith("—")) {
+          return acc.slice(0, -1) + line
+        }
+        return `${acc} ${line}`
+      }, "")
       .replace(/\s+/g, " ")
-    handleRussianTextChange(cleaned)
+    saveStorageTextToBlock(cleaned)
   }
 
   const isEllipse = block.shape === "ellipse"
   const hasRotation = Math.abs(block.rotation || 0) >= 0.5
   const isTranslated = block.status === "translated" || Boolean(block.rusText && block.rusText.trim())
   const hasManualNewlines = Boolean(block.rusText && /\r?\n/.test(block.rusText))
-  const rusRows = Math.min(6, Math.max(1, (block.rusText || "").split(/\r?\n/).length))
+  const rusRows = Math.min(6, Math.max(1, localRusText.split(/\r?\n/).length))
 
   return (
     <article
@@ -337,13 +465,28 @@ export const TextBlockCard = memo(function TextBlockCard({
                 title="Сбросить все ручные переносы строк (вернуть полный автоперенос)"
               >
                 <WrapText className="h-2.5 w-2.5" />
-                <span>Сбросить \n</span>
+                <span>Авто-баланс</span>
               </button>
             )}
           </div>
           <textarea
-            value={block.rusText}
-            onChange={(e) => handleRussianTextChange(e.target.value)}
+            ref={rusTextareaRef}
+            value={localRusText}
+            onFocus={() => {
+              setIsFocusedRus(true)
+              snapshotLinesRef.current = [...renderedLines]
+            }}
+            onBlur={() => {
+              setIsFocusedRus(false)
+              if (localRusText.trim() !== snapshotLinesRef.current.join("\n").trim()) {
+                const storageText = reflowFromManualLines(snapshotLinesRef.current, localRusText.trim())
+                saveStorageTextToBlock(storageText)
+              }
+            }}
+            onChange={(e) => {
+              setLocalRusText(e.target.value)
+            }}
+            onKeyDown={handleRusKeyDown}
             onClick={(e) => e.stopPropagation()}
             placeholder="Перевод на русский…"
             rows={rusRows}
