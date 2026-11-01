@@ -82,10 +82,17 @@ export function ImageViewer({
     return { x, y }
   }, [])
 
+  const handleTransformComplete = useCallback(
+    (rect: DrawRect, img: HTMLImageElement, id: string, rot: number) => {
+      onDrawComplete(rect, img, id, rot)
+    },
+    [onDrawComplete]
+  )
+
   const { isEditing, editId, editType, activeBox, activeRotation, startTransform } = useBoxTransform(
     imgRef,
     pointFromEvent,
-    (rect, img, id, rot) => onDrawComplete(rect, img, id, rot)
+    handleTransformComplete
   )
 
   const {
@@ -148,7 +155,7 @@ export function ImageViewer({
             <p className="text-xs text-slate-500">
               {activeTool === "brush"
                 ? brushMode === "lama"
-                  ? "AI-ретушь: закрасьте дефект для удаления (LaMa)"
+                  ? "AI-ретушь: закрасьте дефект для удаления (LaМа)"
                   : brushMode === "white"
                     ? "Заливка: закрасьте область чистым белым цветом"
                     : "Заливка: закрасьте область чистым чёрным цветом"

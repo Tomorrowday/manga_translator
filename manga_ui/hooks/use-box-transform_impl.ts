@@ -1,11 +1,19 @@
 // manga_ui/hooks/use-box-transform_impl.ts
 // Логика перетаскивания, 8-точечного масштабирования и вращения баблов
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import type { TextBlock } from "@/lib/types"
-import type { DrawRect, EditAction, ResizeDirection, UseBoxTransformReturn } from "./use-box-transform"
+import type { DrawRect, EditAction, UseBoxTransformReturn } from "./use-box-transform"
 
 const MIN_BLOCK_SIZE = 0.008
+
+interface TransformSession {
+  startPoint: { x: number; y: number }
+  originalBox: DrawRect
+  editType: EditAction
+  editId: string
+  currentRotation: number
+}
 
 export function useBoxTransform(
   imgRef: React.RefObject<HTMLImageElement | null>,
@@ -15,33 +23,15 @@ export function useBoxTransform(
   const [isEditing, setIsEditing] = useState(false)
   const [editType, setEditType] = useState<EditAction | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
-  const [startPoint, setStartPoint] = useState<{ x: number; y: number } | null>(null)
-  const [originalBox, setOriginalBox] = useState<DrawRect | null>(null)
   const [activeBox, setActiveBox] = useState<DrawRect | null>(null)
   const [activeRotation, setActiveRotation] = useState<number>(0)
 
-  const startTransform = useCallback(
-    (e: React.MouseEvent, box: TextBlock, action: EditAction) => {
-      const p = pointFromEvent(e)
-      if (!p) return
-
-      setIsEditing(true)
-      setEditType(action)
-      setEditId(box.id)
-      setStartPoint(p)
-      const initialRect: DrawRect = {
-        x: box.x,
-        y: box.y,
-        width: box.width,
-        height: box.height,
-        rotation: box.rotation || 0,
-      }
-      setOriginalBox(initialRect)
-      setActiveBox(initialRect)
-      setActiveRotation(box.rotation || 0)
-    },
-    [pointFromEvent]
-  )
+  // Рефы для стабильных ссылок без разрыва и переподписки слушателей
+  const sessionRef = useRef<TransformSession | null>(null)
+  const pointFromEventRef = useRef(pointFromEvent)
+  pointFromEventRef.current = pointFromEvent
+  const onTransformCompleteRef = useRef(onTransformComplete)
+  onTransformCompleteRef.current = onTransformComplete
 
   const computeUpdatedRect = useCallback((orig: DrawRect, action: EditAction, dx: number, dy: number): DrawRect => {
     const updated = { ...orig }
@@ -83,15 +73,48 @@ export function useBoxTransform(
     return updated
   }, [])
 
-  useEffect(() => {
-    const handleGlobalMouseMove = (e: MouseEvent) => {
-      if (!isEditing || !editId || !startPoint || !originalBox || !editType || !imgRef.current) return
-      const p = pointFromEvent(e)
+  const startTransform = useCallback(
+    (e: React.MouseEvent, box: TextBlock, action: EditAction) => {
+      const p = pointFromEventRef.current(e)
       if (!p) return
 
-      if (editType === "rotate") {
-        const cx = originalBox.x + originalBox.width / 2
-        const cy = originalBox.y + originalBox.height / 2
+      const initialRect: DrawRect = {
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+        rotation: box.rotation || 0,
+      }
+
+      sessionRef.current = {
+        startPoint: p,
+        originalBox: initialRect,
+        editType: action,
+        editId: box.id,
+        currentRotation: box.rotation || 0,
+      }
+
+      setIsEditing(true)
+      setEditType(action)
+      setEditId(box.id)
+      setActiveBox(initialRect)
+      setActiveRotation(box.rotation || 0)
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!isEditing) return
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      const session = sessionRef.current
+      if (!session || !imgRef.current) return
+      const p = pointFromEventRef.current(e)
+      if (!p) return
+
+      if (session.editType === "rotate") {
+        const cx = session.originalBox.x + session.originalBox.width / 2
+        const cy = session.originalBox.y + session.originalBox.height / 2
         const imgRect = imgRef.current.getBoundingClientRect()
         const px = (p.x - cx) * imgRect.width
         const py = (p.y - cy) * imgRect.height
@@ -101,60 +124,48 @@ export function useBoxTransform(
 
         if (Math.abs(deg) < 2.0) deg = 0
 
+        session.currentRotation = deg
         setActiveRotation(deg)
         return
       }
 
-      const dx = p.x - startPoint.x
-      const dy = p.y - startPoint.y
-      const updated = computeUpdatedRect(originalBox, editType, dx, dy)
+      const dx = p.x - session.startPoint.x
+      const dy = p.y - session.startPoint.y
+      const updated = computeUpdatedRect(session.originalBox, session.editType, dx, dy)
       setActiveBox(updated)
     }
 
     const handleGlobalMouseUp = (e: MouseEvent) => {
-      if (!isEditing || !editId || !startPoint || !originalBox || !imgRef.current || !editType) return
+      const session = sessionRef.current
+      if (!session || !imgRef.current) return
 
-      const p = pointFromEvent(e)
+      const p = pointFromEventRef.current(e)
       if (p) {
-        if (editType === "rotate") {
-          const finalRot = Math.round(activeRotation * 10) / 10
-          onTransformComplete(originalBox, imgRef.current, editId, finalRot)
+        if (session.editType === "rotate") {
+          const finalRot = Math.round(session.currentRotation * 10) / 10
+          onTransformCompleteRef.current(session.originalBox, imgRef.current, session.editId, finalRot)
         } else {
-          const dx = p.x - startPoint.x
-          const dy = p.y - startPoint.y
-          const finalRect = computeUpdatedRect(originalBox, editType, dx, dy)
-          onTransformComplete(finalRect, imgRef.current, editId, originalBox.rotation || 0)
+          const dx = p.x - session.startPoint.x
+          const dy = p.y - session.startPoint.y
+          const finalRect = computeUpdatedRect(session.originalBox, session.editType, dx, dy)
+          onTransformCompleteRef.current(finalRect, imgRef.current, session.editId, session.originalBox.rotation || 0)
         }
       }
 
+      sessionRef.current = null
       setIsEditing(false)
       setEditType(null)
       setEditId(null)
-      setStartPoint(null)
-      setOriginalBox(null)
       setActiveBox(null)
     }
 
-    if (isEditing) {
-      window.addEventListener("mousemove", handleGlobalMouseMove)
-      window.addEventListener("mouseup", handleGlobalMouseUp)
-    }
+    window.addEventListener("mousemove", handleGlobalMouseMove)
+    window.addEventListener("mouseup", handleGlobalMouseUp)
     return () => {
       window.removeEventListener("mousemove", handleGlobalMouseMove)
       window.removeEventListener("mouseup", handleGlobalMouseUp)
     }
-  }, [
-    isEditing,
-    editId,
-    startPoint,
-    originalBox,
-    editType,
-    activeRotation,
-    imgRef,
-    pointFromEvent,
-    computeUpdatedRect,
-    onTransformComplete,
-  ])
+  }, [isEditing, imgRef, computeUpdatedRect])
 
   return {
     isEditing,

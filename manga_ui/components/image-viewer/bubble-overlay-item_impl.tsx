@@ -221,11 +221,12 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     fontsLoadedTick,
   ])
 
+  // Синхронизируем localText со значением из пропсов только когда пользователь не печатает внутри инлайн-редактора
   useEffect(() => {
     if (!isInlineEditing) {
-      setLocalText(editableLines.length > 0 ? editableLines.join("\n") : box.rusText || "")
+      setLocalText(box.rusText || "")
     }
-  }, [box.rusText, editableLines, isInlineEditing])
+  }, [box.rusText, isInlineEditing])
 
   useEffect(() => {
     if (isInlineEditing && textareaRef.current) {
@@ -530,8 +531,6 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
       : `${theme.border} ${theme.bg}`
 
   const ellipseStrokeColor = isDraft ? "#818cf8" : isSelected ? "#f59e0b" : theme.stroke
-
-  // При выборе эллипса фон также сохраняется неизменным (theme.fill)
   const ellipseFillColor = isDraft ? "rgba(129, 140, 248, 0.2)" : theme.fill
 
   const badgeStyle = isDraft
