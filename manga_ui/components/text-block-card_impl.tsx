@@ -16,7 +16,11 @@ import {
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { runOcr } from "@/lib/api"
-import { layoutBubbleTextLines, reflowFromManualLines } from "@/lib/typeset"
+import {
+  layoutBubbleTextLines,
+  reflowFromManualLines,
+  joinLinesRemovingSoftHyphens,
+} from "@/lib/typeset"
 import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 import { BubbleStyleControls } from "@/components/text-block-card/bubble-style-controls"
 import type { TextBlockCardProps } from "./text-block-card"
@@ -166,7 +170,6 @@ export const TextBlockCard = memo(function TextBlockCard({
 
   const handleCycleClass = (e: React.MouseEvent) => {
     e.stopPropagation()
-    // Цикл по всем 4-м классам: 0 (bubble), 1 (thought), 2 (text_free), 3 (sfx)
     const nextClass = (currentClassId + 1) % 4
     const hasTranslation = Boolean(block.rusText && block.rusText.trim())
     const nextShape = nextClass === 0 && autoOvalBubble && hasTranslation ? "ellipse" : "rect"
@@ -246,18 +249,14 @@ export const TextBlockCard = memo(function TextBlockCard({
   const handleClearManualBreaks = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!block.rusText) return
-    const cleaned = block.rusText
+    const rawLines = block.rusText
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter(Boolean)
-      .reduce((acc, line) => {
-        if (!acc) return line
-        if (acc.endsWith("-") && !acc.endsWith(" -") && !acc.endsWith("—")) {
-          return acc.slice(0, -1) + line
-        }
-        return `${acc} ${line}`
-      }, "")
-      .replace(/\s+/g, " ")
+
+    // Используем интеллектуальную функцию: дефисы составных слов сохраняются,
+    // удаляются только мягкие переносы строк
+    const cleaned = joinLinesRemovingSoftHyphens(rawLines)
     saveStorageTextToBlock(cleaned)
   }
 

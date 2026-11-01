@@ -1,8 +1,10 @@
 // manga_ui/lib/typeset/hyphenation_impl.ts
 // Алгоритм русской слогоразбивки и переносов по правилам русской орфографии (ПАС)
 
-const RUS_VOWELS = new Set("аеёиоуыэюяАЕЁИОУЫЭЮЯ")
-const RUS_CONSONANTS = new Set("бвгджзклмнпрстфхцчшщБВГДЖЗКЛМНПРСТФХЦЧШЩ")
+import type { WordHyphenSplit } from "./hyphenation"
+
+const RUS_VOWELS = new Set("аеёиоуыэюяАЕЁИОУЫЭЮЯaeiouyAEIOUY")
+const RUS_CONSONANTS = new Set("бвгджзклмнпрстфхцчшщБВГДЖЗКЛМНПРСТФХЦЧШЩbcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ")
 const RUS_SIGNS = new Set("ьъйЬЪЙ")
 const RUS_MODIFIERS = new Set("ьъЬЪ")
 const RUS_YOT = new Set("йЙ")
@@ -82,7 +84,7 @@ function findRussianCoreSplitIndices(core: string): number[] {
       continue
     }
 
-    // Правило 7: Открытый слог — после гласной перед согласной (мо-ло-ко, пе-ре-ма-ты-ва-ла)
+    // Правило 7: Открытый слог — после гласной перед согласной (мо-ло-ко, пе-ре-нос, во-да)
     if (RUS_VOWELS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
       indices.push(i)
       continue
@@ -98,13 +100,13 @@ function findRussianCoreSplitIndices(core: string): number[] {
       continue
     }
 
-    // Правило 9: Сонорная согласная перед другой согласной (пар-та, пол-ка, бан-ка, свадь-бе)
+    // Правило 9: Сонорная согласная перед другой согласной (пар-та, пол-ка, бан-ка, свадь-ба, зем-ля)
     if (RUS_SONORANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
       indices.push(i)
       continue
     }
 
-    // Правило 10: Стечение шумных согласных (сес-тра, под-толк-нуть), кроме оставления двойных согласных в начале переноса
+    // Правило 10: Стечение шумных согласных (сес-тра, под-толк-нуть, ут-ро, ок-но)
     if (RUS_CONSONANTS.has(charBefore) && RUS_CONSONANTS.has(charAfter)) {
       const nextAfter = i + 1 < n ? core[i + 1] : ""
       if (
@@ -124,17 +126,22 @@ function findRussianCoreSplitIndices(core: string): number[] {
   return indices
 }
 
-export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffix: string }> {
+export function getWordHyphenSplits(word: string): WordHyphenSplit[] {
   if (!word || word.length < 4) return []
 
-  const match = word.match(/^([.«"(\[…\s]*)([а-яА-ЯёЁa-zA-Z]+(?:-[а-яА-ЯёЁa-zA-Z]+)*)(.*)$/)
+  // Нормализуем неразрывные дефисы и короткие тире внутри слов в стандартный дефис
+  const normalized = word.replace(/([а-яА-ЯёЁa-zA-Z0-9])[‑–−]([а-яА-ЯёЁa-zA-Z0-9])/g, "$1-$2")
+
+  const match = normalized.match(
+    /^([.«"(\[…\s]*)([а-яА-ЯёЁa-zA-Z0-9]+(?:-[а-яА-ЯёЁa-zA-Z0-9]+)*)(.*)$/
+  )
   if (!match) return []
 
   const leadPunct = match[1]
   const fullCore = match[2]
   const trailPunct = match[3]
 
-  const splits: Array<{ prefix: string; suffix: string }> = []
+  const splits: WordHyphenSplit[] = []
   const parts = fullCore.split("-")
 
   let accumulatedLeft = ""
@@ -143,6 +150,7 @@ export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffi
     const remainingRightParts = parts.slice(pIdx + 1).join("-")
     const rightTail = remainingRightParts ? "-" + remainingRightParts + trailPunct : trailPunct
 
+    // Слогоразбивка внутри отдельной части составного слова
     if (part.length >= 4) {
       const indices = findRussianCoreSplitIndices(part)
       for (const idx of indices) {
@@ -151,17 +159,19 @@ export function getWordHyphenSplits(word: string): Array<{ prefix: string; suffi
         const prefix = appendHyphenSafe(leadPunct + accumulatedLeft + subLeft)
         const suffix = cleanLeadingPunct(subRight + rightTail)
         if (prefix && suffix) {
-          splits.push({ prefix, suffix })
+          splits.push({ prefix, suffix, isNativeHyphen: false })
         }
       }
     }
 
+    // Естественный перенос на месте существующего дефиса (высший приоритет!)
     if (pIdx < parts.length - 1) {
       const leftWithDash = accumulatedLeft + part + "-"
       if (part.length >= 2 && remainingRightParts.length >= 2) {
         splits.push({
           prefix: leadPunct + leftWithDash,
           suffix: cleanLeadingPunct(remainingRightParts + trailPunct),
+          isNativeHyphen: true,
         })
       }
       accumulatedLeft = leftWithDash

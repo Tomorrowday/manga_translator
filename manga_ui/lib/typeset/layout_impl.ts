@@ -1,18 +1,18 @@
 // manga_ui/lib/typeset/layout_impl.ts
-// Оптимальная верстка текста манги («ромб / овал») с честным сохранением пользовательских переносов
-// и автоматическим пересчётом хвоста при любых изменениях текста или геометрии баббла
+// Оптимальная верстка текста манги («ромб / овал») с надежным сохранением дефисов в двусоставных словах,
+// свободным переносом дефисных соединений, поддержкой ручных переносов строк и автобалансировкой
 
 import { cleanLeadingPunct, getWordHyphenSplits, appendHyphenSafe } from "./hyphenation"
 
-// Короткие предлоги, союзы и частицы, которые не должны висеть на конце строки
+// Короткие предлоги, союзы и частицы для мягкого балансирования (без принудительной склейки)
 const NON_BREAKING_PREPOSITIONS = new Set([
   "а", "в", "и", "к", "о", "с", "у", "я",
   "не", "ни", "на", "но", "по", "за", "из", "от", "до", "во", "со", "ко", "об",
   "ну", "ах", "ох", "эх", "уж", "ух",
 ])
 
-// Частицы и тире, которые приклеиваются к предыдущему слову
-const ATTACH_TO_PREV_WORDS = new Set(["—", "–", "-", "же", "бы", "б", "ли", "ль", "то"])
+// Частицы и тире, приклеивающиеся к предыдущему слову
+const ATTACH_TO_PREV_WORDS = new Set(["—", "–", "-", "же", "бы", "б", "ли", "ль"])
 
 export function getEllipseWidthAtY(yOffset: number, rx: number, ry: number): number {
   if (ry <= 0 || Math.abs(yOffset) >= ry) {
@@ -48,8 +48,106 @@ function cleanAndTrimLines(rawLines: string[]): string[] {
 }
 
 /**
- * Склеивает строки обратно в чистый поток слов, убирая мягкие дефисы слогового переноса,
- * но сохраняя дефисы в сложных словах ("по-русски", "кто-то", "из-за") и японских суффиксах ("Отаку-куна").
+ * Надежно определяет, является ли пара частей истинным двусоставным словом с дефисом,
+ * который категорически нельзя удалять при пересчете верстки.
+ */
+export function isCompoundHyphenPair(rawLeft: string, rawRight: string): boolean {
+  const left = rawLeft.replace(/^[«"(\[…\s]+/, "").toLowerCase()
+  const right = rawRight.replace(/[.,!?:;…«»"'\)\]\s]+$/g, "").toLowerCase()
+  if (!left || !right) return false
+
+  const cleanRightOriginal = rawRight.replace(/[.,!?:;…«»"'\)\]\s]+$/g, "")
+
+  // 1. Вторая часть с заглавной буквы (имена, двойные фамилии: Римский-Корсаков, Анна-Мария, Санкт-Петербург)
+  if (/^[А-ЯЁA-Z]/.test(cleanRightOriginal)) return true
+
+  // 2. Часть с цифрами (2-й, 10-летие, 3D-модель)
+  if (/^\d+$/.test(left) || /^\d+$/.test(right)) return true
+
+  // 3. Постфиксы и частицы через дефис (кто-то, кого-то, кому-то, какой-нибудь, как-либо, все-таки, ну-ка, дай-ка)
+  if (["то", "либо", "нибудь", "таки", "ка", "де", "мол", "с"].includes(right)) {
+    return true
+  }
+
+  // 4. Вопросительные/неопределенные местоимения в ЛЮБЫХ падежах перед дефисом
+  if (
+    [
+      "кто", "кого", "кому", "кем", "ком",
+      "что", "чего", "чему", "чем",
+      "какой", "какого", "какому", "каким", "каком", "какая", "какой", "какую", "какое", "какие", "каких", "какими",
+      "чей", "чьего", "чьему", "чьим", "чьем", "чья", "чьей", "чью", "чье", "чьи", "чьих", "чьими",
+      "где", "куда", "откуда", "когда", "как", "почему", "зачем", "сколько", "скольких",
+    ].includes(left)
+  ) {
+    return true
+  }
+
+  // 5. Японские именные суффиксы и обращения во всех падежных формах
+  if (
+    /^(кун|тян|чан|сан|сама|доно|с[еэ]нс[еэ]й|с[еэ]мпай|семпай|кохай|си|д[еэ]нка|х[еэ]нка|онни|оннии|онии|нии|нэ|нээ)[а-яё]*$/i.test(
+      right
+    )
+  ) {
+    return true
+  }
+
+  // 6. Иноязычные и составные приставки перед дефисом
+  if (
+    [
+      "интернет", "онлайн", "веб", "мини", "макси", "миди", "микро", "макро", "топ",
+      "бизнес", "пресс", "экс", "вице", "лейб", "обер", "унтер", "штаб", "генерал",
+      "премьер", "мастер", "шоу", "арт", "поп", "рок", "джаз", "спа", "фитнес", "эко",
+      "кибер", "медиа", "аудио", "видео", "стерео", "супер", "ультра", "экстра", "гипер",
+      "мега", "псевдо", "квази", "пол", "полу", "кое", "кой",
+    ].includes(left)
+  ) {
+    return true
+  }
+
+  // 7. Наречия с приставкой по- (-ому, -ему, -ски, -цки, -ьи, -ески) и в-/во- (-ых, -их)
+  if (
+    left === "по" &&
+    (right.endsWith("ски") ||
+      right.endsWith("цки") ||
+      right.endsWith("ьи") ||
+      right.endsWith("ому") ||
+      right.endsWith("ему") ||
+      right.endsWith("ески") ||
+      ["русски", "немецки", "английски", "японски", "французски", "птичьи", "волчьи"].includes(right))
+  ) {
+    return true
+  }
+  if ((left === "во" || left === "в") && (right.endsWith("ых") || right.endsWith("их"))) {
+    return true
+  }
+
+  // 8. Составные предлоги и междометия
+  if (
+    (left === "из" && (right === "за" || right === "под")) ||
+    (left === "по" && (right === "над" || right === "за")) ||
+    left === right // Повторы: еле-еле, чуть-чуть, давным-давно, точь-в-точь, синий-синий
+  ) {
+    return true
+  }
+
+  // 9. Сложные прилагательные и существительные (светло-синий, юго-запад, чудо-оружие, плащ-палатка)
+  if (
+    left.length >= 3 &&
+    right.length >= 3 &&
+    /[оеёа-яА-Я]$/.test(left) &&
+    /^(светло|темно|тёмно|ярко|бледно|мутно|нежно|густо|слабо|резко|остро|кисло|горько|сладко|солено|солёно|северо|юго|западно|восточно|верхне|нижне|средне|ранне|поздне|древне|старо|ново|мало|много|крупно|мелко|узко|широко|высоко|низко|глубоко|далеко|близко|быстро|медленно|громко|тихо|чудо|горе|жар|птица|диван|кресло|плащ|школа|кафе|матч|бой|шеф|бизнес|пресс|рок|поп|фан|арт|спа)$/.test(
+      left
+    )
+  ) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Склеивает строки обратно в поток слов, убирая мягкие слоговые дефисы,
+ * но СТРОГО сохраняя дефисы во всех двусоставных словах и именах.
  */
 export function joinLinesRemovingSoftHyphens(lines: string[]): string {
   let acc = ""
@@ -64,56 +162,10 @@ export function joinLinesRemovingSoftHyphens(lines: string[]): string {
     if (acc.endsWith("-") && !acc.endsWith(" -") && !acc.endsWith("—") && !acc.endsWith("–")) {
       const prevWords = acc.slice(0, -1).split(/\s+/)
       const rawLastPrevWord = prevWords[prevWords.length - 1] || ""
-      const lastPrevWord = rawLastPrevWord.replace(/^[«"(\[…]+/, "").toLowerCase()
       const nextWords = line.split(/\s+/)
       const rawFirstNextWord = nextWords[0] || ""
-      const firstNextWord = rawFirstNextWord.replace(/[.,!?:;…«»"'\)\]]+$/g, "").toLowerCase()
 
-      // Японские именные суффиксы и обращения (с учётом склонений: -кун/-куна, -тян/-тянке, -сан/-сана, -сама/-самы и т.д.)
-      const isJapaneseSuffix =
-        /^(кун|тян|чан|сан|сама|доно|с[еэ]нс[еэ]й|с[еэ]мпай|семпай|кохай|си|д[еэ]нка|х[еэ]нка|онни|оннии|онии)[а-яё]*$/i.test(firstNextWord)
-
-      // Частицы, присоединяемые через дефис
-      const isCompoundParticle =
-        ["то", "либо", "нибудь", "таки", "ка", "де", "мол"].includes(firstNextWord)
-
-      // Вопросительные/неопределенные местоимения с частицами ("кто-то", "что-нибудь", "где-то")
-      const isCompoundQuestionWord =
-        ["кто", "что", "как", "где", "куда", "откуда", "когда", "почему", "зачем", "какой", "чей"].includes(lastPrevWord) &&
-        isCompoundParticle
-
-      // Приставки "кое-" / "кой-"
-      const isCompoundPrefix =
-        lastPrevWord === "кое" || lastPrevWord === "кой"
-
-      // Составные предлоги ("из-за", "из-под", "по-над")
-      const isCompoundPreposition =
-        (lastPrevWord === "из" && (firstNextWord === "за" || firstNextWord === "под")) ||
-        (lastPrevWord === "по" && (firstNextWord === "над" || firstNextWord === "за"))
-
-      // Наречия с приставкой "по-" ("по-русски", "по-моему", "по-прежнему", "по-другому")
-      const isPoAdverb =
-        lastPrevWord === "по" &&
-        (firstNextWord.endsWith("ски") ||
-          firstNextWord.endsWith("цки") ||
-          firstNextWord.endsWith("ьи") ||
-          firstNextWord.endsWith("ому") ||
-          firstNextWord.endsWith("ему") ||
-          [
-            "русски", "немецки", "братски", "волчьи", "птичьи", "всякому",
-            "другому", "прежнему", "новому", "любому", "моему", "твоему",
-            "нашему", "вашему", "пустому", "глупому", "честному",
-          ].includes(firstNextWord))
-
-      const isRealCompoundWord =
-        isJapaneseSuffix ||
-        isCompoundParticle ||
-        isCompoundQuestionWord ||
-        isCompoundPrefix ||
-        isCompoundPreposition ||
-        isPoAdverb
-
-      if (isRealCompoundWord) {
+      if (isCompoundHyphenPair(rawLastPrevWord, rawFirstNextWord)) {
         acc = `${acc}${line}`
       } else {
         acc = `${acc.slice(0, -1)}${line}`
@@ -129,7 +181,7 @@ function tokenizeMangaPhrase(text: string): string[] {
   const rawTokens = text.trim().split(/\s+/).filter(Boolean)
   if (rawTokens.length <= 1) return rawTokens
 
-  // Шаг 1: Приклеиваем частицы и тире к предыдущему слову
+  // Шаг 1: Приклеиваем только закрывающие тире/частицы ("ли", "же", "бы", "б") к предыдущему слову
   const step1: string[] = []
   for (let i = 0; i < rawTokens.length; i++) {
     const token = rawTokens[i]
@@ -142,26 +194,25 @@ function tokenizeMangaPhrase(text: string): string[] {
     }
   }
 
-  // Шаг 2: Приклеиваем короткие предлоги/союзы (без знаков препинания на конце) к следующему слову
+  // Шаг 2: Дефисные составные слова («Ямада-сэмпай», «интернет-кафе») делим на самостоятельные части
+  // ["Ямада-", "сэмпай"], чтобы их можно было переносить по дефису без уменьшения кегля
+  // ПРИМЕЧАНИЕ: Предлоги («из», «в», «на») НЕ свариваются намертво со следующим словом,
+  // что позволяет свободно переносить их по строкам
   const step2: string[] = []
-  let i = 0
-  while (i < step1.length) {
-    const token = step1[i]
-    const strippedLead = token.replace(/^[«"(\[…]+/, "")
-    const hasTrailingPunct = /[.,!?:;…«»"'\)\]]$/.test(strippedLead)
-    const cleanLower = strippedLead.toLowerCase()
+  for (const token of step1) {
+    if (token.includes("-") && !token.endsWith("-") && token.length >= 6) {
+      const dashIdx = token.indexOf("-")
+      const leftPart = token.slice(0, dashIdx + 1)
+      const rightPart = token.slice(dashIdx + 1)
+      const cleanLeftWord = leftPart.split(/\s+/).pop()?.slice(0, -1) || ""
+      const cleanRightWord = rightPart.replace(/[.,!?:;…«»"'\)\]]+$/g, "")
 
-    if (
-      !hasTrailingPunct &&
-      NON_BREAKING_PREPOSITIONS.has(cleanLower) &&
-      i + 1 < step1.length
-    ) {
-      step2.push(`${token} ${step1[i + 1]}`)
-      i += 2
-    } else {
-      step2.push(token)
-      i += 1
+      if (cleanLeftWord.length >= 2 && cleanRightWord.length >= 2) {
+        step2.push(leftPart, rightPart)
+        continue
+      }
     }
+    step2.push(token)
   }
 
   return step2
@@ -172,8 +223,9 @@ function expandOversizedTokens(
   tokens: string[],
   maxLineWidth: number,
   minHyphens: boolean
-): { units: string[]; hadHyphenation: boolean; hadForcedCharSplit: boolean } {
+): { units: string[]; isSoftHyphen: boolean[]; hadHyphenation: boolean; hadForcedCharSplit: boolean } {
   const units: string[] = []
+  const isSoftHyphen: boolean[] = []
   let hadHyphenation = false
   let hadForcedCharSplit = false
 
@@ -183,6 +235,7 @@ function expandOversizedTokens(
     const token = queue.shift()!
     if (ctx.measureText(token).width <= maxLineWidth) {
       units.push(token)
+      isSoftHyphen.push(false)
       continue
     }
 
@@ -199,8 +252,9 @@ function expandOversizedTokens(
       for (const sp of splits) {
         if (ctx.measureText(sp.prefix).width <= maxLineWidth) {
           units.push(sp.prefix)
+          isSoftHyphen.push(!sp.isNativeHyphen)
           queue.unshift(cleanLeadingPunct(sp.suffix))
-          hadHyphenation = true
+          if (!sp.isNativeHyphen) hadHyphenation = true
           splitDone = true
           break
         }
@@ -226,18 +280,19 @@ function expandOversizedTokens(
 
     if (splitIdx !== -1) {
       units.push(appendHyphenSafe(part).trim())
+      isSoftHyphen.push(true)
       queue.unshift(cleanLeadingPunct(token.slice(splitIdx)))
     } else {
       units.push(token)
+      isSoftHyphen.push(false)
     }
   }
 
-  return { units, hadHyphenation, hadForcedCharSplit }
+  return { units, isSoftHyphen, hadHyphenation, hadForcedCharSplit }
 }
 
 /**
- * Оценка качества компоновки по стандарту манги (меньше = лучше):
- * одинаково строит аккуратный ромб/бочонок как в режиме Oval, так и в режиме Rect!
+ * Оценка качества раскладки строк: формирует аккуратный манга-ромб/бочонок.
  */
 function scoreMangaLinesConfiguration(
   ctx: CanvasRenderingContext2D,
@@ -267,7 +322,6 @@ function scoreMangaLinesConfiguration(
   for (let i = 0; i < n; i++) {
     const w = widths[i]
     const distFromCenter = mid > 0 ? Math.abs(i - mid) / mid : 0
-    // Профиль манги: центральные строки самые широкие (1.0), крайние чуть уже или равны (0.80..0.95)
     const idealRatio = 1 - distFromCenter * 0.18
     const actualRatio = w / maxW
     const diff = actualRatio - idealRatio
@@ -279,21 +333,20 @@ function scoreMangaLinesConfiguration(
 
     const words = lines[i].split(/\s+/)
     const lastWord = words[words.length - 1]?.replace(/^[«"(\[…]+/, "").toLowerCase()
+    // Мягкий штраф за висячий предлог при автобалансировке (не блокирует верстку)
     if (words.length > 1 && NON_BREAKING_PREPOSITIONS.has(lastWord)) {
-      penalty += 450
+      penalty += 80
     }
   }
 
-  // Жёсткий штраф за "талию песочных часов" (короткая строка зажата между двумя широкими)
+  // Штраф за зажатую узкую строку между широкими
   for (let i = 1; i < n - 1; i++) {
     if (widths[i] < widths[i - 1] * 0.82 && widths[i] < widths[i + 1] * 0.82) {
       penalty += 950
     }
   }
 
-  // Штраф за неоправданно большое число узких строк ("Раз / ты / сделаешь / предложение / мне / из / настоящего...")
   penalty += n * 35
-
   return penalty
 }
 
@@ -309,7 +362,7 @@ function layoutSegmentOptimal(
     return { lines: [], hadHyphenation: false, hadForcedCharSplit: false }
   }
 
-  const { units, hadHyphenation, hadForcedCharSplit } = expandOversizedTokens(
+  const { units, isSoftHyphen, hadHyphenation, hadForcedCharSplit } = expandOversizedTokens(
     ctx,
     initialTokens,
     targetMaxW,
@@ -327,7 +380,14 @@ function layoutSegmentOptimal(
   for (let i = 0; i < m; i++) {
     let cur = ""
     for (let j = i; j < m; j++) {
-      cur = j === i ? units[j] : `${cur} ${units[j]}`
+      if (j === i) {
+        cur = units[j]
+      } else {
+        // Если предыдущий токен заканчивается на родной дефис ("Ямада-"), склеиваем со второй частью БЕЗ пробела
+        const prevEndsWithNativeDash =
+          units[j - 1].endsWith("-") && !units[j - 1].endsWith(" -") && !isSoftHyphen[j - 1]
+        cur = prevEndsWithNativeDash ? `${cur}${units[j]}` : `${cur} ${units[j]}`
+      }
       lineStr[i][j] = cur
       lineW[i][j] = ctx.measureText(cur).width
     }
@@ -352,14 +412,15 @@ function layoutSegmentOptimal(
         for (let i = lineIdx - 1; i < j; i++) {
           if (dp[lineIdx - 1][i] === Infinity) continue
 
-          let hasInternalHyphenBreak = false
+          // Запрещаем внутри одной строки только искусственные мягкие слоговые переносы
+          let hasInternalSoftHyphen = false
           for (let t = i; t < j - 1; t++) {
-            if (units[t].endsWith("-") && !units[t].endsWith(" -")) {
-              hasInternalHyphenBreak = true
+            if (isSoftHyphen[t]) {
+              hasInternalSoftHyphen = true
               break
             }
           }
-          if (hasInternalHyphenBreak) continue
+          if (hasInternalSoftHyphen) continue
 
           const w = lineW[i][j - 1]
           if (w > allowedForThisLine * 1.01 && j - i > 1) continue
@@ -442,7 +503,12 @@ function greedyFallbackWithHyphens(
       continue
     }
 
-    const testLine = curLine ? `${curLine} ${w}`.trim() : w.trim()
+    const testLine = curLine
+      ? curLine.endsWith("-") && !curLine.endsWith(" -")
+        ? `${curLine}${w}`.trim()
+        : `${curLine} ${w}`.trim()
+      : w.trim()
+
     if (ctx.measureText(testLine).width <= allowedW) {
       curLine = testLine
       remaining.shift()
@@ -465,13 +531,18 @@ function greedyFallbackWithHyphens(
     let hyphenated = false
     const splits = getWordHyphenSplits(w)
     for (const split of splits) {
-      const hyphenTest = curLine ? `${curLine} ${split.prefix}`.trim() : split.prefix.trim()
+      const hyphenTest = curLine
+        ? curLine.endsWith("-") && !curLine.endsWith(" -")
+          ? `${curLine}${split.prefix}`.trim()
+          : `${curLine} ${split.prefix}`.trim()
+        : split.prefix.trim()
+
       if (ctx.measureText(hyphenTest).width <= allowedW) {
         lines.push(hyphenTest.trim())
         curLine = ""
         remaining[0] = cleanLeadingPunct(split.suffix)
         hyphenated = true
-        hadHyphenation = true
+        if (!split.isNativeHyphen) hadHyphenation = true
         break
       }
     }
@@ -516,12 +587,8 @@ function greedyFallbackWithHyphens(
 }
 
 /**
- * Вычисляет новую строку для сохранения в `box.rusText` после редактирования пользователем:
- * - Сохраняет `\n` ТОЛЬКО в тех строках, которые пользователь намеренно зафиксировал или разорвал.
- * - Всё, что находится после изменённого переноса, склеивается через пробел в единый поток,
- *   чтобы `layoutBubbleTextLines` автоматически скомпоновал остаток баббла!
- * - Если же пользователь вообще не менял переносы (или только исправил опечатку в слове),
- *   не превращает автопереносы в "замороженные" `\n`.
+ * Вычисляет сохраняемый текст `box.rusText` после ручной правки:
+ * если пользователь расставил переносы клавишей Enter, они жестко фиксируются
  */
 export function reflowFromManualLines(
   previousRenderedLines: string[],
@@ -534,34 +601,8 @@ export function reflowFromManualLines(
 
   if (rawEditedLines.length === 0) return ""
 
-  const prevTrimmed = previousRenderedLines.map((l) => l.trim()).filter(Boolean)
-
-  let lastModifiedLineIdx = -1
-  const minLen = Math.min(prevTrimmed.length, rawEditedLines.length)
-
-  for (let i = 0; i < minLen; i++) {
-    if (prevTrimmed[i] !== rawEditedLines[i]) {
-      lastModifiedLineIdx = i
-      break
-    }
-  }
-
-  if (lastModifiedLineIdx === -1 && rawEditedLines.length !== prevTrimmed.length) {
-    lastModifiedLineIdx = minLen - 1
-  }
-
-  if (lastModifiedLineIdx === -1) {
-    return joinLinesRemovingSoftHyphens(rawEditedLines)
-  }
-
-  const lockedTopLines = rawEditedLines.slice(0, lastModifiedLineIdx + 1)
-  const autoReflowTail = joinLinesRemovingSoftHyphens(rawEditedLines.slice(lastModifiedLineIdx + 1))
-
-  if (!autoReflowTail) {
-    return lockedTopLines.join("\n")
-  }
-
-  return [...lockedTopLines, autoReflowTail].join("\n")
+  // Возвращаем заданную пользователем структуру строк напрямую
+  return rawEditedLines.join("\n")
 }
 
 export function layoutBubbleTextLines(
@@ -589,14 +630,6 @@ export function layoutBubbleTextLines(
 
   const fullMergedText = joinLinesRemovingSoftHyphens(rawSegments)
 
-  const avgSegLen =
-    rawSegments.length > 0
-      ? rawSegments.reduce((sum, s) => sum + s.length, 0) / rawSegments.length
-      : 0
-  const isLegacyFrozenArtifact = rawSegments.length >= 4 && avgSegLen < 10
-
-  const effectiveSegments = isLegacyFrozenArtifact ? [fullMergedText] : rawSegments
-
   let lastLines: string[] = []
   let lastLineHeight = Math.round(curSize * 1.15)
 
@@ -622,35 +655,55 @@ export function layoutBubbleTextLines(
     let hadHyphenation = false
     let hadForcedCharSplit = false
 
-    if (effectiveSegments.length <= 1) {
+    if (rawSegments.length <= 1) {
+      // 1. Полный автоперенос с нуля
       const opt = layoutSegmentOptimal(ctx, fullMergedText, targetMaxW, minHyphens, getAllowedW)
       lines = opt.lines
       hadHyphenation = opt.hadHyphenation
       hadForcedCharSplit = opt.hadForcedCharSplit
     } else {
-      const lockedTop = effectiveSegments.slice(0, -1)
-      const flowingTail = effectiveSegments[effectiveSegments.length - 1]
+      // 2. Ручные переносы строк пользователя
+      const totalUserLines = rawSegments.length
 
-      const topFitsWidth = lockedTop.every(
-        (seg, idx) => ctx.measureText(seg).width <= getAllowedW(idx, Math.max(effectiveSegments.length + 1, 3)) * 1.02
-      )
+      // Проверяем, помещаются ли заданные пользователем строки в текущий овал/прямоугольник
+      const userLinesFitWidth = rawSegments.every((seg, idx) => {
+        const lineLimit = (isEllipse ? getAllowedW(idx, totalUserLines) : targetMaxW) * 1.05
+        return ctx.measureText(seg).width <= lineLimit
+      })
 
-      if (topFitsWidth) {
-        const tailOpt = layoutSegmentOptimal(
-          ctx,
-          flowingTail,
-          targetMaxW,
-          minHyphens,
-          (lineIdx, tailTotal) => getAllowedW(lockedTop.length + lineIdx, lockedTop.length + tailTotal)
-        )
-        lines = [...lockedTop, ...tailOpt.lines]
-        hadHyphenation = tailOpt.hadHyphenation
-        hadForcedCharSplit = tailOpt.hadForcedCharSplit
+      if (userLinesFitWidth) {
+        // Все строки пользователя (включая "тебе из") помещаются! Сохраняем их строго в неизменном виде!
+        lines = rawSegments
+        hadHyphenation = false
+        hadForcedCharSplit = false
       } else {
-        const fullOpt = layoutSegmentOptimal(ctx, fullMergedText, targetMaxW, minHyphens, getAllowedW)
-        lines = fullOpt.lines
-        hadHyphenation = fullOpt.hadHyphenation
-        hadForcedCharSplit = fullOpt.hadForcedCharSplit
+        // Если при текущем размере шрифта какая-то строка не влезла в границу овала,
+        // сохраняем все строки, кроме последней, и авто-доверстываем только незавершённый хвост
+        const lockedTop = rawSegments.slice(0, -1)
+        const flowingTail = rawSegments[rawSegments.length - 1]
+
+        const topFitsWidth = lockedTop.every(
+          (seg, idx) => ctx.measureText(seg).width <= (isEllipse ? getAllowedW(idx, totalUserLines) : targetMaxW) * 1.05
+        )
+
+        if (topFitsWidth) {
+          const tailOpt = layoutSegmentOptimal(
+            ctx,
+            flowingTail,
+            targetMaxW,
+            minHyphens,
+            (lineIdx, tailTotal) => getAllowedW(lockedTop.length + lineIdx, lockedTop.length + tailTotal)
+          )
+          lines = [...lockedTop, ...tailOpt.lines]
+          hadHyphenation = tailOpt.hadHyphenation
+          hadForcedCharSplit = tailOpt.hadForcedCharSplit
+        } else {
+          // Если верхние строки физически шире баббла на данном кегле, даём циклу уменьшить шрифт
+          const fullOpt = layoutSegmentOptimal(ctx, fullMergedText, targetMaxW, minHyphens, getAllowedW)
+          lines = fullOpt.lines
+          hadHyphenation = fullOpt.hadHyphenation
+          hadForcedCharSplit = fullOpt.hadForcedCharSplit
+        }
       }
     }
 
@@ -669,7 +722,7 @@ export function layoutBubbleTextLines(
         curSize -= 1
         continue
       }
-      if (minHyphens && hadHyphenation && curSize > 10) {
+      if (minHyphens && hadHyphenation && curSize > 12) {
         curSize -= 1
         continue
       }
@@ -683,7 +736,7 @@ export function layoutBubbleTextLines(
   }
 
   return {
-    lines: lastLines.length > 0 ? lastLines : effectiveSegments,
+    lines: lastLines.length > 0 ? lastLines : rawSegments,
     actualFontSize: 8,
     lineHeight: lastLineHeight,
   }
