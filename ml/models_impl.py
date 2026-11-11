@@ -1,9 +1,9 @@
 # ml/models_impl.py
-# Загрузка MangaOCR, YOLO и LaMa с очисткой кэша VRAM после каждой операции
+# Загрузка MangaOCR, YOLO и LaMa с потокобезопасной блокировкой и управлением VRAM
 
-import os
 import gc
 import logging
+import threading
 from typing import Optional, Dict, Any
 
 import torch
@@ -49,12 +49,13 @@ class AccurateLamaWrapper:
     """
     Обёртка над TorchScript-моделью LaMa.
     Использует дополнение (padding) без ресайза до кратности 8, что исключает замыливание арта манги.
-    Очищает кэш CUDA сразу после каждого вызова.
+    Потокобезопасна при параллельных запросах.
     """
 
-    def __init__(self, model: torch.jit.ScriptModule, device: torch.device):
+    def __init__(self, model: torch.jit.ScriptModule, device: torch.device, lock: threading.Lock):
         self.model = model
         self.device = device
+        self._lock = lock
 
     @torch.inference_mode()
     def __call__(self, image: Image.Image, mask: Image.Image) -> Image.Image:
@@ -66,26 +67,24 @@ class AccurateLamaWrapper:
         mask_np = np.array(mask.convert("L")).astype(np.float32)
         mask_np = (mask_np > 127).astype(np.float32)
 
-        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0).to(self.device)
-        mask_tensor = torch.from_numpy(mask_np).unsqueeze(0).unsqueeze(0).to(self.device)
+        with self._lock:
+            img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0).to(self.device)
+            mask_tensor = torch.from_numpy(mask_np).unsqueeze(0).unsqueeze(0).to(self.device)
 
-        if pad_w > 0 or pad_h > 0:
-            pad_mode = "reflect" if (pad_w < orig_w and pad_h < orig_h) else "replicate"
-            img_tensor = F.pad(img_tensor, (0, pad_w, 0, pad_h), mode=pad_mode)
-            mask_tensor = F.pad(mask_tensor, (0, pad_w, 0, pad_h), mode=pad_mode)
+            if pad_w > 0 or pad_h > 0:
+                pad_mode = "reflect" if (pad_w < orig_w and pad_h < orig_h) else "replicate"
+                img_tensor = F.pad(img_tensor, (0, pad_w, 0, pad_h), mode=pad_mode)
+                mask_tensor = F.pad(mask_tensor, (0, pad_w, 0, pad_h), mode=pad_mode)
 
-        out_uint8 = None
-
-        try:
-            out_tensor = self.model(img_tensor, mask_tensor)
-            out_tensor = out_tensor[:, :, :orig_h, :orig_w]
-            out_tensor = torch.clamp(out_tensor[0], 0, 1).permute(1, 2, 0).detach().cpu().float().numpy()
-            out_uint8 = (out_tensor * 255.0).round().astype(np.uint8)
-        finally:
-            del img_tensor, mask_tensor
-            if "out_tensor" in locals():
-                del out_tensor
-            release_vram()
+            try:
+                out_tensor = self.model(img_tensor, mask_tensor)
+                out_tensor = out_tensor[:, :, :orig_h, :orig_w]
+                out_np = torch.clamp(out_tensor[0], 0, 1).permute(1, 2, 0).detach().cpu().float().numpy()
+                out_uint8 = (out_np * 255.0).round().astype(np.uint8)
+            finally:
+                del img_tensor, mask_tensor
+                if "out_tensor" in locals():
+                    del out_tensor
 
         return Image.fromarray(out_uint8)
 
@@ -95,12 +94,17 @@ class MLManager:
 
     def __init__(self):
         self._device = _get_device()
+        self._lock = threading.Lock()
         self._manga_ocr = None
         self._yolo_models: Dict[str, Any] = {}
         self._cleaners: Dict[str, Any] = {}
         self.gemini_model = None
         self.lama_downscale: bool = False
         logger.info(f"MLManager инициализирован. Устройство: {self._device}")
+
+    @property
+    def lock(self) -> threading.Lock:
+        return self._lock
 
     @property
     def device(self) -> torch.device:
@@ -114,82 +118,89 @@ class MLManager:
         return self._manga_ocr
 
     def load_manga_ocr(self):
-        if self._manga_ocr is not None:
-            return self._manga_ocr
+        with self._lock:
+            if self._manga_ocr is not None:
+                return self._manga_ocr
 
-        logger.info("Загрузка MangaOCR...")
-        try:
-            from manga_ocr import MangaOcr
-            self._manga_ocr = MangaOcr()
-            logger.info("MangaOCR успешно загружен")
-            return self._manga_ocr
-        except Exception as e:
-            logger.error(f"Ошибка загрузки MangaOCR: {e}")
-            raise
+            logger.info("Загрузка MangaOCR...")
+            try:
+                from manga_ocr import MangaOcr
+                self._manga_ocr = MangaOcr()
+                logger.info("MangaOCR успешно загружен")
+                return self._manga_ocr
+            except Exception as e:
+                logger.error(f"Ошибка загрузки MangaOCR: {e}")
+                raise
 
     def get_yolo(self, model_name: Optional[str] = None):
         """Возвращает YOLO модель по имени файла или пути."""
         name = model_name or "yolo_manga.pt"
-        if name in self._yolo_models:
-            return self._yolo_models[name]
+        with self._lock:
+            if name in self._yolo_models:
+                return self._yolo_models[name]
 
-        candidates = [
-            config.DETECT_MODELS_DIR / name,
-            config.WEIGHTS_DIR / name,
-            config.BASE_DIR / name,
-        ]
-        target_path = None
-        for p in candidates:
-            if p.exists():
-                target_path = str(p)
-                break
+            candidates = [
+                config.DETECT_MODELS_DIR / name,
+                config.WEIGHTS_DIR / name,
+                config.BASE_DIR / name,
+            ]
+            target_path = None
+            for p in candidates:
+                if p.exists():
+                    target_path = str(p)
+                    break
 
-        if not target_path:
-            target_path = str(config.YOLO_WEIGHTS_PATH)
+            if not target_path:
+                target_path = str(config.YOLO_WEIGHTS_PATH)
 
-        logger.info(f"Загрузка YOLO: {target_path}")
-        from ultralytics import YOLO
-        yolo_instance = YOLO(target_path)
-        self._yolo_models[name] = yolo_instance
-        return yolo_instance
+            logger.info(f"Загрузка YOLO: {target_path}")
+            from ultralytics import YOLO
+            yolo_instance = YOLO(target_path)
+            self._yolo_models[name] = yolo_instance
+            return yolo_instance
 
     def load_cleaner(self, name: str = "anime-manga-big-lama.pt"):
         """Загружает модель LaMa."""
-        if name in self._cleaners:
-            return self._cleaners[name]
+        if not name or name == "simple_lama":
+            name = "anime-manga-big-lama.pt"
 
-        candidates = [
-            config.CLEAN_MODELS_DIR / name,
-            config.WEIGHTS_DIR / name,
-            config.BASE_DIR / name,
-        ]
-        target_path = None
-        for p in candidates:
-            if p.exists():
-                target_path = str(p)
-                break
+        with self._lock:
+            if name in self._cleaners:
+                return self._cleaners[name]
 
-        if not target_path:
-            all_pt = list(config.CLEAN_MODELS_DIR.glob("*.pt")) or list(config.WEIGHTS_DIR.glob("*lama*.pt"))
-            if all_pt:
-                target_path = str(all_pt[0])
-            else:
-                raise FileNotFoundError(f"Файл модели клинера '{name}' не найден в папке weights/")
+            candidates = [
+                config.CLEAN_MODELS_DIR / name,
+                config.WEIGHTS_DIR / name,
+                config.BASE_DIR / name,
+            ]
+            target_path = None
+            for p in candidates:
+                if p.exists():
+                    target_path = str(p)
+                    break
 
-        logger.info(f"Загрузка TorchScript LaMa: {target_path}")
-        base_model = torch.jit.load(target_path, map_location=self._device)
-        base_model.eval()
-        wrapper = AccurateLamaWrapper(base_model, self._device)
-        self._cleaners[name] = wrapper
-        return wrapper
+            if not target_path:
+                all_pt = list(config.CLEAN_MODELS_DIR.glob("*.pt")) or list(config.WEIGHTS_DIR.glob("*lama*.pt"))
+                if all_pt:
+                    target_path = str(all_pt[0])
+                else:
+                    raise FileNotFoundError(f"Файл модели клинера '{name}' не найден в папке weights/")
+
+            logger.info(f"Загрузка TorchScript LaMa: {target_path}")
+            base_model = torch.jit.load(target_path, map_location=self._device)
+            base_model.eval()
+            wrapper = AccurateLamaWrapper(base_model, self._device, self._lock)
+            self._cleaners[name] = wrapper
+            return wrapper
 
     def release_vram(self):
         return release_vram()
 
     def unload_all(self):
-        self._manga_ocr = None
-        self._yolo_models.clear()
-        self._cleaners.clear()
+        with self._lock:
+            self._manga_ocr = None
+            self._yolo_models.clear()
+            self._cleaners.clear()
         release_vram()
 
 

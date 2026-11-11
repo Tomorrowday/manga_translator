@@ -1,5 +1,5 @@
 // manga_ui/components/project-modal_impl.tsx
-// Модалка для управления Глоссарием и Синопсисом тайтла
+// Модалка для управления Глоссарием и Синопсисом тайтла (вкладка Статистика БД удалена)
 
 "use client"
 
@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback } from "react"
 import { createPortal } from "react-dom"
 import {
   BookMarked,
-  BarChart3,
   Sliders,
   Plus,
   Trash2,
@@ -17,12 +16,11 @@ import {
   Save,
   Check,
 } from "lucide-react"
-import type { GlossaryItem, ProjectStats } from "@/lib/types"
+import type { GlossaryItem } from "@/lib/types"
 import {
   getGlossary,
   addGlossaryItem,
   deleteGlossaryItem,
-  getProjectStats,
   getProjectTree,
   updateTitleSettings,
 } from "@/lib/api"
@@ -36,7 +34,7 @@ export function ProjectModal({
   onSettingsUpdated,
 }: ProjectModalProps) {
   const [mounted, setMounted] = useState(false)
-  const [activeTab, setActiveTab] = useState<"glossary" | "synopsis" | "stats">(initialTab)
+  const [activeTab, setActiveTab] = useState<"glossary" | "synopsis">(initialTab)
 
   const [description, setDescription] = useState("")
   const [loadingDesc, setLoadingDesc] = useState(false)
@@ -49,9 +47,6 @@ export function ProjectModal({
   const [rusWord, setRusWord] = useState("")
   const [context, setContext] = useState("")
   const [isAdding, setIsAdding] = useState(false)
-
-  const [stats, setStats] = useState<ProjectStats | null>(null)
-  const [loadingStats, setLoadingStats] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -87,25 +82,14 @@ export function ProjectModal({
     }
   }, [titleId])
 
-  const loadStats = useCallback(async () => {
-    setLoadingStats(true)
-    try {
-      const data = await getProjectStats(titleId)
-      setStats(data)
-    } finally {
-      setLoadingStats(false)
-    }
-  }, [titleId])
-
   useEffect(() => {
     loadProjectInfo()
   }, [loadProjectInfo])
 
   useEffect(() => {
     if (activeTab === "glossary") loadGlossary()
-    if (activeTab === "stats") loadStats()
     if (activeTab === "synopsis") loadProjectInfo()
-  }, [activeTab, loadGlossary, loadStats, loadProjectInfo])
+  }, [activeTab, loadGlossary, loadProjectInfo])
 
   const handleSaveSettings = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -165,7 +149,7 @@ export function ProjectModal({
         <header className="flex items-center justify-between border-b border-slate-800 bg-slate-950 px-6 py-4">
           <div>
             <h3 className="text-base font-semibold text-white">{titleName}</h3>
-            <p className="text-xs text-slate-400">Управление синопсисом, персонажами и статистикой</p>
+            <p className="text-xs text-slate-400">Управление глоссарием персонажей и синопсисом тайтла</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -194,19 +178,6 @@ export function ProjectModal({
               >
                 <Sliders className="h-3.5 w-3.5" />
                 Синопсис
-              </button>
-
-              <button
-                onClick={() => setActiveTab("stats")}
-                className={[
-                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
-                  activeTab === "stats"
-                    ? "bg-indigo-600 text-white shadow-sm"
-                    : "text-slate-400 hover:text-slate-200",
-                ].join(" ")}
-              >
-                <BarChart3 className="h-3.5 w-3.5" />
-                Статистика БД
               </button>
             </div>
 
@@ -243,14 +214,14 @@ export function ProjectModal({
                 <input
                   type="text"
                   required
-                  placeholder="Имя/Роль (Толпа, Дэндзи)"
+                  placeholder="Имя/Роль"
                   value={rusWord}
                   onChange={(e) => setRusWord(e.target.value)}
                   className="w-1/3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
                 />
                 <input
                   type="text"
-                  placeholder="Контекст/тон (фоновые крики, грубо)"
+                  placeholder="Контекст/тон"
                   value={context}
                   onChange={(e) => setContext(e.target.value)}
                   className="flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
@@ -330,9 +301,7 @@ export function ProjectModal({
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Например:
-Мрачный сёнэн с элементами комедии абсурда.
-- Дэндзи: матерится, говорит грубо и просторечно, обращается фамильярно.
-- Макима: подчёркнуто вежливая, манипулятивная, холодная, обращается уважительно."
+Мрачный сёнэн с элементами комедии абсурда."
                     className="w-full rounded-lg border border-slate-800 bg-slate-900 p-3 text-xs leading-relaxed text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
                   />
                 )}
@@ -366,58 +335,6 @@ export function ProjectModal({
             </div>
           )}
 
-          {activeTab === "stats" && (
-            <div className="space-y-4">
-              {loadingStats || !stats ? (
-                <div className="flex h-48 items-center justify-center text-xs text-slate-500">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin text-slate-400" /> Загрузка данных...
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                      <p className="text-xs font-medium text-slate-400">Глав в проекте</p>
-                      <p className="mt-1.5 text-2xl font-bold text-white">{stats.total_chapters}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                      <p className="text-xs font-medium text-slate-400">Всего страниц</p>
-                      <p className="mt-1.5 text-2xl font-bold text-white">{stats.total_pages}</p>
-                    </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                      <p className="text-xs font-medium text-slate-400">Терминов в глоссарии</p>
-                      <p className="mt-1.5 text-2xl font-bold text-indigo-400">{stats.total_glossary}</p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
-                      <span>Прогресс перевода реплик</span>
-                      <span className="text-emerald-400">
-                        {stats.total_blocks > 0
-                          ? Math.round((stats.translated_blocks / stats.total_blocks) * 100)
-                          : 0}%
-                      </span>
-                    </div>
-                    <div className="mt-2.5 h-2.5 overflow-hidden rounded-full bg-slate-800">
-                      <div
-                        className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
-                        style={{
-                          width: `${
-                            stats.total_blocks > 0
-                              ? (stats.translated_blocks / stats.total_blocks) * 100
-                              : 0
-                          }%`,
-                        }}
-                      />
-                    </div>
-                    <p className="mt-2 text-right text-xs text-slate-500">
-                      Переведено {stats.translated_blocks} из {stats.total_blocks} баблов
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>,

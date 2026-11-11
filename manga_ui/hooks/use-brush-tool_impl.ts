@@ -1,5 +1,5 @@
 // manga_ui/hooks/use-brush-tool_impl.ts
-// Управление холстом кисти, отрисовкой мазков и генерацией маски для LaMa
+// Управление холстом кисти, отрисовкой мазков и генерацией маски для LaMa (с ResizeObserver)
 
 import { useRef, useState, useCallback, useEffect } from "react"
 import type { UseBrushToolProps, UseBrushToolReturn } from "./use-brush-tool"
@@ -21,17 +21,32 @@ export function useBrushTool({
     const canvas = brushCanvasRef.current
     const img = imgRef.current
     if (!canvas || !img) return
-    if (canvas.width !== img.clientWidth || canvas.height !== img.clientHeight) {
-      canvas.width = img.clientWidth
-      canvas.height = img.clientHeight
+    if (img.clientWidth > 0 && img.clientHeight > 0) {
+      if (canvas.width !== img.clientWidth || canvas.height !== img.clientHeight) {
+        canvas.width = img.clientWidth
+        canvas.height = img.clientHeight
+      }
     }
   }, [imgRef])
 
   useEffect(() => {
     syncBrushCanvasSize()
+    const img = imgRef.current
+    let observer: ResizeObserver | null = null
+
+    if (img && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        syncBrushCanvasSize()
+      })
+      observer.observe(img)
+    }
+
     window.addEventListener("resize", syncBrushCanvasSize)
-    return () => window.removeEventListener("resize", syncBrushCanvasSize)
-  }, [syncBrushCanvasSize, imageSrc])
+    return () => {
+      if (observer) observer.disconnect()
+      window.removeEventListener("resize", syncBrushCanvasSize)
+    }
+  }, [syncBrushCanvasSize, imageSrc, imgRef])
 
   const getBrushStrokeStyle = useCallback(() => {
     if (brushMode === "white") return "rgba(255, 255, 255, 0.95)"

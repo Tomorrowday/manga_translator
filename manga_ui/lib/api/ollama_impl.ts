@@ -1,5 +1,14 @@
 // manga_ui/lib/api/ollama_impl.ts
-// Реализация прямого сетевого взаимодействия с локальным сервером Ollama
+// Реализация прямого сетевого взаимодействия с локальным сервером Ollama (с передачей типа бабла class_id)
+
+import type { OllamaTranslateItem } from "./ollama"
+
+const CLASS_ID_TO_LABEL: Record<number, string> = {
+  0: "bubble",
+  1: "thought",
+  2: "text",
+  3: "sfx",
+}
 
 export async function checkOllamaConnection(baseUrl: string = "http://localhost:11434"): Promise<{ ok: boolean; models: string[] }> {
   try {
@@ -22,7 +31,7 @@ export async function checkOllamaConnection(baseUrl: string = "http://localhost:
 }
 
 export async function runOllamaBatchTranslate(
-  items: Array<{ id: string; text: string; speaker?: string }>,
+  items: OllamaTranslateItem[],
   options: {
     baseUrl?: string
     model?: string
@@ -36,13 +45,20 @@ export async function runOllamaBatchTranslate(
   const model = options.model || "qwen2.5:7b"
 
   const lines = items.map((it, idx) => {
+    const typeLabel = CLASS_ID_TO_LABEL[it.class_id ?? 0] || "bubble"
     const spk = it.speaker ? `[${it.speaker}]: ` : ""
-    return `[${idx + 1}] ${spk}${it.text}`
+    return `[${idx + 1}] (${typeLabel}) ${spk}${it.text}`
   })
 
   const prompt = `Ты профессиональный литературный переводчик манги с японского на русский язык.
-Переведи следующие реплики манги по порядку. Сохраняй живой диалоговый стиль манги.
-КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать в ответе имена спикеров, префиксы или пояснения!
+Переведи следующие реплики манги по порядку.
+В круглых скобках указан тип блока:
+- (bubble) — живая разговорная речь персонажа
+- (thought) — внутренний монолог / мысли / закадровый текст
+- (text) — лаконичная надпись на фоне или приписка от руки
+- (sfx) — звуковой эффект (ономатопея)
+
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать в ответе тип блока, имена спикеров, префиксы или пояснения!
 Формат ответа СТРОГО:
 [1] Русский текст первой реплики
 [2] Русский текст второй реплики
@@ -77,6 +93,7 @@ ${lines.join("\n")}`
       const idx = parseInt(match[1], 10) - 1
       if (idx >= 0 && idx < items.length) {
         let clean = match[2].trim()
+        clean = clean.replace(/^\((?:bubble|thought|text|sfx)\)\s*/i, "")
         clean = clean.replace(/^\[[^\]]+\]\s*:?\s*/, "")
         clean = clean.replace(/^[A-Za-zА-Яа-яЁёぁ-んァ-ヶ一-龥]{2,20}\s*:\s*/, "")
         result[items[idx].id] = clean

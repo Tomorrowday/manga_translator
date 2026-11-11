@@ -1,8 +1,9 @@
 // manga_ui/components/text-block-card_impl.tsx
+// Карточка текстового блока: кнопка OCR перенесена левее с хоткеем [O], точечный клин вынесен в <SpotCleanControls />
 
 "use client"
 
-import React, { useState, useRef, useEffect, useMemo, memo } from "react"
+import React, { useState, useRef, useEffect, useMemo, useCallback, memo } from "react"
 import {
   ScanText,
   Trash2,
@@ -11,7 +12,6 @@ import {
   ChevronUp,
   ChevronDown,
   RotateCw,
-  Eraser,
   WrapText,
 } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
@@ -23,6 +23,7 @@ import {
 } from "@/lib/typeset"
 import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 import { BubbleStyleControls } from "@/components/text-block-card/bubble-style-controls"
+import { SpotCleanControls } from "@/components/text-block-card/spot-clean-controls"
 import type { TextBlockCardProps } from "./text-block-card"
 
 const CLASS_CONFIG: Record<number, { label: string; className: string; title: string }> = {
@@ -44,7 +45,7 @@ const CLASS_CONFIG: Record<number, { label: string; className: string; title: st
   3: {
     label: "[4] Звук",
     className: "border-amber-700/80 bg-amber-950/60 text-orange-400 hover:bg-amber-900/60",
-    title: "Класс 3: Звуковой эффект (SFX)",
+    title: "Класс 3: Звуковой эффект (SFX). Хоткей [F4]",
   },
 }
 
@@ -67,7 +68,6 @@ export const TextBlockCard = memo(function TextBlockCard({
   onSpotClean,
 }: TextBlockCardProps) {
   const [ocrLoading, setOcrLoading] = useState(false)
-  const [spotLoading, setSpotLoading] = useState(false)
   const [isFocusedRus, setIsFocusedRus] = useState(false)
   const [localRusText, setLocalRusText] = useState(block.rusText || "")
 
@@ -137,15 +137,8 @@ export const TextBlockCard = memo(function TextBlockCard({
     }
   }, [isSelected])
 
-  useEffect(() => {
-    if (block.status === "new" && pageId && !block.japText) {
-      handleOcr()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const handleOcr = async () => {
-    if (!pageId) return
+  const handleOcr = useCallback(async () => {
+    if (!pageId || ocrLoading) return
     setOcrLoading(true)
     try {
       const text = await runOcr(pageId, block.x, block.y, block.width, block.height, block.rotation || 0)
@@ -153,20 +146,30 @@ export const TextBlockCard = memo(function TextBlockCard({
     } finally {
       setOcrLoading(false)
     }
-  }
+  }, [pageId, ocrLoading, block.x, block.y, block.width, block.height, block.rotation, block.status, onChange])
 
-  const handleSpot = async (method: "auto" | "lama" | "white", deleteAfter = false) => {
-    if (!onSpotClean) return
-    setSpotLoading(true)
-    try {
-      await onSpotClean(method, deleteAfter)
-    } finally {
-      setSpotLoading(false)
+  useEffect(() => {
+    if (block.status === "new" && pageId && !block.japText) {
+      handleOcr()
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Подписка на глобальное событие хоткея одиночного OCR [O]
+  useEffect(() => {
+    const onHotkeyOcr = (e: Event) => {
+      const custom = e as CustomEvent<{ blockId: string }>
+      if (custom.detail?.blockId === block.id) {
+        handleOcr()
+      }
+    }
+    window.addEventListener("manga-ocr-selected-block", onHotkeyOcr)
+    return () => window.removeEventListener("manga-ocr-selected-block", onHotkeyOcr)
+  }, [block.id, handleOcr])
 
   const currentClassId = block.class_id ?? 0
   const classCfg = CLASS_CONFIG[currentClassId] || CLASS_CONFIG[0]
+  const ocrHotkeyLabel = hotkeys.ocrBlock?.label || "O"
 
   const handleCycleClass = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -254,8 +257,6 @@ export const TextBlockCard = memo(function TextBlockCard({
       .map((s) => s.trim())
       .filter(Boolean)
 
-    // Используем интеллектуальную функцию: дефисы составных слов сохраняются,
-    // удаляются только мягкие переносы строк
     const cleaned = joinLinesRemovingSoftHyphens(rawLines)
     saveStorageTextToBlock(cleaned)
   }
@@ -290,6 +291,25 @@ export const TextBlockCard = memo(function TextBlockCard({
             {classCfg.label}
           </button>
 
+          {/* Кнопка OCR перенесена в левую часть сразу после кнопки типа бабла */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleOcr()
+            }}
+            disabled={ocrLoading || !pageId}
+            className="flex h-6 items-center gap-1 rounded border border-sky-900/70 bg-sky-950/40 px-1.5 text-[10px] font-medium text-sky-300 hover:bg-sky-900/60 hover:text-sky-100 disabled:opacity-40 transition-colors"
+            title={`Распознать OCR для этого бабла [${ocrHotkeyLabel}]`}
+          >
+            {ocrLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin text-sky-400" />
+            ) : (
+              <ScanText className="h-3 w-3 text-sky-400" />
+            )}
+            <span>OCR [{ocrHotkeyLabel}]</span>
+          </button>
+
           {isTranslated && (
             <span className="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
               TR
@@ -317,7 +337,7 @@ export const TextBlockCard = memo(function TextBlockCard({
             </button>
           )}
 
-          <div className="relative w-28 sm:w-32">
+          <div className="relative w-24 sm:w-28">
             <User className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
@@ -331,80 +351,9 @@ export const TextBlockCard = memo(function TextBlockCard({
           </div>
         </div>
 
-        {onSpotClean && (
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={spotLoading}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleSpot("white", false)
-              }}
-              className="h-6 rounded border border-slate-700 bg-slate-900 px-1.5 text-[10px] font-medium text-slate-200 hover:bg-slate-800 disabled:opacity-50 transition-colors whitespace-nowrap"
-              title={`Белый клин [${hotkeys.spotWhite.label}]`}
-            >
-              {spotLoading ? <Loader2 className="h-2.5 w-2.5 animate-spin inline mr-0.5" /> : null}
-              White [{hotkeys.spotWhite.label}]
-            </button>
-
-            <button
-              type="button"
-              disabled={spotLoading}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleSpot("lama", false)
-              }}
-              className="h-6 rounded bg-purple-900/60 px-1.5 text-[10px] font-medium text-purple-200 hover:bg-purple-800 disabled:opacity-50 transition-colors whitespace-nowrap"
-              title={`Стереть LaMa [${hotkeys.spotLama.label}]`}
-            >
-              LaMa [{hotkeys.spotLama.label}]
-            </button>
-
-            <button
-              type="button"
-              disabled={spotLoading}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleSpot("white", true)
-              }}
-              className="flex items-center gap-0.5 h-6 rounded border border-slate-700 bg-slate-850 px-1.5 text-[10px] font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50 transition-colors whitespace-nowrap"
-              title={`Белый клин и сразу удалить [${hotkeys.spotWhiteDel.label}]`}
-            >
-              <Eraser className="h-2.5 w-2.5 text-slate-400" />
-              W&Del
-            </button>
-
-            <button
-              type="button"
-              disabled={spotLoading}
-              onClick={(e) => {
-                e.stopPropagation()
-                handleSpot("lama", true)
-              }}
-              className="flex items-center gap-0.5 h-6 rounded border border-rose-800/60 bg-rose-950/40 px-1.5 text-[10px] font-medium text-rose-300 hover:bg-rose-900/60 disabled:opacity-50 transition-colors whitespace-nowrap"
-              title={`Стереть LaMa и сразу удалить [${hotkeys.spotLamaDel.label}]`}
-            >
-              <Eraser className="h-2.5 w-2.5 text-rose-400" />
-              L&Del
-            </button>
-          </div>
-        )}
+        <SpotCleanControls onSpotClean={onSpotClean} />
 
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleOcr()
-            }}
-            disabled={ocrLoading || !pageId}
-            className="flex h-6 items-center gap-1 rounded border border-slate-700 bg-slate-900 px-1.5 text-[10px] text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-40 transition-colors"
-            title="Перераспознать OCR для этого бабла"
-          >
-            {ocrLoading ? <Loader2 className="h-3 w-3 animate-spin text-sky-400" /> : <ScanText className="h-3 w-3 text-sky-400" />}
-            <span className="text-[10px] hidden sm:inline">OCR</span>
-          </button>
-
           <div className="flex items-center rounded border border-slate-700 bg-slate-900 p-0.5">
             <button
               onClick={(e) => {

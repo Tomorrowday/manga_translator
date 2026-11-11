@@ -2,7 +2,7 @@
 // Реализация API-запросов проектов, глобальных настроек, глоссария и детальной статистики
 
 import { API_BASE_URL, handleApiResponse } from "./client"
-import type { TitleProject, ProjectTree, GlossaryItem, ProjectStats, TitleSettings } from "../types"
+import type { TitleProject, ProjectTree, GlossaryItem, TitleSettings } from "../types"
 
 export async function getGlobalSettings(): Promise<{ success: boolean; settings: TitleSettings }> {
   const res = await fetch(`${API_BASE_URL}/api/projects/global-settings`)
@@ -126,12 +126,6 @@ export async function deleteGlossaryItem(titleId: number, entryId: number): Prom
     method: "DELETE",
   })
   await handleApiResponse(res, "Ошибка удаления из глоссария")
-}
-
-export async function getProjectStats(titleId: number): Promise<ProjectStats> {
-  const res = await fetch(`${API_BASE_URL}/api/projects/${titleId}/stats`)
-  const data = await handleApiResponse<{ success: boolean; stats: ProjectStats }>(res, "Ошибка статистики")
-  return data.stats
 }
 
 // ---- Детальная статистика по всем тайтлам и главам ----

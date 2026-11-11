@@ -25,8 +25,12 @@ export interface UseMangaHotkeysProps {
   onPrevPage: () => void
   onNextPage: () => void
   onSave: () => void
+  onUndo?: () => Promise<void> | void
+  onRedo?: () => Promise<void> | void
   onToggleViewMode?: () => void
   onToggleTypeset?: () => void
+  onToggleJapCheck?: () => void
+  onOcrBlock?: (block: TextBlock) => Promise<void> | void
   onSetClass?: (classId: number) => void
   onDeleteBlock: (id: string) => void
   onMoveBlock: (id: string, direction: "up" | "down") => void

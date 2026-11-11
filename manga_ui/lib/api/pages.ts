@@ -16,6 +16,7 @@ export {
   savePageBlocks,
   runCleanPage,
   revertCleanPage,
+  undoLastCleanStep,
   runSpotClean,
   saveTranslatedPage,
   openTranslatedFolder,

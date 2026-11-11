@@ -1,4 +1,5 @@
 // manga_ui/components/image-viewer/bubble-overlay-item_impl.tsx
+// Наложение интерактивного бабла на скан + автопозиционируемая плашка японского оригинала под Rikaikun / Yomitan
 
 "use client"
 
@@ -70,6 +71,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   index,
   isSelected,
   showTypeset,
+  showJapOverlay = false,
   imgElement,
   isEditingCurrent,
   editType,
@@ -82,6 +84,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
 }: BubbleOverlayItemProps) {
   const isDraft = box.id === "__draft__"
   const hasTranslation = Boolean(box.rusText && box.rusText.trim())
+  const hasJapText = Boolean(box.japText && box.japText.trim())
   const isEllipse = box.shape === "ellipse"
   const padMode = box.paddingMode || "safe"
   const isMinHyphens = box.minHyphens !== false
@@ -221,7 +224,6 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     fontsLoadedTick,
   ])
 
-  // Синхронизируем localText со значением из пропсов только когда пользователь не печатает внутри инлайн-редактора
   useEffect(() => {
     if (!isInlineEditing) {
       setLocalText(box.rusText || "")
@@ -356,6 +358,68 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     }
   }
 
+  // Вычисление оптимального положения плашки японского текста (чтобы не вылезать за края скана и не перекрывать бабл)
+  const renderJapOverlay = () => {
+    if (!showJapOverlay || isDraft || isInlineEditing || !hasJapText) return null
+
+    const spaceRight = 1 - (currentX + currentW)
+    const spaceLeft = currentX
+    const spaceBottom = 1 - (currentY + currentH)
+
+    let positionClasses = ""
+    if (spaceRight >= 0.22) {
+      positionClasses = "left-full ml-2 top-0"
+    } else if (spaceLeft >= 0.22) {
+      positionClasses = "right-full mr-2 top-0"
+    } else if (spaceBottom >= 0.14) {
+      positionClasses = "top-full mt-2 left-1/2 -translate-x-1/2"
+    } else {
+      positionClasses = "bottom-full mb-2 left-1/2 -translate-x-1/2"
+    }
+
+    return (
+      <div
+        lang="ja"
+        onMouseDown={(e) => {
+          e.stopPropagation()
+          onSelect(box.id)
+        }}
+        onClick={(e) => {
+          e.stopPropagation()
+          onSelect(box.id)
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+        }}
+        className={[
+          "absolute z-40 min-w-[140px] max-w-[260px] rounded-lg px-2.5 py-1.5",
+          "bg-slate-950/95 text-slate-100 shadow-xl backdrop-blur-md",
+          "select-text cursor-text pointer-events-auto whitespace-pre-wrap break-words",
+          isSelected
+            ? "border-2 border-amber-400/90 ring-2 ring-amber-400/25"
+            : "border border-indigo-500/60 hover:border-indigo-400",
+          positionClasses,
+        ].join(" ")}
+        style={{
+          fontSize: "17px",
+          lineHeight: 1.4,
+          fontFamily: "'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Meiryo', 'Noto Sans JP', sans-serif",
+          fontWeight: 500,
+          fontStyle: "normal",
+          textShadow: "none",
+          transform: Math.abs(currentRot) >= 0.5 ? `rotate(${-currentRot}deg)` : undefined,
+        }}
+        title="Наведите курсор или выделите иероглифы для перевода через Yomitan / Rikaikun"
+      >
+        <div className="mb-0.5 flex items-center justify-between gap-2 border-b border-slate-800/80 pb-0.5 text-[10px] font-sans font-bold text-indigo-300 select-none">
+          <span>#{index + 1} JP</span>
+          {box.speaker && <span className="truncate text-emerald-400 font-medium">{box.speaker}</span>}
+        </div>
+        <div className="select-text cursor-text tracking-wide">{box.japText}</div>
+      </div>
+    )
+  }
+
   const renderHandles = () => {
     if (!isSelected || isInlineEditing) return null
     return (
@@ -468,7 +532,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
               ? "manga-text-stroke-black"
               : "manga-text-stroke"
             : "",
-          isSelected ? "z-20" : "z-10",
+          isSelected ? "z-30" : showJapOverlay ? "hover:z-30 z-10" : "z-10",
           !isEllipse &&
             (isSelected
               ? "outline outline-2 outline-amber-400"
@@ -519,6 +583,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
         </div>
 
         {renderHandles()}
+        {renderJapOverlay()}
       </div>
     )
   }
@@ -549,7 +614,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
       onDoubleClick={handleDoubleClick}
       className={[
         "group absolute flex items-start justify-start select-none",
-        isSelected ? "z-20 cursor-move" : "cursor-pointer",
+        isSelected ? "z-30 cursor-move" : showJapOverlay ? "hover:z-30 cursor-pointer z-10" : "cursor-pointer z-10",
         !isEllipse && ["border-2 rounded-sm transition-colors", rectBorderClass].join(" "),
       ]
         .filter(Boolean)
@@ -596,6 +661,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
             <span className="opacity-90 font-mono text-[9px]">[{theme.label}]</span>
           </span>
           {renderHandles()}
+          {renderJapOverlay()}
         </>
       )}
     </div>

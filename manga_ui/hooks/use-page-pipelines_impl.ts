@@ -1,9 +1,9 @@
 // manga_ui/hooks/use-page-pipelines_impl.ts
-// Пайплайны обработки страниц с гарантированным Auto размером для баблов
+// Пайплайны обработки страниц: без лишнего cropRegion, с передачей class_id в Ollama и очисткой VRAM
 
 import { useState } from "react"
 import type { PageStatus, TextBlock } from "@/lib/types"
-import { cropRegion, bakePageBlob, loadImage } from "@/lib/typeset"
+import { bakePageBlob, loadImage } from "@/lib/typeset"
 import {
   runOcr,
   runCleanPage,
@@ -12,6 +12,7 @@ import {
   saveTranslatedPage,
   getPageImageUrl,
   getPageCleanImageUrl,
+  releaseVram,
 } from "@/lib/api"
 import { runOllamaBatchTranslate, checkOllamaConnection } from "@/lib/api/ollama"
 import type { UsePagePipelinesProps, UsePagePipelinesReturn } from "./use-page-pipelines"
@@ -80,38 +81,25 @@ export function usePagePipelines({
         return
       }
 
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.src = getPageImageUrl(currentPage.id)
-      await new Promise((resolve) => {
-        img.onload = resolve
-        img.onerror = resolve
-      })
-
-      const newBlocks: TextBlock[] = []
-      for (const box of boxes) {
-        const { dataUrl } = await cropRegion(img, { ...box, rotation: 0 })
-
-        newBlocks.push({
-          id: box.id || crypto.randomUUID(),
-          class_id: box.class_id ?? 0,
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-          rotation: 0,
-          imageCrop: dataUrl,
-          japText: box.jap_text || "",
-          rusText: "",
-          orderIndex: box.order_index,
-          fontSize: (box.font_size !== undefined && box.font_size !== null) ? box.font_size : undefined, // AUTO ПО УМОЛЧАНИЮ
-          fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
-          shape: "rect",
-          paddingMode: box.padding_mode || globalSettings.default_padding || "safe",
-          minHyphens: box.min_hyphens !== undefined ? box.min_hyphens : (globalSettings.default_hyphenation ?? true),
-          status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
-        })
-      }
+      const newBlocks: TextBlock[] = boxes.map((box: any) => ({
+        id: box.id || crypto.randomUUID(),
+        class_id: box.class_id ?? 0,
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+        rotation: 0,
+        japText: box.jap_text || "",
+        rusText: "",
+        orderIndex: box.order_index,
+        fontSize: box.font_size !== undefined && box.font_size !== null ? Number(box.font_size) : undefined,
+        fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
+        textColor: "black",
+        shape: "rect",
+        paddingMode: box.padding_mode || globalSettings.default_padding || "safe",
+        minHyphens: box.min_hyphens !== undefined ? Boolean(box.min_hyphens) : (globalSettings.default_hyphenation ?? true),
+        status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
+      }))
 
       setTextBlocks(newBlocks)
       textBlocksRef.current = newBlocks
@@ -147,6 +135,7 @@ export function usePagePipelines({
       console.error("Ошибка OCR всех рамок:", e)
       alert("Ошибка OCR")
     } finally {
+      releaseVram()
       setIsOcrRunning(false)
     }
   }
@@ -199,7 +188,12 @@ export function usePagePipelines({
 
       const toTranslate = blocksToOcr
         .filter((b) => b.japText.trim().length > 0)
-        .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker }))
+        .map((b) => ({
+          id: b.id,
+          text: b.japText,
+          speaker: b.speaker,
+          class_id: b.class_id ?? 0,
+        }))
 
       if (toTranslate.length === 0) return
 
@@ -243,6 +237,7 @@ export function usePagePipelines({
       console.error(e)
       alert("Ошибка при локальном переводе: " + String(e))
     } finally {
+      releaseVram()
       setIsBatchTranslating(false)
     }
   }
@@ -350,7 +345,12 @@ export function usePagePipelines({
       if (check.ok) {
         const toTranslate = currentBlocks
           .filter((b) => b.japText.trim().length > 0)
-          .map((b) => ({ id: b.id, text: b.japText, speaker: b.speaker }))
+          .map((b) => ({
+            id: b.id,
+            text: b.japText,
+            speaker: b.speaker,
+            class_id: b.class_id ?? 0,
+          }))
 
         if (toTranslate.length > 0) {
           const translations = await runOllamaBatchTranslate(toTranslate, {
@@ -392,6 +392,7 @@ export function usePagePipelines({
       console.error(e)
       alert("Ошибка при автоматической обработке: " + String(e))
     } finally {
+      releaseVram()
       setIsFullAuto(false)
     }
   }

@@ -1,12 +1,11 @@
 # routers/projects_impl.py
-# Реализация бизнес-логики управления проектами, сканирования папок, глоссария и детальной статистики
+# Реализация бизнес-логики управления проектами, сканирования папок, глоссария и детальной статистики (без N+1 запросов)
 
 import os
-import re
 import time
 import sqlite3
 from pathlib import Path
-from typing import Optional, Tuple, Set
+from typing import Optional, Tuple, Set, Dict, List, Any
 from fastapi import HTTPException
 
 from database import db_session, get_db
@@ -38,14 +37,13 @@ def _ensure_global_settings_columns(cur: sqlite3.Cursor):
             logger.debug(f"Колонка show_sfx уже существует или ошибка добавления: {e}")
 
 
-async def get_global_settings_endpoint():
+def get_global_settings_endpoint():
     """Получить глобальные настройки приложения."""
-    conn = get_db()
-    cursor = conn.cursor()
-    _ensure_global_settings_columns(cursor)
-    cursor.execute("SELECT * FROM global_settings WHERE id = 1")
-    row = cursor.fetchone()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        _ensure_global_settings_columns(cursor)
+        cursor.execute("SELECT * FROM global_settings WHERE id = 1")
+        row = cursor.fetchone()
 
     settings = dict(row) if row else {
         "detector_model": "yolo_manga.pt",
@@ -57,7 +55,6 @@ async def get_global_settings_endpoint():
         "font_bubble": "v_CCFaceFront",
         "font_thought": "v_CCFaceFront",
         "font_sfx": "v_Mighty Zeo 2.0",
-        "lama_precision": "fp32",
         "lama_downscale": 0,
         "show_sfx": 0,
     }
@@ -65,23 +62,22 @@ async def get_global_settings_endpoint():
     settings["auto_oval_bubble"] = bool(settings.get("auto_oval_bubble", 1))
     settings["default_hyphenation"] = bool(settings.get("default_hyphenation", 1))
     settings["lama_downscale"] = bool(settings.get("lama_downscale", 0))
-    settings["lama_precision"] = str(settings.get("lama_precision") or "fp32")
     settings["show_sfx"] = bool(row["show_sfx"]) if (row and "show_sfx" in row.keys()) else False
     settings["available_detectors"] = get_available_detectors()
     settings["available_cleaners"] = get_available_cleaners()
 
-    if hasattr(ml, "lama_precision"):
-        ml.lama_precision = settings["lama_precision"]
     if hasattr(ml, "lama_downscale"):
         ml.lama_downscale = settings["lama_downscale"]
 
     return {"success": True, "settings": settings}
 
 
-async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
+def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
     """Обновить глобальные настройки приложения."""
     detector = req.detector_model.strip() if req.detector_model else "yolo_manga.pt"
     cleaner = req.clean_model.strip() if req.clean_model else "anime-manga-big-lama.pt"
+    if cleaner == "simple_lama":
+        cleaner = "anime-manga-big-lama.pt"
     conf = float(req.detect_conf) if req.detect_conf is not None else 0.25
     auto_oval = 1 if req.auto_oval_bubble else 0
     padding = req.default_padding if req.default_padding in ["safe", "fit"] else "safe"
@@ -89,7 +85,6 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
     font_b = req.font_bubble or "v_CCFaceFront"
     font_t = req.font_thought or "v_CCFaceFront"
     font_s = req.font_sfx or "v_Mighty Zeo 2.0"
-    precision = getattr(req, "lama_precision", "fp32") or "fp32"
     downscale = 1 if req.lama_downscale else 0
     show_sfx_val = getattr(req, "show_sfx", None)
 
@@ -140,7 +135,6 @@ async def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
             "font_bubble": font_b,
             "font_thought": font_t,
             "font_sfx": font_s,
-            "lama_precision": precision,
             "lama_downscale": bool(downscale),
             "show_sfx": actual_show_sfx,
         }
@@ -234,7 +228,7 @@ def _scan_and_insert_chapters(
     return added_chapters, added_pages, skipped_chapters
 
 
-async def scan_project(req: ScanProjectRequest):
+def scan_project(req: ScanProjectRequest):
     folder = Path(req.folder_path)
     if not folder.exists() or not folder.is_dir():
         return {"success": False, "error": "Папка не найдена или путь указан неверно"}
@@ -261,24 +255,21 @@ async def scan_project(req: ScanProjectRequest):
         return {"success": False, "error": str(e)}
 
 
-async def rescan_project(title_id: int):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, folder_path FROM titles WHERE id = ?", (title_id,))
-    title_row = cursor.fetchone()
+def rescan_project(title_id: int):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, folder_path FROM titles WHERE id = ?", (title_id,))
+        title_row = cursor.fetchone()
 
-    if not title_row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Тайтл не найден")
+        if not title_row:
+            raise HTTPException(status_code=404, detail="Тайтл не найден")
 
-    folder = Path(title_row["folder_path"])
-    if not folder.exists() or not folder.is_dir():
-        conn.close()
-        raise HTTPException(status_code=400, detail=f"Корневая папка тайтла не найдена: {folder}")
+        folder = Path(title_row["folder_path"])
+        if not folder.exists() or not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Корневая папка тайтла не найдена: {folder}")
 
-    cursor.execute("SELECT chapter_number, folder_path FROM chapters WHERE title_id = ?", (title_id,))
-    existing_rows = cursor.fetchall()
-    conn.close()
+        cursor.execute("SELECT chapter_number, folder_path FROM chapters WHERE title_id = ?", (title_id,))
+        existing_rows = cursor.fetchall()
 
     existing_folders = {os.path.normpath(r["folder_path"]).lower() for r in existing_rows if r["folder_path"]}
     existing_names = {r["chapter_number"].strip().lower() for r in existing_rows if r["chapter_number"]}
@@ -306,16 +297,15 @@ async def rescan_project(title_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
+def add_chapters_to_title(title_id: int, req: AddChapterRequest):
     folder = Path(req.folder_path)
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=400, detail="Папка не найдена или путь некорректен")
 
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name FROM titles WHERE id = ?", (title_id,))
-    title_row = cursor.fetchone()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name FROM titles WHERE id = ?", (title_id,))
+        title_row = cursor.fetchone()
 
     if not title_row:
         raise HTTPException(status_code=404, detail="Тайтл не найден")
@@ -346,51 +336,63 @@ async def add_chapters_to_title(title_id: int, req: AddChapterRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def get_projects():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM titles ORDER BY created_at DESC")
-    projects = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+def get_projects():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM titles ORDER BY created_at DESC")
+        projects = [dict(row) for row in cursor.fetchall()]
     return {"success": True, "projects": projects}
 
 
-async def get_available_detectors_endpoint():
+def get_available_detectors_endpoint():
     return {"success": True, "detectors": get_available_detectors()}
 
 
-async def get_available_cleaners_endpoint():
+def get_available_cleaners_endpoint():
     return {"success": True, "cleaners": get_available_cleaners()}
 
 
-async def get_project_tree(title_id: int):
-    conn = get_db()
-    cursor = conn.cursor()
+def get_project_tree(title_id: int):
+    """Загружает дерево тайтла без проблемы N+1 (одним пакетным запросом страниц)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM titles WHERE id = ?", (title_id,))
-    title_row = cursor.fetchone()
-    if not title_row:
-        conn.close()
-        return {"success": False, "error": "Тайтл не найден"}
+        cursor.execute("SELECT * FROM titles WHERE id = ?", (title_id,))
+        title_row = cursor.fetchone()
+        if not title_row:
+            return {"success": False, "error": "Тайтл не найден"}
 
-    title = dict(title_row)
+        title = dict(title_row)
 
-    cursor.execute("SELECT * FROM chapters WHERE title_id = ?", (title_id,))
-    chapters = [dict(row) for row in cursor.fetchall()]
-    chapters.sort(key=lambda c: natural_sort_key(c["chapter_number"]))
+        cursor.execute("SELECT * FROM chapters WHERE title_id = ?", (title_id,))
+        chapters = [dict(row) for row in cursor.fetchall()]
+        chapters.sort(key=lambda c: natural_sort_key(c["chapter_number"]))
 
-    for chapter in chapters:
-        cursor.execute("SELECT * FROM pages WHERE chapter_id = ? ORDER BY page_number ASC", (chapter["id"],))
-        chapter["pages"] = [dict(row) for row in cursor.fetchall()]
+        if chapters:
+            chapter_ids = [ch["id"] for ch in chapters]
+            placeholders = ",".join("?" for _ in chapter_ids)
+            cursor.execute(
+                f"SELECT * FROM pages WHERE chapter_id IN ({placeholders}) ORDER BY page_number ASC",
+                chapter_ids
+            )
+            pages_by_chapter: Dict[int, List[Dict[str, Any]]] = {}
+            for p_row in cursor.fetchall():
+                p_dict = dict(p_row)
+                pages_by_chapter.setdefault(p_dict["chapter_id"], []).append(p_dict)
+
+            for chapter in chapters:
+                chapter["pages"] = pages_by_chapter.get(chapter["id"], [])
+        else:
+            for chapter in chapters:
+                chapter["pages"] = []
 
     title["chapters"] = chapters
     title["available_detectors"] = get_available_detectors()
     title["available_cleaners"] = get_available_cleaners()
-    conn.close()
     return {"success": True, "title": title}
 
 
-async def update_title_settings(title_id: int, req: UpdateTitleSettingsRequest):
+def update_title_settings(title_id: int, req: UpdateTitleSettingsRequest):
     """Обновить описание/синопсис и базовый размер шрифта тайтла."""
     with db_session() as cur:
         if req.description is not None:
@@ -405,36 +407,35 @@ async def update_title_settings(title_id: int, req: UpdateTitleSettingsRequest):
     }
 
 
-async def get_title_speakers(title_id: int, chapter_id: Optional[int] = None):
-    conn = get_db()
-    cursor = conn.cursor()
+def get_title_speakers(title_id: int, chapter_id: Optional[int] = None):
+    with get_db() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT rus_word FROM glossary WHERE title_id = ?", (title_id,))
-    glossary_speakers = [r["rus_word"].strip() for r in cursor.fetchall() if r["rus_word"] and r["rus_word"].strip()]
+        cursor.execute("SELECT rus_word FROM glossary WHERE title_id = ?", (title_id,))
+        glossary_speakers = [r["rus_word"].strip() for r in cursor.fetchall() if r["rus_word"] and r["rus_word"].strip()]
 
-    if chapter_id:
-        cursor.execute(
-            """
-            SELECT DISTINCT tb.speaker 
-            FROM text_blocks tb
-            JOIN pages p ON p.id = tb.page_id
-            WHERE p.chapter_id = ? AND tb.speaker != ''
-            """,
-            (chapter_id,)
-        )
-    else:
-        cursor.execute(
-            """
-            SELECT DISTINCT tb.speaker 
-            FROM text_blocks tb
-            JOIN pages p ON p.id = tb.page_id
-            JOIN chapters c ON c.id = p.chapter_id
-            WHERE c.title_id = ? AND tb.speaker != ''
-            """,
-            (title_id,)
-        )
-    used_speakers = [r["speaker"].strip() for r in cursor.fetchall() if r["speaker"] and r["speaker"].strip()]
-    conn.close()
+        if chapter_id:
+            cursor.execute(
+                """
+                SELECT DISTINCT tb.speaker 
+                FROM text_blocks tb
+                JOIN pages p ON p.id = tb.page_id
+                WHERE p.chapter_id = ? AND tb.speaker != ''
+                """,
+                (chapter_id,)
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT DISTINCT tb.speaker 
+                FROM text_blocks tb
+                JOIN pages p ON p.id = tb.page_id
+                JOIN chapters c ON c.id = p.chapter_id
+                WHERE c.title_id = ? AND tb.speaker != ''
+                """,
+                (title_id,)
+            )
+        used_speakers = [r["speaker"].strip() for r in cursor.fetchall() if r["speaker"] and r["speaker"].strip()]
 
     combined = []
     seen = set()
@@ -446,31 +447,28 @@ async def get_title_speakers(title_id: int, chapter_id: Optional[int] = None):
     return {"success": True, "speakers": sorted(combined)}
 
 
-async def delete_project(title_id: int):
+def delete_project(title_id: int):
     try:
-        conn = get_db()
-        conn.execute("PRAGMA foreign_keys = ON")
-        cur = conn.cursor()
-        cur.execute("DELETE FROM titles WHERE id = ?", (title_id,))
-        conn.commit()
-        conn.execute("VACUUM")
-        conn.close()
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM titles WHERE id = ?", (title_id,))
+            conn.commit()
+            conn.execute("VACUUM")
         return {"success": True, "message": "Проект успешно удалён"}
     except Exception as e:
         logger.error(f"Ошибка при удалении проекта {title_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def get_glossary(title_id: int):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM glossary WHERE title_id = ? ORDER BY id DESC", (title_id,))
-    items = [dict(r) for r in cursor.fetchall()]
-    conn.close()
+def get_glossary(title_id: int):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM glossary WHERE title_id = ? ORDER BY id DESC", (title_id,))
+        items = [dict(r) for r in cursor.fetchall()]
     return {"success": True, "items": items}
 
 
-async def add_glossary_item(title_id: int, req: GlossaryItemCreate):
+def add_glossary_item(title_id: int, req: GlossaryItemCreate):
     if not req.rus_word.strip():
         raise HTTPException(status_code=400, detail="Русское имя или обозначение персонажа обязательно")
 
@@ -497,94 +495,52 @@ async def add_glossary_item(title_id: int, req: GlossaryItemCreate):
     }
 
 
-async def delete_glossary_item(title_id: int, entry_id: int):
+def delete_glossary_item(title_id: int, entry_id: int):
     with db_session() as cur:
         cur.execute("DELETE FROM glossary WHERE id = ? AND title_id = ?", (entry_id, title_id))
     return {"success": True}
 
 
-async def get_project_stats(title_id: int):
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("SELECT COUNT(*) FROM chapters WHERE title_id = ?", (title_id,))
-    total_chapters = cur.fetchone()[0]
-
-    cur.execute(
-        """
-        SELECT p.status, COUNT(*) 
-        FROM pages p
-        JOIN chapters c ON c.id = p.chapter_id
-        WHERE c.title_id = ?
-        GROUP BY p.status
-        """,
-        (title_id,)
-    )
-    status_counts = dict(cur.fetchall())
-    total_pages = sum(status_counts.values())
-
-    cur.execute(
-        """
-        SELECT COUNT(*), SUM(CASE WHEN tb.status = 'translated' THEN 1 ELSE 0 END)
-        FROM text_blocks tb
-        JOIN pages p ON p.id = tb.page_id
-        JOIN chapters c ON c.id = p.chapter_id
-        WHERE c.title_id = ?
-        """,
-        (title_id,)
-    )
-    row = cur.fetchone()
-    total_blocks = row[0] or 0
-    translated_blocks = row[1] or 0
-
-    cur.execute("SELECT COUNT(*) FROM glossary WHERE title_id = ?", (title_id,))
-    total_glossary = cur.fetchone()[0]
-
-    conn.close()
-
-    return {
-        "success": True,
-        "stats": {
-            "total_chapters": total_chapters,
-            "total_pages": total_pages,
-            "pages_raw": status_counts.get("raw", 0) + status_counts.get("new", 0),
-            "pages_detected": status_counts.get("detected", 0),
-            "pages_cleaned": status_counts.get("cleaned", 0),
-            "pages_translated": status_counts.get("translated", 0),
-            "pages_done": status_counts.get("done", 0),
-            "total_blocks": total_blocks,
-            "translated_blocks": translated_blocks,
-            "total_glossary": total_glossary,
-        }
-    }
-
-
-async def get_all_detailed_stats():
+def get_all_detailed_stats():
     """
-    Возвращает список всех проектов со структурированными главами:
+    Возвращает список всех проектов со структурированными главами без N+1 запросов:
     страницы, реплики, русские слова, затраченное время (с учётом активного таймера).
     """
     now = int(time.time())
-    conn = get_db()
-    cur = conn.cursor()
+    with get_db() as conn:
+        cur = conn.cursor()
 
-    cur.execute("SELECT id, name, folder_path, created_at FROM titles ORDER BY name ASC")
-    titles = [dict(r) for r in cur.fetchall()]
+        cur.execute("SELECT id, name, folder_path, created_at FROM titles ORDER BY name ASC")
+        titles = [dict(r) for r in cur.fetchall()]
+
+        cur.execute(
+            """
+            SELECT
+                c.id,
+                c.title_id,
+                c.chapter_number,
+                c.folder_path,
+                c.work_seconds,
+                c.timer_started_at,
+                c.cached_replicas_count,
+                c.cached_words_count,
+                COUNT(p.id) AS pages_count
+            FROM chapters c
+            LEFT JOIN pages p ON p.chapter_id = c.id
+            GROUP BY c.id
+            """
+        )
+        all_chapters = [dict(r) for r in cur.fetchall()]
+
+    chapters_by_title: Dict[int, List[Dict[str, Any]]] = {}
+    for ch in all_chapters:
+        chapters_by_title.setdefault(ch["title_id"], []).append(ch)
 
     result_titles = []
 
     for t in titles:
         t_id = t["id"]
-        cur.execute(
-            """
-            SELECT id, chapter_number, folder_path, work_seconds, timer_started_at,
-                   cached_replicas_count, cached_words_count
-            FROM chapters
-            WHERE title_id = ?
-            """,
-            (t_id,)
-        )
-        chapters = [dict(r) for r in cur.fetchall()]
+        chapters = chapters_by_title.get(t_id, [])
         chapters.sort(key=lambda c: natural_sort_key(c["chapter_number"]))
 
         total_title_pages = 0
@@ -594,9 +550,7 @@ async def get_all_detailed_stats():
 
         chapters_data = []
         for ch in chapters:
-            ch_id = ch["id"]
-            cur.execute("SELECT COUNT(*) FROM pages WHERE chapter_id = ?", (ch_id,))
-            pages_count = cur.fetchone()[0] or 0
+            pages_count = ch.get("pages_count") or 0
 
             base_sec = ch.get("work_seconds") or 0
             timer_start = ch.get("timer_started_at")
@@ -615,7 +569,7 @@ async def get_all_detailed_stats():
                 total_title_words += words
 
             chapters_data.append({
-                "id": ch_id,
+                "id": ch["id"],
                 "chapter_number": ch["chapter_number"],
                 "pages_count": pages_count,
                 "replicas_count": reps,
@@ -634,25 +588,23 @@ async def get_all_detailed_stats():
             "chapters": chapters_data,
         })
 
-    conn.close()
     return {"success": True, "projects": result_titles}
 
 
-async def recalculate_title_stats(title_id: int):
+def recalculate_title_stats(title_id: int):
     """Пересчитывает реплики и слова во всех главах указанного тайтла."""
     import routers.chapters_impl as ch_impl
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM chapters WHERE title_id = ?", (title_id,))
-    chapter_ids = [r[0] for r in cur.fetchall()]
-    conn.close()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM chapters WHERE title_id = ?", (title_id,))
+        chapter_ids = [r[0] for r in cur.fetchall()]
 
     total_replicas = 0
     total_words = 0
 
     for ch_id in chapter_ids:
-        res = await ch_impl.recalculate_chapter_stats(ch_id)
+        res = ch_impl.recalculate_chapter_stats(ch_id)
         total_replicas += res["replicas_count"]
         total_words += res["words_count"]
 
