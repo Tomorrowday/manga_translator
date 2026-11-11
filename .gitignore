@@ -20,12 +20,22 @@ data/
 *.sqlite3
 *.db
 
-# Тяжёлые веса нейросетей
-weights/
+# Тяжёлые веса нейросетей и кэш игнорируем
+weights/*
+weights/cache/
 *.pt
 *.onnx
 *.bin
 *.safetensors
+
+# Но сами папки clean-lama и detect-bubble (с файлами .gitkeep) разрешаем для GitHub!
+!weights/clean-lama/
+weights/clean-lama/*
+!weights/clean-lama/.gitkeep
+
+!weights/detect-bubble/
+weights/detect-bubble/*
+!weights/detect-bubble/.gitkeep
 
 # Системные файлы и IDE
 .idea/
