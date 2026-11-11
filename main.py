@@ -1,6 +1,7 @@
 # main.py
 # Точка входа FastAPI бэкенда с чистым выводом в консоль
 
+import config  # <-- ОБЯЗАТЕЛЬНО ПЕРВОЙ СТРОЧКОЙ! Задаёт HF_HOME и TORCH_HOME внутри папки проекта
 from contextlib import asynccontextmanager
 from typing import Any, cast
 import warnings

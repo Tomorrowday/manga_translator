@@ -41,6 +41,8 @@ CACHE_DIR = WEIGHTS_DIR / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 os.environ["HF_HOME"] = str(CACHE_DIR / "huggingface")
 os.environ["TORCH_HOME"] = str(CACHE_DIR / "torch")
+os.environ["YOLO_CONFIG_DIR"] = str(CACHE_DIR / "ultralytics")
+os.environ["TORCH_HOME"] = str(CACHE_DIR / "torch")
 
 # Оффлайн-режим для huggingface/transformers
 os.environ["TRANSFORMERS_OFFLINE"] = "0"
