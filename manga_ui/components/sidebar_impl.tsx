@@ -64,7 +64,7 @@ export function Sidebar({
   const [showAddChapterModal, setShowAddChapterModal] = useState(false)
 
   const [showProjectModal, setShowProjectModal] = useState(false)
-  const [projectModalTab, setProjectModalTab] = useState<"glossary" | "synopsis" | "stats">("glossary")
+  const [projectModalTab, setProjectModalTab] = useState<"glossary" | "synopsis">("glossary")
 
   const loadProjects = useCallback(async () => {
     try {

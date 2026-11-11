@@ -1,6 +1,6 @@
 // manga_ui/components/image-viewer.tsx
 /**
- * Контракт вьювера страницы манги (разметка баблов, масштабирование, ретушь кистью).
+ * Контракт вьювера страницы манги (разметка баблов, масштабирование, ретушь кистью, режим проверки японского текста).
  * Реализация: manga_ui/components/image-viewer_impl.tsx
  * Зависимости реализации: react, lucide-react, @/lib/types (TextBlock), @/lib/api/pages (releaseVram),
  *                         @/hooks/use-manga-hotkeys, @/hooks/use-box-transform,
@@ -16,6 +16,7 @@ export interface ImageViewerProps {
   textBlocks: TextBlock[]
   selectedId: string | null
   showTypeset?: boolean
+  showJapOverlay?: boolean
   pageNumber?: number
   hasCleanScan?: boolean
   viewMode: "original" | "clean"

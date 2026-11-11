@@ -1,5 +1,5 @@
 # database_impl.py
-# Реализация подключения к SQLite, миграций схемы и транзакций
+# Реализация подключения к SQLite (с режимом WAL и таймаутом), миграций схемы и транзакций
 
 import sqlite3
 from contextlib import contextmanager
@@ -7,8 +7,10 @@ from config import DB_PATH
 
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -68,6 +70,11 @@ def init_db():
                     font_bubble, font_thought, font_sfx, lama_downscale, show_sfx
                 ) VALUES (1, 14, 'yolo_manga.pt', 'anime-manga-big-lama.pt', 0.25, 1, 'safe', 1, 'v_CCFaceFront', 'v_CCFaceFront', 'v_Mighty Zeo 2.0', 0, 0)
             ''')
+
+        # Если в БД ранее был выбран удалённый simple_lama, сбрасываем его на реальный вес
+        cursor.execute(
+            "UPDATE global_settings SET clean_model = 'anime-manga-big-lama.pt' WHERE clean_model = 'simple_lama'"
+        )
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS titles (
@@ -161,4 +168,4 @@ def init_db():
         cursor.execute("DELETE FROM pages WHERE chapter_id NOT IN (SELECT id FROM chapters)")
         cursor.execute("DELETE FROM chapters WHERE title_id NOT IN (SELECT id FROM titles)")
 
-    print("База данных проверена, миграции схемы (включая show_sfx) применены.")
+    print("База данных проверена (WAL включён), миграции схемы применены.")

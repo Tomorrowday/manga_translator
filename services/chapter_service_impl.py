@@ -1,5 +1,5 @@
 # services/chapter_service_impl.py
-# Бизнес-логика работы с главами: экспорт в 2 раздельных JSON, чистый авто-импорт и управление шрифтами
+# Бизнес-логика работы с главами: экспорт в 2 раздельных JSON (с типом бабла), чистый авто-импорт и управление шрифтами
 
 import os
 import json
@@ -11,55 +11,59 @@ from database import get_db, db_session
 from services.prompts import CLAUDE_CHATGPT_EXPORT_INSTRUCTIONS
 from logger import logger
 
+CLASS_ID_TO_TYPE = {
+    0: "bubble",
+    1: "thought",
+    2: "text",
+    3: "sfx",
+}
+
 
 def build_chapter_export_payloads(chapter_id: int) -> Tuple[str, str, str, str, Optional[str]]:
-    conn = get_db()
-    cursor = conn.cursor()
+    with get_db() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT c.chapter_number, c.folder_path as chapter_folder, t.id as title_id, t.name as title_name, t.description as title_description
-        FROM chapters c
-        JOIN titles t ON t.id = c.title_id
-        WHERE c.id = ?
-        """,
-        (chapter_id,)
-    )
-    ch_row = cursor.fetchone()
-    if not ch_row:
-        conn.close()
-        raise ValueError("Глава не найдена")
+        cursor.execute(
+            """
+            SELECT c.chapter_number, c.folder_path as chapter_folder, t.id as title_id, t.name as title_name, t.description as title_description
+            FROM chapters c
+            JOIN titles t ON t.id = c.title_id
+            WHERE c.id = ?
+            """,
+            (chapter_id,)
+        )
+        ch_row = cursor.fetchone()
+        if not ch_row:
+            raise ValueError("Глава не найдена")
 
-    title_id = ch_row["title_id"]
-    title_name = ch_row["title_name"]
-    title_description = ch_row["title_description"] or ""
-    chapter_num = ch_row["chapter_number"]
-    chapter_folder = ch_row["chapter_folder"]
+        title_id = ch_row["title_id"]
+        title_name = ch_row["title_name"]
+        title_description = ch_row["title_description"] or ""
+        chapter_num = ch_row["chapter_number"]
+        chapter_folder = ch_row["chapter_folder"]
 
-    cursor.execute("SELECT jap_word, rus_word, context FROM glossary WHERE title_id = ?", (title_id,))
-    glossary_items = [
-        {"jap": r["jap_word"], "rus": r["rus_word"], "context": r["context"] or ""}
-        for r in cursor.fetchall()
-    ]
+        cursor.execute("SELECT jap_word, rus_word, context FROM glossary WHERE title_id = ?", (title_id,))
+        glossary_items = [
+            {"jap": r["jap_word"], "rus": r["rus_word"], "context": r["context"] or ""}
+            for r in cursor.fetchall()
+        ]
 
-    cursor.execute(
-        """
-        SELECT tb.id, tb.speaker, tb.jap_text, tb.rus_text, tb.order_index, p.page_number, p.file_path
-        FROM text_blocks tb
-        JOIN pages p ON p.id = tb.page_id
-        WHERE p.chapter_id = ?
-        ORDER BY p.page_number ASC, tb.order_index ASC
-        """,
-        (chapter_id,)
-    )
-    blocks = [dict(r) for r in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT tb.id, tb.class_id, tb.speaker, tb.jap_text, tb.rus_text, tb.order_index, p.page_number, p.file_path
+            FROM text_blocks tb
+            JOIN pages p ON p.id = tb.page_id
+            WHERE p.chapter_id = ?
+            ORDER BY p.page_number ASC, tb.order_index ASC
+            """,
+            (chapter_id,)
+        )
+        blocks = [dict(r) for r in cursor.fetchall()]
 
     if (not chapter_folder or not os.path.exists(chapter_folder)) and blocks:
         first_img = blocks[0].get("file_path")
         if first_img and os.path.exists(first_img):
             chapter_folder = os.path.dirname(first_img)
-
-    conn.close()
 
     dialogues: List[Dict[str, str]] = []
     page_bubble_counters: Dict[int, int] = {}
@@ -68,9 +72,12 @@ def build_chapter_export_payloads(chapter_id: int) -> Tuple[str, str, str, str, 
         p_num = b["page_number"]
         page_bubble_counters[p_num] = page_bubble_counters.get(p_num, 0) + 1
         bubble_order = b["order_index"] if (b.get("order_index") and b["order_index"] > 0) else page_bubble_counters[p_num]
+        cls_id = int(b.get("class_id") or 0)
+        block_type = CLASS_ID_TO_TYPE.get(cls_id, "bubble")
 
         dialogues.append({
             "id": f"{p_num}-{bubble_order}",
+            "type": block_type,
             "speaker": b["speaker"] or "",
             "raw": b["jap_text"] or "",
             "ru": b["rus_text"] or ""
@@ -124,19 +131,18 @@ def export_chapter_dialogue_to_folder(chapter_id: int) -> Dict[str, Any]:
 
 
 def get_chapter_folder_path(chapter_id: int) -> Optional[str]:
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT folder_path FROM chapters WHERE id = ?", (chapter_id,))
-    row = cur.fetchone()
-    folder = row["folder_path"] if row and row["folder_path"] else None
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT folder_path FROM chapters WHERE id = ?", (chapter_id,))
+        row = cur.fetchone()
+        folder = row["folder_path"] if row and row["folder_path"] else None
 
-    if not folder or not os.path.exists(folder):
-        cur.execute("SELECT file_path FROM pages WHERE chapter_id = ? LIMIT 1", (chapter_id,))
-        p_row = cur.fetchone()
-        if p_row and p_row["file_path"] and os.path.exists(p_row["file_path"]):
-            folder = os.path.dirname(p_row["file_path"])
+        if not folder or not os.path.exists(folder):
+            cur.execute("SELECT file_path FROM pages WHERE chapter_id = ? LIMIT 1", (chapter_id,))
+            p_row = cur.fetchone()
+            if p_row and p_row["file_path"] and os.path.exists(p_row["file_path"]):
+                folder = os.path.dirname(p_row["file_path"])
 
-    conn.close()
     return folder
 
 
@@ -199,25 +205,24 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
     else:
         raise ValueError("Неверный формат JSON файла")
 
-    conn = get_db()
-    cur = conn.cursor()
+    with get_db() as conn:
+        cur = conn.cursor()
 
-    cur.execute("SELECT auto_oval_bubble FROM global_settings WHERE id = 1")
-    setting_row = cur.fetchone()
-    auto_oval_enabled = bool(setting_row["auto_oval_bubble"]) if setting_row else True
+        cur.execute("SELECT auto_oval_bubble FROM global_settings WHERE id = 1")
+        setting_row = cur.fetchone()
+        auto_oval_enabled = bool(setting_row["auto_oval_bubble"]) if setting_row else True
 
-    cur.execute(
-        """
-        SELECT tb.id, tb.rus_text, tb.speaker, tb.order_index, tb.class_id, tb.shape, tb.font_size, p.page_number
-        FROM text_blocks tb
-        JOIN pages p ON p.id = tb.page_id
-        WHERE p.chapter_id = ?
-        ORDER BY p.page_number ASC, tb.order_index ASC
-        """,
-        (chapter_id,)
-    )
-    existing_blocks = [dict(r) for r in cur.fetchall()]
-    conn.close()
+        cur.execute(
+            """
+            SELECT tb.id, tb.rus_text, tb.speaker, tb.order_index, tb.class_id, tb.shape, tb.font_size, p.page_number
+            FROM text_blocks tb
+            JOIN pages p ON p.id = tb.page_id
+            WHERE p.chapter_id = ?
+            ORDER BY p.page_number ASC, tb.order_index ASC
+            """,
+            (chapter_id,)
+        )
+        existing_blocks = [dict(r) for r in cur.fetchall()]
 
     by_uuid: Dict[str, dict] = {b["id"]: b for b in existing_blocks}
     by_page_order: Dict[str, dict] = {f"{b['page_number']}-{b['order_index']}": b for b in existing_blocks}
@@ -295,4 +300,8 @@ def import_chapter_dialogue_payload(chapter_id: int, file_bytes: bytes) -> Dict[
         f"Импорт главы {chapter_id}: обновлено реплик: {updated_count}, спикеров: {updated_speakers_count}"
     )
 
-    return {"updated_count": updated_count, "updated_speakers_count": updated_speakers_count}
+    return {
+        "updated_count": updated_count,
+        "updated_speakers_count": updated_speakers_count,
+        "total_records": len(dialogues),
+    }

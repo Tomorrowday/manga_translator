@@ -1,5 +1,5 @@
 // manga_ui/components/manga-translator_impl.tsx
-// Главный контейнер Manga Translator с поддержкой таймера текущей главы и модалки статистики
+// Главный контейнер Manga Translator (с декомпозицией таймера и ресайза панели, поддержкой Undo/Redo, JP Check и быстрого переключения страниц)
 
 "use client"
 
@@ -14,7 +14,7 @@ import { TextBlocksList } from "@/components/text-blocks-list"
 import { HotkeysModal } from "@/components/hotkeys-modal"
 import { SettingsModal } from "@/components/settings-modal"
 import { StatisticsModal } from "@/components/statistics-modal"
-import { cropRegion, mapDbBlockToTextBlock } from "@/lib/typeset"
+import { mapDbBlockToTextBlock } from "@/lib/typeset"
 import { useMangaHotkeys } from "@/hooks/use-manga-hotkeys"
 import { usePageBlocks } from "@/hooks/use-page-blocks"
 import { usePagePipelines } from "@/hooks/use-page-pipelines"
@@ -25,6 +25,7 @@ import {
   getPageCleanImageUrl,
   getPageBlocks,
   runPageAutoDetect,
+  runOcr,
   openTranslatedFolder,
   runBrushClean,
   updateTitleSettings,
@@ -40,68 +41,10 @@ import type { MangaTranslatorProps } from "./manga-translator"
 const RIGHT_PANEL_STORAGE_KEY = "manga_right_panel_width"
 const DEFAULT_PANEL_WIDTH = 490
 
-export function MangaTranslator(_props: MangaTranslatorProps) {
-  const [currentPage, setCurrentPage] = useState<PageItem | null>(null)
-  const [chapterPages, setChapterPages] = useState<PageItem[]>([])
-  const [viewMode, setViewMode] = useState<"original" | "clean">("original")
-  const [cleanCacheBuster, setCleanCacheBuster] = useState<number>(Date.now())
-  const [showTypeset, setShowTypeset] = useState(false)
-  const [brushSize, setBrushSize] = useState<number>(32)
-
-  // Базовый размер шрифта для текущего тайтла
-  const [currentTitleId, setCurrentTitleId] = useState<number | null>(null)
-  const [titleFontSize, setTitleFontSize] = useState<number>(14)
-  const [isApplyingChapterFont, setIsApplyingChapterFont] = useState(false)
-
-  // Трекинг времени текущей главы
+function useChapterTimer(currentChapterId: number | null) {
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [timerSeconds, setTimerSeconds] = useState(0)
 
-  // Ширина правой панели (свободно изменяемая сплиттером)
-  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH)
-  const [isResizing, setIsResizing] = useState<boolean>(false)
-
-  // Загружаем сохранённую пользователем ширину панели
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(RIGHT_PANEL_STORAGE_KEY)
-      if (saved) {
-        const val = parseInt(saved, 10)
-        if (!isNaN(val) && val >= 360 && val <= 1000) {
-          setPanelWidth(val)
-        }
-      }
-    } catch {}
-  }, [])
-
-  // Глобальные настройки приложения
-  const [globalSettings, setGlobalSettings] = useState<TitleSettings>({
-    auto_oval_bubble: true,
-    default_padding: "safe",
-    default_hyphenation: true,
-    font_bubble: "v_CCFaceFront",
-    font_thought: "v_CCFaceFront",
-    font_sfx: "v_Mighty Zeo 2.0",
-    show_sfx: false,
-  })
-
-  const [knownSpeakers, setKnownSpeakers] = useState<string[]>([])
-  const [activePageUpdate, setActivePageUpdate] = useState<{ id: number; status: PageStatus; clean_path?: string } | null>(null)
-  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
-
-  // Модальные окна
-  const [showHotkeysModal, setShowHotkeysModal] = useState(false)
-  const [showSettingsModal, setShowSettingsModal] = useState(false)
-  const [showStatisticsModal, setShowStatisticsModal] = useState(false)
-
-  const chapterPagesRef = useRef<PageItem[]>([])
-  chapterPagesRef.current = chapterPages
-  const isSwitchingPageRef = useRef(false)
-
-  // Получение актуального id текущей главы
-  const currentChapterId = currentPage?.chapter_id || chapterPages[0]?.chapter_id || null
-
-  // Загрузка состояния таймера при переключении главы
   useEffect(() => {
     if (!currentChapterId) {
       setIsTimerRunning(false)
@@ -123,7 +66,6 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     }
   }, [currentChapterId])
 
-  // Тикание таймера раз в секунду при активной сессии
   useEffect(() => {
     if (!isTimerRunning) return
     const interval = setInterval(() => {
@@ -158,7 +100,25 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     }
   }, [currentChapterId])
 
-  // Обработчик сплиттера
+  return { isTimerRunning, timerSeconds, handleStartTimer, handleStopTimer }
+}
+
+function usePanelResize() {
+  const [panelWidth, setPanelWidth] = useState<number>(DEFAULT_PANEL_WIDTH)
+  const [isResizing, setIsResizing] = useState<boolean>(false)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(RIGHT_PANEL_STORAGE_KEY)
+      if (saved) {
+        const val = parseInt(saved, 10)
+        if (!isNaN(val) && val >= 360 && val <= 1000) {
+          setPanelWidth(val)
+        }
+      }
+    } catch {}
+  }, [])
+
   const startResizing = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     setIsResizing(true)
@@ -193,6 +153,51 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     }
   }, [isResizing])
 
+  return { panelWidth, isResizing, startResizing }
+}
+
+export function MangaTranslator(_props: MangaTranslatorProps) {
+  const [currentPage, setCurrentPage] = useState<PageItem | null>(null)
+  const [chapterPages, setChapterPages] = useState<PageItem[]>([])
+  const [viewMode, setViewMode] = useState<"original" | "clean">("original")
+  const [cleanCacheBuster, setCleanCacheBuster] = useState<number>(Date.now())
+  const [showTypeset, setShowTypeset] = useState(false)
+  const [showJapOverlay, setShowJapOverlay] = useState(false)
+  const [brushSize, setBrushSize] = useState<number>(32)
+
+  // Базовый размер шрифта для текущего тайтла
+  const [currentTitleId, setCurrentTitleId] = useState<number | null>(null)
+  const [titleFontSize, setTitleFontSize] = useState<number>(14)
+  const [isApplyingChapterFont, setIsApplyingChapterFont] = useState(false)
+
+  // Глобальные настройки приложения
+  const [globalSettings, setGlobalSettings] = useState<TitleSettings>({
+    auto_oval_bubble: true,
+    default_padding: "safe",
+    default_hyphenation: true,
+    font_bubble: "v_CCFaceFront",
+    font_thought: "v_CCFaceFront",
+    font_sfx: "v_Mighty Zeo 2.0",
+    show_sfx: false,
+  })
+
+  const [knownSpeakers, setKnownSpeakers] = useState<string[]>([])
+  const [activePageUpdate, setActivePageUpdate] = useState<{ id: number; status: PageStatus; clean_path?: string } | null>(null)
+  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
+
+  // Модальные окна
+  const [showHotkeysModal, setShowHotkeysModal] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [showStatisticsModal, setShowStatisticsModal] = useState(false)
+
+  const chapterPagesRef = useRef<PageItem[]>([])
+  chapterPagesRef.current = chapterPages
+  const isSwitchingPageRef = useRef(false)
+
+  const currentChapterId = currentPage?.chapter_id || chapterPages[0]?.chapter_id || null
+  const { isTimerRunning, timerSeconds, handleStartTimer, handleStopTimer } = useChapterTimer(currentChapterId)
+  const { panelWidth, isResizing, startResizing } = usePanelResize()
+
   useEffect(() => {
     async function loadSettings() {
       try {
@@ -220,11 +225,15 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     setActivePageUpdate({ id: pageId, status, clean_path: cleanPath })
     setCurrentPage((prev) => {
       if (!prev || prev.id !== pageId) return prev
-      return { ...prev, status, clean_path: cleanPath !== undefined ? cleanPath : prev.clean_path }
+      return {
+        ...prev,
+        status,
+        clean_path: cleanPath !== undefined ? (cleanPath || undefined) : prev.clean_path,
+      }
     })
-    if (cleanPath) {
+    if (cleanPath !== undefined) {
       setCleanCacheBuster(Date.now())
-      setViewMode("clean")
+      setViewMode(cleanPath ? "clean" : "original")
     }
   }, [])
 
@@ -238,6 +247,33 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
       }
     }
   }, [currentTitleId])
+
+  const {
+    textBlocks,
+    setTextBlocks,
+    textBlocksRef,
+    selectedId,
+    setSelectedId,
+    isSaving,
+    isDirtyRef,
+    undo,
+    redo,
+    recordCleanAction,
+    saveBlocks,
+    saveBlocksExplicit,
+    setNewPageBlocks,
+    clearBlocks,
+    updateBlock,
+    deleteBlock,
+    moveBlock,
+    spotCleanBlock,
+    addOrUpdateDrawnBlock,
+  } = usePageBlocks(
+    currentPage,
+    { ...globalSettings, default_font_size: titleFontSize },
+    handlePageStatusUpdate,
+    refreshSpeakersList
+  )
 
   const handleApplyFontSizeToChapter = useCallback(async () => {
     const chId = currentPage?.chapter_id || chapterPages[0]?.chapter_id
@@ -256,31 +292,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     } finally {
       setIsApplyingChapterFont(false)
     }
-  }, [currentPage?.chapter_id, chapterPages, titleFontSize])
-
-  const {
-    textBlocks,
-    setTextBlocks,
-    textBlocksRef,
-    selectedId,
-    setSelectedId,
-    isSaving,
-    isDirtyRef,
-    saveBlocks,
-    saveBlocksExplicit,
-    setNewPageBlocks,
-    clearBlocks,
-    updateBlock,
-    deleteBlock,
-    moveBlock,
-    spotCleanBlock,
-    addOrUpdateDrawnBlock,
-  } = usePageBlocks(
-    currentPage,
-    { ...globalSettings, default_font_size: titleFontSize },
-    handlePageStatusUpdate,
-    refreshSpeakersList
-  )
+  }, [currentPage?.chapter_id, chapterPages, titleFontSize, setTextBlocks])
 
   const pipelines = usePagePipelines({
     currentPage,
@@ -336,27 +348,10 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
       setCleanCacheBuster(Date.now())
       refreshSpeakersList(freshPage.id)
 
-      const rawUrl = getPageImageUrl(page.id)
       const dbBlocks = await getPageBlocks(page.id)
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.src = rawUrl
-      await new Promise((res) => {
-        if (img.complete && img.naturalWidth > 0) res(true)
-        else {
-          img.onload = () => res(true)
-          img.onerror = () => res(false)
-        }
-      })
 
       if (dbBlocks && dbBlocks.length > 0) {
-        const loaded: TextBlock[] = []
-        for (const b of dbBlocks) {
-          const cropped = img.naturalWidth > 0 ? await cropRegion(img, { ...b, rotation: b.rotation || 0 }) : { dataUrl: "" }
-          const mapped = mapDbBlockToTextBlock({ ...b, imageCrop: cropped.dataUrl, image_crop: cropped.dataUrl })
-          mapped.imageCrop = cropped.dataUrl
-          loaded.push(mapped)
-        }
+        const loaded: TextBlock[] = dbBlocks.map((b: any) => mapDbBlockToTextBlock(b))
         setNewPageBlocks(loaded)
         setSelectedId(loaded[0]?.id || null)
       } else {
@@ -368,31 +363,25 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
             false
           )
           if (detectRes?.boxes?.length) {
-            const fresh: TextBlock[] = []
-            for (const box of detectRes.boxes) {
-              const cropped = await cropRegion(img, { ...box, rotation: 0 })
-
-              fresh.push({
-                id: box.id || crypto.randomUUID(),
-                class_id: box.class_id ?? 0,
-                x: box.x,
-                y: box.y,
-                width: box.width,
-                height: box.height,
-                rotation: 0,
-                imageCrop: cropped.dataUrl,
-                japText: box.jap_text || "",
-                rusText: "",
-                orderIndex: box.order_index,
-                fontSize: undefined,
-                fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
-                textColor: "black",
-                shape: "rect",
-                paddingMode: (box.padding_mode as TextBlock["paddingMode"]) || globalSettings.default_padding || "safe",
-                minHyphens: box.min_hyphens !== undefined ? box.min_hyphens : (globalSettings.default_hyphenation ?? true),
-                status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
-              })
-            }
+            const fresh: TextBlock[] = detectRes.boxes.map((box: any) => ({
+              id: box.id || crypto.randomUUID(),
+              class_id: box.class_id ?? 0,
+              x: box.x,
+              y: box.y,
+              width: box.width,
+              height: box.height,
+              rotation: 0,
+              japText: box.jap_text || "",
+              rusText: "",
+              orderIndex: box.order_index,
+              fontSize: undefined,
+              fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
+              textColor: "black",
+              shape: "rect",
+              paddingMode: (box.padding_mode as TextBlock["paddingMode"]) || globalSettings.default_padding || "safe",
+              minHyphens: box.min_hyphens !== undefined ? Boolean(box.min_hyphens) : (globalSettings.default_hyphenation ?? true),
+              status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
+            }))
             setNewPageBlocks(fresh)
             if (fresh[0]) setSelectedId(fresh[0].id)
             handlePageStatusUpdate(page.id, "detected")
@@ -416,6 +405,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     async (maskBase64: string, mode: "lama" | "white" | "black" = "lama") => {
       if (!currentPage) return
       try {
+        recordCleanAction()
         const res = await runBrushClean(currentPage.id, maskBase64, mode)
         if (res.success) {
           handlePageStatusUpdate(currentPage.id, res.page_status || "cleaned", res.clean_path)
@@ -429,7 +419,26 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
         alert("Ошибка кисти: " + String(e))
       }
     },
-    [currentPage, handlePageStatusUpdate]
+    [currentPage, handlePageStatusUpdate, recordCleanAction]
+  )
+
+  const handleOcrSingleBlock = useCallback(
+    async (block: TextBlock) => {
+      if (!currentPage) return
+      const text = await runOcr(
+        currentPage.id,
+        block.x,
+        block.y,
+        block.width,
+        block.height,
+        block.rotation || 0
+      )
+      updateBlock(block.id, {
+        japText: text,
+        status: block.status === "translated" ? "translated" : "ocr-done",
+      })
+    },
+    [currentPage, updateBlock]
   )
 
   const currentPageIdx = chapterPages.findIndex((p) => p.id === currentPage?.id)
@@ -460,6 +469,10 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
 
   const handleToggleTypeset = useCallback(() => {
     setShowTypeset((prev) => !prev)
+  }, [])
+
+  const handleToggleJapOverlay = useCallback(() => {
+    setShowJapOverlay((prev) => !prev)
   }, [])
 
   const handleSetBlockClass = useCallback(
@@ -497,8 +510,12 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     onPrevPage: handlePrevPage,
     onNextPage: handleNextPage,
     onSave: () => saveBlocks(true),
+    onUndo: undo,
+    onRedo: redo,
     onToggleViewMode: handleToggleViewMode,
     onToggleTypeset: handleToggleTypeset,
+    onToggleJapCheck: handleToggleJapOverlay,
+    onOcrBlock: handleOcrSingleBlock,
     onSetClass: handleSetBlockClass,
     onDeleteBlock: deleteBlock,
     onMoveBlock: moveBlock,
@@ -579,6 +596,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
           textBlocks={textBlocks}
           selectedId={selectedId}
           showTypeset={showTypeset}
+          showJapOverlay={showJapOverlay}
           pageNumber={currentPage?.page_number}
           hasCleanScan={Boolean(currentPage?.clean_path)}
           viewMode={viewMode}
@@ -618,6 +636,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
             isCleaning={pipelines.isCleaning}
             isRevertingClean={pipelines.isRevertingClean}
             showTypeset={showTypeset}
+            showJapOverlay={showJapOverlay}
             onFullAuto={pipelines.handleFullAuto}
             onAutoDetect={pipelines.handleAutoDetect}
             onOcrAllBlocks={pipelines.handleOcrAllBlocks}
@@ -625,6 +644,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
             onCleanPage={pipelines.handleCleanPage}
             onRevertClean={pipelines.handleRevertClean}
             onToggleTypeset={handleToggleTypeset}
+            onToggleJapOverlay={handleToggleJapOverlay}
           />
 
           <TextBlocksList

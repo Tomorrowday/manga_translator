@@ -20,7 +20,6 @@ export {
   getGlossary,
   addGlossaryItem,
   deleteGlossaryItem,
-  getProjectStats,
   getAllDetailedStats,
   recalculateTitleStats,
 } from "./projects_impl"

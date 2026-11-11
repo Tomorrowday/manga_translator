@@ -1,8 +1,7 @@
 // manga_ui/hooks/use-manga-hotkeys_impl.ts
-// Глобальный слушатель хоткеев с поддержкой смены типов баблов, тайпсета и операций главы
+// Глобальный слушатель хоткеев с поддержкой Undo/Redo (Ctrl+Z / Ctrl+Y), одиночного OCR [O], проверки японского текста [J] и операций со страницей
 
 import { useEffect, useState, useCallback } from "react"
-import type { TextBlock } from "@/lib/types"
 import {
   type HotkeyConfig,
   type HotkeyActionId,
@@ -34,7 +33,6 @@ export function useHotkeysConfig(): UseHotkeysConfigReturn {
         ...prev,
         [action]: { ...prev[action], ...patch },
       }
-      // Вызываем сохранение асинхронно, чтобы не вызывать сайд-эффект в процессе вычисления состояния
       queueMicrotask(() => {
         saveHotkeys(next)
       })
@@ -60,8 +58,12 @@ export function useMangaHotkeys({
   onPrevPage,
   onNextPage,
   onSave,
+  onUndo,
+  onRedo,
   onToggleViewMode,
   onToggleTypeset,
+  onToggleJapCheck,
+  onOcrBlock,
   onSetClass,
   onDeleteBlock,
   onMoveBlock,
@@ -86,6 +88,26 @@ export function useMangaHotkeys({
         target?.isContentEditable
       ) {
         return
+      }
+
+      // 0. Undo / Redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z)
+      const isCtrlOrMeta = e.ctrlKey || e.metaKey
+      if (
+        matchHotkey(e, hotkeys.redoAction) ||
+        (isCtrlOrMeta && e.shiftKey && !e.altKey && e.code === "KeyZ")
+      ) {
+        if (onRedo) {
+          e.preventDefault()
+          onRedo()
+          return
+        }
+      }
+      if (matchHotkey(e, hotkeys.undoAction)) {
+        if (onUndo) {
+          e.preventDefault()
+          onUndo()
+          return
+        }
       }
 
       // 1. Навигация по страницам
@@ -125,7 +147,19 @@ export function useMangaHotkeys({
         }
       }
 
-      // 5. Действия с главой
+      // 5. Включение / выключение японских плашек у баблов (J)
+      if (matchHotkey(e, hotkeys.toggleJapCheck)) {
+        if (onToggleJapCheck) {
+          e.preventDefault()
+          onToggleJapCheck()
+        } else {
+          e.preventDefault()
+          window.dispatchEvent(new CustomEvent("manga-toggle-jap-check"))
+        }
+        return
+      }
+
+      // 6. Действия с главой
       if (matchHotkey(e, hotkeys.chapterDetectAll)) {
         e.preventDefault()
         onChapterDetectAll?.()
@@ -152,7 +186,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 6. Размер кисти (Стрелки вверх/вниз)
+      // 7. Размер кисти (Стрелки вверх/вниз)
       if (matchHotkey(e, hotkeys.brushSizeUp)) {
         if (onBrushResize) {
           e.preventDefault()
@@ -173,7 +207,18 @@ export function useMangaHotkeys({
       const activeBlock = textBlocks.find((b) => b.id === selectedId)
       if (!activeBlock) return
 
-      // 7. Смена типа бабла
+      // 8. Одиночный OCR выбранного бабла [O]
+      if (matchHotkey(e, hotkeys.ocrBlock)) {
+        e.preventDefault()
+        if (onOcrBlock) {
+          onOcrBlock(activeBlock)
+        } else {
+          window.dispatchEvent(new CustomEvent("manga-ocr-selected-block", { detail: { blockId: activeBlock.id } }))
+        }
+        return
+      }
+
+      // 9. Смена типа бабла
       if (matchHotkey(e, hotkeys.setClassBubble)) {
         e.preventDefault()
         onSetClass?.(0) // Бабл
@@ -195,7 +240,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 8. Выбор шрифтов 1..7
+      // 10. Выбор шрифтов 1..7
       for (const font of MANGA_FONTS) {
         const actionKey = `font${font.index}` as HotkeyActionId
         const binding = hotkeys[actionKey]
@@ -206,7 +251,7 @@ export function useMangaHotkeys({
         }
       }
 
-      // 9. Точечный клин
+      // 11. Точечный клин
       if (matchHotkey(e, hotkeys.spotWhiteDel)) {
         e.preventDefault()
         onSpotClean?.(activeBlock, "white", true)
@@ -228,14 +273,14 @@ export function useMangaHotkeys({
         return
       }
 
-      // 10. Удаление бабла
+      // 12. Удаление бабла
       if (matchHotkey(e, hotkeys.deleteBlock)) {
         e.preventDefault()
         onDeleteBlock(selectedId)
         return
       }
 
-      // 11. Порядок чтения
+      // 13. Порядок чтения
       if (matchHotkey(e, hotkeys.moveOrderUp)) {
         e.preventDefault()
         onMoveBlock(selectedId, "up")
@@ -247,7 +292,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 12. Размер шрифта
+      // 14. Размер шрифта
       const currentEffectiveFont = activeBlock.fontSize ?? defaultFontSize
       if (matchHotkey(e, hotkeys.fontSizeDown)) {
         e.preventDefault()
@@ -260,7 +305,7 @@ export function useMangaHotkeys({
         return
       }
 
-      // 13. Геометрия и стили
+      // 15. Геометрия и стили
       if (matchHotkey(e, hotkeys.toggleShape)) {
         e.preventDefault()
         onUpdateBlock(selectedId, { shape: activeBlock.shape === "ellipse" ? "rect" : "ellipse" })
@@ -308,8 +353,12 @@ export function useMangaHotkeys({
     onPrevPage,
     onNextPage,
     onSave,
+    onUndo,
+    onRedo,
     onToggleViewMode,
     onToggleTypeset,
+    onToggleJapCheck,
+    onOcrBlock,
     onSetClass,
     onDeleteBlock,
     onMoveBlock,

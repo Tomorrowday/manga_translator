@@ -1,5 +1,5 @@
 // manga_ui/components/image-viewer_impl.tsx
-// Инструменты разметки баблов и просмотр скана (адаптивная ширина flex-1)
+// Инструменты разметки баблов, режим проверки японского текста (JP Check) и просмотр скана
 
 "use client"
 
@@ -35,6 +35,7 @@ export function ImageViewer({
   textBlocks,
   selectedId,
   showTypeset = false,
+  showJapOverlay,
   showSfx = true,
   pageNumber,
   hasCleanScan = false,
@@ -53,9 +54,27 @@ export function ImageViewer({
 
   const [activeTool, setActiveTool] = useState<"box" | "brush">("box")
   const [brushMode, setBrushMode] = useState<BrushMode>("lama")
+  const [internalJapOverlay, setInternalJapOverlay] = useState<boolean>(false)
 
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState<DrawRect | null>(null)
+
+  const effectiveShowJapOverlay = showJapOverlay !== undefined ? showJapOverlay : internalJapOverlay
+
+  // Синхронизация автономного переключения JP Check через глобальное событие (если проп не передан сверху)
+  useEffect(() => {
+    const handleToggleJapEvent = () => {
+      setInternalJapOverlay((prev) => {
+        const next = !prev
+        queueMicrotask(() => {
+          window.dispatchEvent(new CustomEvent("manga-jap-check-changed", { detail: { value: next } }))
+        })
+        return next
+      })
+    }
+    window.addEventListener("manga-toggle-jap-check", handleToggleJapEvent)
+    return () => window.removeEventListener("manga-toggle-jap-check", handleToggleJapEvent)
+  }, [])
 
   const prevToolRef = useRef(activeTool)
   useEffect(() => {
@@ -367,6 +386,7 @@ export function ImageViewer({
                   index={index}
                   isSelected={box.id === selectedId}
                   showTypeset={showTypeset}
+                  showJapOverlay={effectiveShowJapOverlay}
                   imgElement={imgRef.current}
                   isEditingCurrent={isEditing && editId === box.id}
                   editType={editType}
@@ -440,6 +460,11 @@ export function ImageViewer({
                   {hotkeys.fontSizeDown.label} / {hotkeys.fontSizeUp.label}
                 </kbd>{" "}
                 Font
+                <span className="mx-1 text-slate-700">|</span>
+                <kbd className="rounded bg-slate-800 px-1 py-0.5 font-mono text-amber-300 border border-slate-700">
+                  {hotkeys.toggleJapCheck.label}
+                </kbd>{" "}
+                JP
               </>
             )}
             <span className="mx-1 text-slate-700">|</span>

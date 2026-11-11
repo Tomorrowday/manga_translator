@@ -305,7 +305,7 @@ def _find_best_gutter_cut(
                 roi_strip[by1:by2, left_tip_x1:left_tip_x2] = 255
 
             right_tip_x1 = max(min_c, int((it["x2"] - it["w"] * 0.22) * img_w)) - min_c
-            right_tip_x2 = min(max_c + 1, int(it["x2"] * img_h) + 2) - min_c
+            right_tip_x2 = min(max_c + 1, int(it["x2"] * img_w) + 2) - min_c
             if right_tip_x2 > right_tip_x1:
                 roi_strip[by1:by2, right_tip_x1:right_tip_x2] = 255
 

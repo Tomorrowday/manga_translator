@@ -1,8 +1,8 @@
 // manga_ui/components/translation-toolbar.tsx
 /**
- * Контракт панели действий со страницей (Detect, OCR, Clean, Translate, Typeset).
+ * Контракт панели действий со страницей (Detect, OCR, Clean, Translate, Typeset, JP Check).
  * Реализация: manga_ui/components/translation-toolbar_impl.tsx
- * Зависимости реализации: react, lucide-react (Zap, Wand2, ScanText, PlayCircle, Sparkles, Eye, RotateCcw)
+ * Зависимости реализации: react, lucide-react (Zap, Wand2, ScanText, PlayCircle, Sparkles, Eye, RotateCcw, Languages)
  */
 
 export interface TranslationToolbarProps {
@@ -16,6 +16,7 @@ export interface TranslationToolbarProps {
   isCleaning: boolean
   isRevertingClean: boolean
   showTypeset: boolean
+  showJapOverlay?: boolean
   onFullAuto: () => void
   onAutoDetect: () => void
   onOcrAllBlocks: () => void
@@ -23,6 +24,7 @@ export interface TranslationToolbarProps {
   onCleanPage: (mode?: "auto" | "lama" | "white") => void
   onRevertClean: () => void
   onToggleTypeset: () => void
+  onToggleJapOverlay?: () => void
 }
 
 export { TranslationToolbar } from "./translation-toolbar_impl"

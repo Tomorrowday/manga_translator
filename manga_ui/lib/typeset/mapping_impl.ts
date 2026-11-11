@@ -16,8 +16,8 @@ export function compareMangaBlocks(a: BoxGeometry, b: BoxGeometry): number {
 
   const yDiff = aCenterY - bCenterY
 
-  // Если баблы находятся на одной вертикальной полосе (разница по высоте < 70px)
-  if (Math.abs(yDiff) < 70) {
+  // Координаты нормализованы в диапазоне 0.0 .. 1.0 (0.045 = 4.5% высоты страницы)
+  if (Math.abs(yDiff) < 0.045) {
     const aCenterX = a.x + (a.width ? a.width / 2 : 0)
     const bCenterX = b.x + (b.width ? b.width / 2 : 0)
     // В манге читаем справа налево

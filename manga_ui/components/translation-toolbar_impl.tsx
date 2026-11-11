@@ -1,9 +1,23 @@
 // manga_ui/components/translation-toolbar_impl.tsx
-// Панель действий со страницей: компактная компоновка для изменяемой ширины
+// Панель действий со страницей: компактная компоновка + тумблер JP [J] (режим проверки японского текста под Rikaikun / Yomitan)
 
 "use client"
 
-import { Zap, Wand2, ScanText, PlayCircle, Sparkles, Eye, EyeOff, RotateCcw, Loader2, ChevronDown } from "lucide-react"
+import { useState, useEffect } from "react"
+import {
+  Zap,
+  Wand2,
+  ScanText,
+  PlayCircle,
+  Sparkles,
+  Eye,
+  EyeOff,
+  RotateCcw,
+  Loader2,
+  ChevronDown,
+  Languages,
+} from "lucide-react"
+import { useHotkeysConfig } from "@/hooks/use-manga-hotkeys"
 import type { TranslationToolbarProps } from "./translation-toolbar"
 
 export function TranslationToolbar({
@@ -17,6 +31,7 @@ export function TranslationToolbar({
   isCleaning,
   isRevertingClean,
   showTypeset,
+  showJapOverlay,
   onFullAuto,
   onAutoDetect,
   onOcrAllBlocks,
@@ -24,9 +39,37 @@ export function TranslationToolbar({
   onCleanPage,
   onRevertClean,
   onToggleTypeset,
+  onToggleJapOverlay,
 }: TranslationToolbarProps) {
+  const { hotkeys } = useHotkeysConfig()
+  const [internalJapOverlay, setInternalJapOverlay] = useState(false)
+
+  const isJapActive = showJapOverlay !== undefined ? showJapOverlay : internalJapOverlay
+
+  useEffect(() => {
+    const syncEvent = (e: Event) => {
+      const custom = e as CustomEvent<{ value?: boolean }>
+      if (custom.detail?.value !== undefined) {
+        setInternalJapOverlay(custom.detail.value)
+      }
+    }
+    window.addEventListener("manga-jap-check-changed", syncEvent)
+    return () => window.removeEventListener("manga-jap-check-changed", syncEvent)
+  }, [])
+
+  const handleToggleJapClick = () => {
+    if (onToggleJapOverlay) {
+      onToggleJapOverlay()
+    } else {
+      window.dispatchEvent(new CustomEvent("manga-toggle-jap-check"))
+    }
+  }
+
   const isAnyActionRunning =
     isFullAuto || isDetecting || isOcrRunning || isBatchTranslating || isCleaning || isRevertingClean
+
+  const japKeyLabel = hotkeys.toggleJapCheck?.label || "J"
+  const typesetKeyLabel = hotkeys.toggleTypeset?.label || "T"
 
   return (
     <header className="flex flex-wrap items-center justify-between border-b border-slate-800 px-3 py-2.5 gap-2 shrink-0 bg-slate-950/40">
@@ -146,6 +189,23 @@ export function TranslationToolbar({
           3. Trans
         </button>
 
+        {/* JP CHECK TOGGLE (под Rikaikun / Yomitan) */}
+        <button
+          type="button"
+          onClick={handleToggleJapClick}
+          disabled={!hasCurrentPage}
+          className={[
+            "flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors border disabled:opacity-50",
+            isJapActive
+              ? "bg-amber-500/25 border-amber-500/70 text-amber-200 shadow-sm"
+              : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200",
+          ].join(" ")}
+          title={`Показать/скрыть выделяемый японский текст рядом с баблами для Rikaikun / Yomitan [${japKeyLabel}]`}
+        >
+          <Languages className="h-3.5 w-3.5 text-amber-400" />
+          JP [{japKeyLabel}]
+        </button>
+
         {/* 4. TYPESET TOGGLE */}
         <button
           onClick={onToggleTypeset}
@@ -155,7 +215,7 @@ export function TranslationToolbar({
               ? "bg-indigo-600/30 border-indigo-500/60 text-indigo-300"
               : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200",
           ].join(" ")}
-          title="Включить/выключить предпросмотр тайпсета на скане [T]"
+          title={`Включить/выключить предпросмотр тайпсета на скане [${typesetKeyLabel}]`}
         >
           {showTypeset ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
           {showTypeset ? "ON" : "OFF"}

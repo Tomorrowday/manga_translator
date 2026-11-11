@@ -1,6 +1,6 @@
 // manga_ui/components/image-viewer/bubble-overlay-item.tsx
 /**
- * Контракт наложения интерактивного бабла на скан (трансформация, инлайн-редактирование, тайпсет).
+ * Контракт наложения интерактивного бабла на скан (трансформация, инлайн-редактирование, тайпсет, плашка японского оригинала).
  * Реализация: manga_ui/components/image-viewer/bubble-overlay-item_impl.tsx
  * Зависимости реализации: react, lucide-react (RotateCw), @/lib/types (TextBlock),
  *                         @/lib/typeset (layoutBubbleTextLines), @/hooks/use-box-transform
@@ -15,6 +15,7 @@ export interface BubbleOverlayItemProps {
   index: number
   isSelected: boolean
   showTypeset: boolean
+  showJapOverlay?: boolean
   imgElement: HTMLImageElement | null
   isEditingCurrent: boolean
   editType: EditAction | null

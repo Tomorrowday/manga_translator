@@ -1,8 +1,8 @@
 // manga_ui/hooks/use-page-blocks.ts
 /**
- * Контракт хука управления текстовыми блоками страницы (сохранение, редактирование, клин).
+ * Контракт хука управления текстовыми блоками страницы (сохранение, редактирование, клин, стек Undo/Redo).
  * Реализация: manga_ui/hooks/use-page-blocks_impl.ts
- * Зависимости реализации: react, @/lib/types, @/lib/typeset, @/lib/api (savePageBlocks, runSpotClean)
+ * Зависимости реализации: react, @/lib/types, @/lib/typeset, @/lib/api (savePageBlocks, runSpotClean, undoLastCleanStep)
  */
 
 import type { TextBlock, PageItem, PageStatus, TitleSettings } from "@/lib/types"
@@ -24,6 +24,11 @@ export interface UsePageBlocksReturn {
   setSelectedId: (id: string | null) => void
   isSaving: boolean
   isDirtyRef: React.MutableRefObject<boolean>
+  canUndo: boolean
+  canRedo: boolean
+  undo: () => Promise<void>
+  redo: () => void
+  recordCleanAction: () => void
   saveBlocks: (refreshSpeakers?: boolean) => Promise<void>
   saveBlocksExplicit: (targetPageId: number, blocksToSave: TextBlock[], refreshSpeakers?: boolean) => Promise<void>
   setNewPageBlocks: (newBlocks: TextBlock[]) => void

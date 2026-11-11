@@ -42,7 +42,6 @@ CACHE_DIR.mkdir(exist_ok=True)
 os.environ["HF_HOME"] = str(CACHE_DIR / "huggingface")
 os.environ["TORCH_HOME"] = str(CACHE_DIR / "torch")
 os.environ["YOLO_CONFIG_DIR"] = str(CACHE_DIR / "ultralytics")
-os.environ["TORCH_HOME"] = str(CACHE_DIR / "torch")
 
 # Оффлайн-режим для huggingface/transformers
 os.environ["TRANSFORMERS_OFFLINE"] = "0"
@@ -83,9 +82,8 @@ def get_available_detectors() -> Dict[str, str]:
 
 
 def get_available_cleaners() -> Dict[str, str]:
-    """Сканирует папку weights/clean-lama/*.pt для выбора модели Inpainting."""
+    """Сканирует папку weights/clean-lama/*.pt и weights/*lama*.pt для выбора модели Inpainting."""
     cleaners: Dict[str, str] = {}
-    cleaners["simple_lama"] = "SimpleLama (Библиотека)"
 
     lama_files = sorted(list(CLEAN_MODELS_DIR.glob("*.pt")), key=lambda p: p.name.lower())
     for f in lama_files:
@@ -95,6 +93,9 @@ def get_available_cleaners() -> Dict[str, str]:
     for f in root_lama:
         if f.name not in cleaners:
             cleaners[f.name] = f.name
+
+    if not cleaners:
+        cleaners["anime-manga-big-lama.pt"] = "anime-manga-big-lama.pt"
 
     return cleaners
 

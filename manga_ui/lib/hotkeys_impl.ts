@@ -13,8 +13,11 @@ export const DEFAULT_HOTKEYS: HotkeyConfig = {
   prevPage: { code: "KeyQ", label: "Q", name: "Предыдущая страница", category: "navigation" },
   nextPage: { code: "KeyE", label: "E", name: "Следующая страница", category: "navigation" },
   savePage: { code: "KeyS", ctrl: true, label: "Ctrl+S", name: "Сохранить страницу", category: "navigation" },
+  undoAction: { code: "KeyZ", ctrl: true, label: "Ctrl+Z", name: "Отменить действие (Undo)", category: "navigation" },
+  redoAction: { code: "KeyY", ctrl: true, label: "Ctrl+Y", name: "Повторить действие (Redo)", category: "navigation" },
   toggleViewMode: { code: "Tab", label: "Tab", name: "Оригинал / Клин", category: "navigation" },
   toggleTypeset: { code: "KeyT", label: "T", name: "Вкл/Выкл Тайпсет", category: "navigation" },
+  toggleJapCheck: { code: "KeyJ", label: "J", name: "Вкл/Выкл Японский текст у баблов", category: "navigation" },
 
   // Быстрый выбор шрифтов 1..7
   font1: { code: "Digit1", label: "1", name: "Шрифт: CCFaceFront", category: "font" },
@@ -27,7 +30,8 @@ export const DEFAULT_HOTKEYS: HotkeyConfig = {
   fontSizeUp: { code: "Equal", label: "+", name: "Увеличить шрифт", category: "font" },
   fontSizeDown: { code: "Minus", label: "-", name: "Уменьшить шрифт", category: "font" },
 
-  // Стили и типы бабла
+  // Стили, OCR и типы бабла
+  ocrBlock: { code: "KeyO", label: "O", name: "Распознать OCR бабла", category: "bubble" },
   setClassBubble: { code: "KeyC", label: "C", name: "Класс: Бабл (0)", category: "bubble" },
   setClassThought: { code: "KeyV", label: "V", name: "Класс: Мысли (1)", category: "bubble" },
   setClassText: { code: "KeyG", label: "G", name: "Класс: Текст (2)", category: "bubble" },
@@ -60,6 +64,7 @@ export const DEFAULT_HOTKEYS: HotkeyConfig = {
 }
 
 export function matchHotkey(e: KeyboardEvent, binding: HotkeyBinding): boolean {
+  if (!binding) return false
   const reqCtrl = Boolean(binding.ctrl)
   const reqShift = Boolean(binding.shift)
   const reqAlt = Boolean(binding.alt)
@@ -142,7 +147,6 @@ export function saveHotkeys(config: HotkeyConfig) {
   if (typeof window === "undefined") return
   try {
     localStorage.setItem(HOTKEYS_STORAGE_KEY, JSON.stringify(config))
-    // Асинхронная отправка события предотвращает ошибку вызова setState во время рендеринга других компонентов
     queueMicrotask(() => {
       window.dispatchEvent(new Event(HOTKEYS_UPDATED_EVENT))
     })

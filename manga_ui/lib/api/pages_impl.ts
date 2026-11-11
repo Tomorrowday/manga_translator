@@ -1,5 +1,5 @@
 // manga_ui/lib/api/pages_impl.ts
-// Реализация API запросов для страниц, баблов и взаимодействия с бэкендом
+// Реализация API запросов для страниц, баблов, пошагового отката клина и взаимодействия с бэкендом
 
 import type { PageItem } from "../types"
 import { API_BASE_URL, handleApiResponse } from "./client"
@@ -71,6 +71,7 @@ export async function savePageBlocks(
   pageId: number,
   blocks: Array<{
     id: string
+    class_id?: number
     x: number
     y: number
     width: number
@@ -113,6 +114,13 @@ export async function revertCleanPage(pageId: number) {
     method: "DELETE",
   })
   return await handleApiResponse<any>(res, "Ошибка отката клина")
+}
+
+export async function undoLastCleanStep(pageId: number) {
+  const res = await fetch(`${API_BASE_URL}/api/pages/${pageId}/undo-clean`, {
+    method: "POST",
+  })
+  return await handleApiResponse<any>(res, "Ошибка отката последнего шага клина")
 }
 
 export async function runSpotClean(
