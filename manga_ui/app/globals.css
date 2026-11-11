@@ -1,7 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Balsamiq+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Comfortaa:wght@700&family=Neucha&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@import 'shadcn/tailwind.css';
 
 /* Класс для комиксного шрифта речи */
 .font-manga-speech {
