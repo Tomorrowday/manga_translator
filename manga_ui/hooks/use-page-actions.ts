@@ -1,9 +1,9 @@
 // manga_ui/hooks/use-page-actions.ts
-// Действия над текущей страницей: кисть, OCR одного блока, экспорт JSON, смена класса бабла
+// Действия над текущей страницей: кисть, OCR одного блока, смена класса бабла
 
 import { useCallback } from "react"
 import type { PageItem, PageStatus, TextBlock, TitleSettings } from "@/lib/types"
-import { exportChapterScriptToFolder, resetChapterBubbleFonts, runBrushClean, runOcr } from "@/lib/api"
+import { resetChapterBubbleFonts, runBrushClean, runOcr } from "@/lib/api"
 
 export interface UsePageActionsProps {
   currentPage: PageItem | null
@@ -28,7 +28,6 @@ export interface UsePageActionsReturn {
   handleBrushClean: (maskBase64: string, mode?: "lama" | "white" | "black") => Promise<void>
   handleOcrSingleBlock: (block: TextBlock) => Promise<void>
   handleSetBlockClass: (classId: number) => void
-  handleChapterExportJson: () => Promise<void>
   handleApplyFontSizeToChapter: () => Promise<void>
   handleBrushResize: (delta: number) => void
   handleToggleViewMode: () => void
@@ -130,17 +129,6 @@ export function usePageActions({
     }
   }, [currentPage?.chapter_id, chapterPages, titleFontSize, setTextBlocks, setIsApplyingChapterFont])
 
-  const handleChapterExportJson = useCallback(async () => {
-    const chId = chapterPages[0]?.chapter_id
-    if (!chId) return
-    try {
-      const res = await exportChapterScriptToFolder(chId)
-      alert(`Скрипты диалогов и контекста сохранены:\n${res.saved_path}`)
-    } catch (e) {
-      alert("Ошибка экспорта JSON: " + String(e))
-    }
-  }, [chapterPages])
-
   const handleBrushResize = useCallback((delta: number) => {
     setBrushSize((prev) => Math.max(6, Math.min(160, prev + delta)))
   }, [setBrushSize])
@@ -163,7 +151,6 @@ export function usePageActions({
     handleBrushClean,
     handleOcrSingleBlock,
     handleSetBlockClass,
-    handleChapterExportJson,
     handleApplyFontSizeToChapter,
     handleBrushResize,
     handleToggleViewMode,

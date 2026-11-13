@@ -46,6 +46,35 @@ export function useCardRusEditor({
 
   const rusTextareaRef = useRef<HTMLTextAreaElement>(null)
   const snapshotLinesRef = useRef<string[]>([])
+  const handledPageImageRef = useRef<HTMLImageElement | null>(null)
+  const [pageImageTick, setPageImageTick] = useState(0)
+
+  // Скан страницы может быть ещё не загружен в момент первого расчёта строк.
+  // Дожидаемся события load у img[alt='Manga page'], чтобы renderedLines
+  // пересчитались с реальными naturalWidth / naturalHeight вместо дефолтных 1100x1600.
+  useEffect(() => {
+    if (typeof document === "undefined") return
+
+    const bumpLines = () => setPageImageTick((tick) => tick + 1)
+    const imgEl = document.querySelector<HTMLImageElement>("img[alt='Manga page']")
+    if (!imgEl) return
+
+    if (imgEl.complete) {
+      // Строки могли посчитаться до загрузки скана — форсируем один пересчёт.
+      if (handledPageImageRef.current !== imgEl) {
+        handledPageImageRef.current = imgEl
+        bumpLines()
+      }
+      return
+    }
+
+    const handleLoad = () => {
+      handledPageImageRef.current = imgEl
+      bumpLines()
+    }
+    imgEl.addEventListener("load", handleLoad)
+    return () => imgEl.removeEventListener("load", handleLoad)
+  }, [block.id])
 
   const renderedLines = useMemo(() => {
     if (typeof document === "undefined") return (block.rusText || "").split(/\r?\n/)
@@ -92,6 +121,7 @@ export function useCardRusEditor({
     block.isItalic,
     block.minHyphens,
     defaultFontSize,
+    pageImageTick,
   ])
 
   useEffect(() => {

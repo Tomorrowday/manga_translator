@@ -67,6 +67,22 @@ app.include_router(pages.router)
 app.include_router(chapters.router)
 
 
+# В main.py добавить фильтр логов для uvicorn.access:
+class IgnoreExternalPollsFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return "/health" not in msg and "/v1/models" not in msg
+
+logging.getLogger("uvicorn.access").addFilter(IgnoreExternalPollsFilter())
+
+
 @app.get("/")
+@app.get("/health")
 def health_check():
     return {"status": "ok", "service": "Manga Translator BFF"}
+
+
+@app.get("/v1/models")
+def openai_models_stub():
+    """Заглушка для внешних AI-расширений (Kilo Code и др.), опрашивающих порт 8000."""
+    return {"object": "list", "data": []}

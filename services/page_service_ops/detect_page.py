@@ -20,11 +20,10 @@ def detect_page_bubbles_service(
     conf_override: Optional[float] = None,
     auto_oval_override: Optional[bool] = None
 ) -> Tuple[List[Dict[str, Any]], str, float]:
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
-    row = cursor.fetchone()
-    conn.close()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path, status FROM pages WHERE id = ?", (page_id,))
+        row = cursor.fetchone()
 
     if not row or not os.path.exists(str(row["file_path"])):
         raise ValueError("Файл не найден на диске")

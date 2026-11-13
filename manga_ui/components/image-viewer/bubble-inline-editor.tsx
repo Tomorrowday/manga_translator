@@ -50,10 +50,23 @@ export function BubbleInlineEditor({
   )
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const snapshotLinesOnOpenRef = useRef<string[]>([...editableLines])
+  const editableLinesRef = useRef<string[]>(editableLines)
+  editableLinesRef.current = editableLines
 
   useEffect(() => {
-    textareaRef.current?.focus()
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.focus()
+    const len = ta.value.length
+    ta.setSelectionRange(len, len)
   }, [])
+
+  // Синхронизация при внешнем изменении текста бабла (например, после Undo / Ctrl+Z)
+  useEffect(() => {
+    const lines = editableLinesRef.current
+    setLocalText(lines.length > 0 ? lines.join("\n") : box.rusText || "")
+    snapshotLinesOnOpenRef.current = [...lines]
+  }, [box.rusText])
 
   const commitInlineEdit = () => {
     onClose()

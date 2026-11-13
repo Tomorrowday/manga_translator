@@ -18,7 +18,7 @@ export interface ImageViewerProps {
   textBlocks: TextBlock[]
   selectedId: string | null
   showTypeset?: boolean
-  showJapOverlay?: boolean
+  showJapOverlay: boolean
   pageNumber?: number
   hasCleanScan?: boolean
   viewMode: "original" | "clean"

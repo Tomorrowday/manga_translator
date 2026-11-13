@@ -93,25 +93,22 @@ export function usePageNavigation({
             false
           )
           if (detectRes?.boxes?.length) {
-            const fresh: TextBlock[] = detectRes.boxes.map((box: any) => ({
-              id: box.id || crypto.randomUUID(),
-              class_id: box.class_id ?? 0,
-              x: box.x,
-              y: box.y,
-              width: box.width,
-              height: box.height,
-              rotation: 0,
-              japText: box.jap_text || "",
-              rusText: "",
-              orderIndex: box.order_index,
-              fontSize: undefined,
-              fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
-              textColor: "black",
-              shape: "rect",
-              paddingMode: (box.padding_mode as TextBlock["paddingMode"]) || globalSettings.default_padding || "safe",
-              minHyphens: box.min_hyphens !== undefined ? Boolean(box.min_hyphens) : (globalSettings.default_hyphenation ?? true),
-              status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
-            }))
+            const fresh: TextBlock[] = detectRes.boxes.map((box: any) => {
+              const mapped = mapDbBlockToTextBlock(box)
+              return {
+                ...mapped,
+                id: box.id !== undefined && box.id !== null ? mapped.id : crypto.randomUUID(),
+                fontFamily: box.font_family || globalSettings.font_bubble || mapped.fontFamily,
+                paddingMode:
+                  (box.padding_mode as TextBlock["paddingMode"]) ||
+                  globalSettings.default_padding ||
+                  mapped.paddingMode,
+                minHyphens:
+                  box.min_hyphens !== undefined
+                    ? Boolean(box.min_hyphens)
+                    : (globalSettings.default_hyphenation ?? mapped.minHyphens),
+              }
+            })
             setNewPageBlocks(fresh)
             if (fresh[0]) setSelectedId(fresh[0].id)
             onPageStatusUpdate(page.id, "detected")

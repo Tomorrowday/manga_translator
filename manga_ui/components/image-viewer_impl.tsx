@@ -16,10 +16,6 @@ import { ViewerHeaderToolbar } from "@/components/image-viewer/viewer-header-too
 import { ViewerFooterHints } from "@/components/image-viewer/viewer-footer-hints"
 import type { ImageViewerProps } from "./image-viewer"
 
-interface ExtendedImageViewerProps extends ImageViewerProps {
-  showSfx?: boolean
-}
-
 function normalize(a: number, b: number) {
   return { start: Math.min(a, b), size: Math.abs(a - b) }
 }
@@ -30,7 +26,6 @@ export function ImageViewer({
   selectedId,
   showTypeset = false,
   showJapOverlay,
-  showSfx = true,
   pageNumber,
   hasCleanScan = false,
   viewMode,
@@ -42,33 +37,15 @@ export function ImageViewer({
   onDrawComplete,
   onUpdateBlock,
   onBrushClean,
-}: ExtendedImageViewerProps) {
+}: ImageViewerProps) {
   const imgRef = useRef<HTMLImageElement>(null)
   const { hotkeys } = useHotkeysConfig()
 
   const [activeTool, setActiveTool] = useState<"box" | "brush">("box")
   const [brushMode, setBrushMode] = useState<BrushMode>("lama")
-  const [internalJapOverlay, setInternalJapOverlay] = useState<boolean>(false)
 
   const [origin, setOrigin] = useState<{ x: number; y: number } | null>(null)
   const [draft, setDraft] = useState<DrawRect | null>(null)
-
-  const effectiveShowJapOverlay = showJapOverlay !== undefined ? showJapOverlay : internalJapOverlay
-
-  // Синхронизация автономного переключения JP Check через глобальное событие (если проп не передан сверху)
-  useEffect(() => {
-    const handleToggleJapEvent = () => {
-      setInternalJapOverlay((prev) => {
-        const next = !prev
-        queueMicrotask(() => {
-          window.dispatchEvent(new CustomEvent("manga-jap-check-changed", { detail: { value: next } }))
-        })
-        return next
-      })
-    }
-    window.addEventListener("manga-toggle-jap-check", handleToggleJapEvent)
-    return () => window.removeEventListener("manga-toggle-jap-check", handleToggleJapEvent)
-  }, [])
 
   const prevToolRef = useRef(activeTool)
   useEffect(() => {
@@ -158,9 +135,8 @@ export function ImageViewer({
   }
 
   const visibleBoxes = useMemo(() => {
-    const filtered = showSfx ? textBlocks : textBlocks.filter((b) => (b.class_id ?? 0) !== 3)
-    return draft ? [...filtered, { id: "__draft__", ...draft } as TextBlock] : filtered
-  }, [textBlocks, showSfx, draft])
+    return draft ? [...textBlocks, { id: "__draft__", ...draft } as TextBlock] : textBlocks
+  }, [textBlocks, draft])
 
   return (
     <section className="flex min-h-0 flex-1 min-w-0 flex-col overflow-hidden">
@@ -249,7 +225,7 @@ export function ImageViewer({
                   index={index}
                   isSelected={box.id === selectedId}
                   showTypeset={showTypeset}
-                  showJapOverlay={effectiveShowJapOverlay}
+                  showJapOverlay={showJapOverlay}
                   imgElement={imgRef.current}
                   isEditingCurrent={isEditing && editId === box.id}
                   editType={editType}

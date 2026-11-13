@@ -16,7 +16,7 @@ export interface TranslationToolbarProps {
   isCleaning: boolean
   isRevertingClean: boolean
   showTypeset: boolean
-  showJapOverlay?: boolean
+  showJapOverlay: boolean
   onFullAuto: () => void
   onAutoDetect: () => void
   onOcrAllBlocks: () => void
@@ -24,7 +24,7 @@ export interface TranslationToolbarProps {
   onCleanPage: (mode?: "auto" | "lama" | "white") => void
   onRevertClean: () => void
   onToggleTypeset: () => void
-  onToggleJapOverlay?: () => void
+  onToggleJapOverlay: () => void
 }
 
 export { TranslationToolbar } from "./translation-toolbar_impl"

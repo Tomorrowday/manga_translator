@@ -11,24 +11,22 @@ from logger import logger
 
 
 def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[str, str, Dict[str, int]]:
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
-    page_row = cursor.fetchone()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
+        page_row = cursor.fetchone()
 
-    if not page_row or not os.path.exists(str(page_row["file_path"])):
-        conn.close()
-        raise ValueError("Файл страницы не найден")
+        if not page_row or not os.path.exists(str(page_row["file_path"])):
+            raise ValueError("Файл страницы не найден")
+
+        cursor.execute(
+            "SELECT x, y, width, height, shape, rotation, rus_text, class_id FROM text_blocks WHERE page_id = ?",
+            (page_id,)
+        )
+        blocks = [dict(r) for r in cursor.fetchall()]
 
     cfg = get_active_global_settings()
     clean_model_name = cfg.get("clean_model") or "anime-manga-big-lama.pt"
-
-    cursor.execute(
-        "SELECT x, y, width, height, shape, rotation, rus_text, class_id FROM text_blocks WHERE page_id = ?",
-        (page_id,)
-    )
-    blocks = [dict(r) for r in cursor.fetchall()]
-    conn.close()
 
     if not blocks:
         raise ValueError("Нет размеченных баблов для очистки")
@@ -79,30 +77,29 @@ def clean_page_bubbles_service(page_id: int, clean_mode: str = "auto") -> Tuple[
 
 
 def revert_page_clean_service(page_id: int) -> str:
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
-    page_row = cursor.fetchone()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path, clean_path, status FROM pages WHERE id = ?", (page_id,))
+        page_row = cursor.fetchone()
 
-    if not page_row:
-        conn.close()
-        raise ValueError("Страница не найдена")
+        if not page_row:
+            raise ValueError("Страница не найдена")
 
-    clean_path_raw = page_row["clean_path"]
-    if clean_path_raw:
-        clean_path = str(clean_path_raw)
-        if os.path.exists(clean_path):
-            try:
-                os.remove(clean_path)
-                logger.info(f"Файл клина удален: {clean_path}")
-            except Exception as e:
-                logger.warning(f"Не удалось удалить файл {clean_path}: {e}")
+        clean_path_raw = page_row["clean_path"]
+        if clean_path_raw:
+            clean_path = str(clean_path_raw)
+            if os.path.exists(clean_path):
+                try:
+                    os.remove(clean_path)
+                    logger.info(f"Файл клина удален: {clean_path}")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить файл {clean_path}: {e}")
 
-    cursor.execute("SELECT jap_text, rus_text FROM text_blocks WHERE page_id = ?", (page_id,))
-    blocks = cursor.fetchall()
-    conn.close()
+        cursor.execute("SELECT jap_text, rus_text FROM text_blocks WHERE page_id = ?", (page_id,))
+        blocks = cursor.fetchall()
 
-    has_rus = any(bool(b["rus_text"] and b["rus_text"].strip()) for b in blocks)
+        has_rus = any(bool(b["rus_text"] and b["rus_text"].strip()) for b in blocks)
+
     new_status = "translated" if has_rus else "detected" if blocks else "raw"
 
     with db_session() as cur:

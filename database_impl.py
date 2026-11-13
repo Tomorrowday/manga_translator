@@ -2,11 +2,13 @@
 # Реализация подключения к SQLite (с режимом WAL и таймаутом), миграций схемы и транзакций
 
 import sqlite3
+from typing import Iterator
 from contextlib import contextmanager
 from config import DB_PATH
 
 
-def get_db() -> sqlite3.Connection:
+def _create_connection() -> sqlite3.Connection:
+    """Создаёт новое соединение с SQLite (WAL, таймаут, внешние ключи)."""
     conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -16,17 +18,25 @@ def get_db() -> sqlite3.Connection:
 
 
 @contextmanager
-def db_session():
-    conn = get_db()
-    cursor = conn.cursor()
+def get_db() -> Iterator[sqlite3.Connection]:
+    """Контекстный менеджер соединения SQLite: гарантированно закрывает его при выходе."""
+    conn = _create_connection()
     try:
-        yield cursor
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+        yield conn
     finally:
         conn.close()
+
+
+@contextmanager
+def db_session():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        try:
+            yield cursor
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def init_db():

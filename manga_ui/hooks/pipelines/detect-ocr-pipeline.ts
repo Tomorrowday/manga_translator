@@ -2,6 +2,7 @@
 // Авто-детекция баблов и массовое OCR всех рамок страницы
 
 import type { TextBlock } from "@/lib/types"
+import { mapDbBlockToTextBlock } from "@/lib/typeset"
 import { releaseVram, runOcr, runPageAutoDetect } from "@/lib/api"
 import { runConcurrent } from "./concurrent-pool"
 import type { PagePipelineContext } from "./types"
@@ -42,25 +43,22 @@ export async function executeAutoDetect(ctx: PagePipelineContext): Promise<void>
       return
     }
 
-    const newBlocks: TextBlock[] = boxes.map((box: any) => ({
-      id: box.id || crypto.randomUUID(),
-      class_id: box.class_id ?? 0,
-      x: box.x,
-      y: box.y,
-      width: box.width,
-      height: box.height,
-      rotation: 0,
-      japText: box.jap_text || "",
-      rusText: "",
-      orderIndex: box.order_index,
-      fontSize: box.font_size !== undefined && box.font_size !== null ? Number(box.font_size) : undefined,
-      fontFamily: box.font_family || globalSettings.font_bubble || "v_CCFaceFront",
-      textColor: "black",
-      shape: "rect",
-      paddingMode: box.padding_mode || globalSettings.default_padding || "safe",
-      minHyphens: box.min_hyphens !== undefined ? Boolean(box.min_hyphens) : (globalSettings.default_hyphenation ?? true),
-      status: (box.status as TextBlock["status"]) || (box.jap_text ? "ocr-done" : "new"),
-    }))
+    const newBlocks: TextBlock[] = boxes.map((box: any) => {
+      const mapped = mapDbBlockToTextBlock(box)
+      return {
+        ...mapped,
+        id: box.id !== undefined && box.id !== null ? mapped.id : crypto.randomUUID(),
+        fontFamily: box.font_family || globalSettings.font_bubble || mapped.fontFamily,
+        paddingMode:
+          (box.padding_mode as TextBlock["paddingMode"]) ||
+          globalSettings.default_padding ||
+          mapped.paddingMode,
+        minHyphens:
+          box.min_hyphens !== undefined
+            ? Boolean(box.min_hyphens)
+            : (globalSettings.default_hyphenation ?? mapped.minHyphens),
+      }
+    })
 
     setTextBlocks(newBlocks)
     textBlocksRef.current = newBlocks

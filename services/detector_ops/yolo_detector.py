@@ -33,7 +33,7 @@ def detect_and_filter_bubbles(
 
     img_width, img_height = image.size
 
-    with torch.inference_mode():
+    with ml.lock, torch.inference_mode():
         results = yolo.predict(image, conf=conf_threshold, verbose=False)
         raw_items = []
         for box in results[0].boxes:

@@ -24,6 +24,7 @@ import { usePageNavigation } from "@/hooks/use-page-navigation"
 import { useMangaSettings } from "@/hooks/use-manga-settings"
 import { useMangaPageState } from "@/hooks/use-manga-page-state"
 import { usePageActions } from "@/hooks/use-page-actions"
+import { useBatchChapterActions } from "@/hooks/use-batch-chapter-actions"
 import type { MangaTranslatorProps } from "./manga-translator"
 
 export function MangaTranslator(_props: MangaTranslatorProps) {
@@ -118,6 +119,22 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     }
   }, [currentPage?.chapter_id, blocks.clearBlocks])
 
+  // Пакетные действия главы подняты в родителя: одни и те же обработчики
+  // используются панелью <BatchChapterActions /> и глобальными хоткеями (Alt+D/C/E/J/I).
+  const batchChapterProps = {
+    pages: chapterPages,
+    currentPageId: currentPage?.id ?? null,
+    titleDefaultFontSize: settings.titleFontSize,
+    onSaveCurrentPage: () => blocks.saveBlocks(true),
+    onPageStatusUpdate: pageState.handlePageStatusUpdate,
+    onCompleteBatch: () => setSidebarRefreshTrigger((prev) => prev + 1),
+    onRefreshCurrent: () => {
+      if (currentPage) navigation.handleSelectPage(currentPage, true)
+    },
+  }
+
+  const batchActions = useBatchChapterActions(batchChapterProps)
+
   useMangaHotkeys({
     selectedId: blocks.selectedId,
     textBlocks: blocks.textBlocks,
@@ -137,7 +154,11 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
     onUpdateBlock: blocks.updateBlock,
     onSpotClean: blocks.spotCleanBlock,
     onBrushResize: actions.handleBrushResize,
-    onChapterExportJson: actions.handleChapterExportJson,
+    onChapterDetectAll: batchActions.detectAll,
+    onChapterCleanAll: batchActions.cleanChapter,
+    onChapterExportAll: batchActions.exportAll,
+    onChapterExportJson: batchActions.handleExportScript,
+    onChapterImportJson: batchActions.handleImportClick,
   })
 
   const currentSpeakers = blocks.textBlocks.map((b) => b.speaker?.trim()).filter((s): s is string => !!s)
@@ -183,17 +204,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
         onOpenStatistics={() => setShowStatisticsModal(true)}
       />
 
-      <BatchChapterActions
-        pages={chapterPages}
-        currentPageId={currentPage?.id ?? null}
-        titleDefaultFontSize={settings.titleFontSize}
-        onSaveCurrentPage={() => blocks.saveBlocks(true)}
-        onPageStatusUpdate={pageState.handlePageStatusUpdate}
-        onCompleteBatch={() => setSidebarRefreshTrigger((prev) => prev + 1)}
-        onRefreshCurrent={() => {
-          if (currentPage) navigation.handleSelectPage(currentPage, true)
-        }}
-      />
+      <BatchChapterActions {...batchChapterProps} controller={batchActions} />
 
       <div className="flex min-h-0 flex-1 overflow-hidden relative">
         <Sidebar

@@ -5,10 +5,18 @@
 
 import { Wand2, Languages, Sparkles, Download, Loader2, Layers3, Check, FileDown, FileUp } from "lucide-react"
 import { useBatchChapterActions } from "@/hooks/use-batch-chapter-actions"
-import type { BatchChapterActionsProps, BatchAction } from "./batch-chapter-actions"
+import type {
+  BatchChapterActionsProps,
+  BatchChapterActionsController,
+  BatchAction,
+} from "./batch-chapter-actions"
 
-export function BatchChapterActions(props: BatchChapterActionsProps) {
-  const { pages } = props
+interface BatchChapterActionsViewProps {
+  pages: BatchChapterActionsProps["pages"]
+  controller: BatchChapterActionsController
+}
+
+function BatchChapterActionsView({ pages, controller }: BatchChapterActionsViewProps) {
   const {
     progress,
     justFinished,
@@ -22,7 +30,7 @@ export function BatchChapterActions(props: BatchChapterActionsProps) {
     handleExportScript,
     handleImportClick,
     handleImportScriptFile,
-  } = useBatchChapterActions(props)
+  } = controller
 
   const buttons: Array<{ key: BatchAction; label: string; icon: typeof Wand2; onClick: () => void; accent: string }> = [
     { key: "detect", label: "Detect & OCR All", icon: Wand2, onClick: detectAll, accent: "text-indigo-400" },
@@ -124,4 +132,16 @@ export function BatchChapterActions(props: BatchChapterActionsProps) {
       </div>
     </div>
   )
+}
+
+function BatchChapterActionsWithHook(props: BatchChapterActionsProps) {
+  const controller = useBatchChapterActions(props)
+  return <BatchChapterActionsView pages={props.pages} controller={controller} />
+}
+
+export function BatchChapterActions(props: BatchChapterActionsProps) {
+  if (props.controller) {
+    return <BatchChapterActionsView pages={props.pages} controller={props.controller} />
+  }
+  return <BatchChapterActionsWithHook {...props} />
 }

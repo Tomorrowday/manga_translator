@@ -44,5 +44,8 @@ def open_translated_folder(page_id: int):
 
     translated_dir = os.path.join(os.path.dirname(row["file_path"]), "translated")
     os.makedirs(translated_dir, exist_ok=True)
-    subprocess.Popen(f'explorer "{translated_dir}"')
+    if hasattr(os, "startfile"):
+        os.startfile(translated_dir)
+    else:
+        subprocess.Popen(["explorer", translated_dir])
     return {"success": True}

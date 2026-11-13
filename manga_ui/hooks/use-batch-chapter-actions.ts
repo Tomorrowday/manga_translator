@@ -19,7 +19,12 @@ import {
   pickAndImportChapterScript,
 } from "@/lib/api"
 import { loadImage, bakePageBlob, mapDbBlockToTextBlock } from "@/lib/typeset"
-import type { BatchChapterActionsProps, BatchAction, BatchProgress } from "@/components/batch-chapter-actions"
+import type {
+  BatchChapterActionsProps,
+  BatchChapterActionsController,
+  BatchAction,
+  BatchProgress,
+} from "@/components/batch-chapter-actions"
 
 const ACTION_LABELS: Record<BatchAction, string> = {
   detect: "Detecting & OCR",
@@ -30,20 +35,7 @@ const ACTION_LABELS: Record<BatchAction, string> = {
   "script-import": "Importing JSON script...",
 }
 
-export interface UseBatchChapterActionsReturn {
-  progress: BatchProgress | null
-  justFinished: BatchAction | null
-  fileInputRef: React.RefObject<HTMLInputElement | null>
-  isRunning: boolean
-  percent: number
-  detectAll: () => void
-  cleanChapter: () => void
-  translateChapter: () => Promise<void>
-  exportAll: () => Promise<void>
-  handleExportScript: () => Promise<void>
-  handleImportClick: () => Promise<void>
-  handleImportScriptFile: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>
-}
+export type UseBatchChapterActionsReturn = BatchChapterActionsController
 
 export function useBatchChapterActions({
   pages,
