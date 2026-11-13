@@ -1,21 +1,12 @@
 // manga_ui/components/project-modal_impl.tsx
-// Модалка для управления Глоссарием и Синопсисом тайтла (вкладка Статистика БД удалена)
+// Оркестратор модалки проекта: шапка с переключением вкладок, загрузка данных и портал.
+// Вкладки вынесены в components/project-modal/: «Глоссарий» и «Синопсис».
 
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
 import { createPortal } from "react-dom"
-import {
-  BookMarked,
-  Sliders,
-  Plus,
-  Trash2,
-  X,
-  Loader2,
-  Sparkles,
-  Save,
-  Check,
-} from "lucide-react"
+import { BookMarked, Sliders, X } from "lucide-react"
 import type { GlossaryItem } from "@/lib/types"
 import {
   getGlossary,
@@ -24,6 +15,8 @@ import {
   getProjectTree,
   updateTitleSettings,
 } from "@/lib/api"
+import { GlossaryTab } from "@/components/project-modal/glossary-tab"
+import { SynopsisTab } from "@/components/project-modal/synopsis-tab"
 import type { ProjectModalProps } from "./project-modal"
 
 export function ProjectModal({
@@ -91,8 +84,7 @@ export function ProjectModal({
     if (activeTab === "synopsis") loadProjectInfo()
   }, [activeTab, loadGlossary, loadProjectInfo])
 
-  const handleSaveSettings = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
+  const handleSaveSettings = async () => {
     setIsSavingSettings(true)
     try {
       const res = await updateTitleSettings(titleId, {
@@ -108,8 +100,7 @@ export function ProjectModal({
     }
   }
 
-  const handleAddGlossary = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleAddGlossary = async () => {
     if (!rusWord.trim()) return
 
     setIsAdding(true)
@@ -192,149 +183,32 @@ export function ProjectModal({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
-
           {activeTab === "glossary" && (
-            <div className="space-y-4">
-              <div className="flex items-start gap-2.5 rounded-xl border border-indigo-950 bg-indigo-950/30 p-3.5 text-xs text-indigo-200">
-                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-400" />
-                <p>
-                  Имена и термины из глоссария попадают в экспортируемый файл контекста для Claude/ChatGPT,
-                  а также пополняют список подсказок в поле «Speaker».
-                </p>
-              </div>
-
-              <form onSubmit={handleAddGlossary} className="flex gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3">
-                <input
-                  type="text"
-                  placeholder="Японский (опционально)"
-                  value={japWord}
-                  onChange={(e) => setJapWord(e.target.value)}
-                  className="w-1/3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Имя/Роль"
-                  value={rusWord}
-                  onChange={(e) => setRusWord(e.target.value)}
-                  className="w-1/3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
-                />
-                <input
-                  type="text"
-                  placeholder="Контекст/тон"
-                  value={context}
-                  onChange={(e) => setContext(e.target.value)}
-                  className="flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  disabled={isAdding}
-                  className="flex h-8 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
-                >
-                  {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                </button>
-              </form>
-
-              <div className="overflow-hidden rounded-xl border border-slate-800">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b border-slate-800 bg-slate-950 text-slate-400">
-                    <tr>
-                      <th className="px-4 py-2.5 font-semibold">Японский оригинал</th>
-                      <th className="px-4 py-2.5 font-semibold">Имя / Термин</th>
-                      <th className="px-4 py-2.5 font-semibold">Контекст / Роль</th>
-                      <th className="w-10 px-4 py-2.5 text-right"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
-                    {loadingGlossary ? (
-                      <tr>
-                        <td colSpan={4} className="p-6 text-center text-slate-500">
-                          <Loader2 className="mx-auto h-5 w-5 animate-spin mb-1 text-slate-400" />
-                          Загрузка глоссария...
-                        </td>
-                      </tr>
-                    ) : glossary.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="p-6 text-center text-slate-500">
-                          Глоссарий пока пуст. Добавьте персонажей или термины выше.
-                        </td>
-                      </tr>
-                    ) : (
-                      glossary.map((item) => (
-                        <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="px-4 py-2.5 font-semibold text-slate-200">
-                            {item.jap_word || <span className="text-slate-500 italic">—</span>}
-                          </td>
-                          <td className="px-4 py-2.5 font-medium text-emerald-400">{item.rus_word}</td>
-                          <td className="px-4 py-2.5 text-slate-400">{item.context || "—"}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <button
-                              onClick={() => handleDeleteGlossary(item.id)}
-                              className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-rose-400 transition-colors"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <GlossaryTab
+              glossary={glossary}
+              loading={loadingGlossary}
+              isAdding={isAdding}
+              japWord={japWord}
+              rusWord={rusWord}
+              context={context}
+              onJapWordChange={setJapWord}
+              onRusWordChange={setRusWord}
+              onContextChange={setContext}
+              onAdd={handleAddGlossary}
+              onDelete={handleDeleteGlossary}
+            />
           )}
 
           {activeTab === "synopsis" && (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
-                  Синопсис, атмосфера и правила речи персонажей
-                </label>
-
-                {loadingDesc ? (
-                  <div className="flex h-32 items-center justify-center text-xs text-slate-500">
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin text-slate-400" /> Загрузка...
-                  </div>
-                ) : (
-                  <textarea
-                    rows={10}
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Например:
-Мрачный сёнэн с элементами комедии абсурда."
-                    className="w-full rounded-lg border border-slate-800 bg-slate-900 p-3 text-xs leading-relaxed text-slate-100 placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
-                  />
-                )}
-
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-[11px] text-slate-500">
-                    Автоматически включается в экспортируемый файл контекста.
-                  </span>
-
-                  <button
-                    onClick={() => handleSaveSettings()}
-                    disabled={isSavingSettings}
-                    className={[
-                      "flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium text-white transition-all shadow-md",
-                      settingsSavedSuccess
-                        ? "bg-emerald-600"
-                        : "bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50",
-                    ].join(" ")}
-                  >
-                    {isSavingSettings ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : settingsSavedSuccess ? (
-                      <Check className="h-3.5 w-3.5" />
-                    ) : (
-                      <Save className="h-3.5 w-3.5" />
-                    )}
-                    {settingsSavedSuccess ? "Сохранено!" : "Сохранить синопсис"}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <SynopsisTab
+              description={description}
+              onDescriptionChange={setDescription}
+              loading={loadingDesc}
+              isSaving={isSavingSettings}
+              savedSuccess={settingsSavedSuccess}
+              onSave={handleSaveSettings}
+            />
           )}
-
         </div>
       </div>
     </div>,
