@@ -4,7 +4,9 @@
  * Реализация: manga_ui/components/image-viewer_impl.tsx
  * Зависимости реализации: react, lucide-react, @/lib/types (TextBlock), @/lib/api/pages (releaseVram),
  *                         @/hooks/use-manga-hotkeys, @/hooks/use-box-transform,
- *                         @/hooks/use-brush-tool, @/components/image-viewer/bubble-overlay-item
+ *                         @/hooks/use-brush-tool, @/components/image-viewer/bubble-overlay-item,
+ *                         @/components/image-viewer/viewer-header-toolbar,
+ *                         @/components/image-viewer/viewer-footer-hints
  */
 
 import type { TextBlock } from "@/lib/types"
