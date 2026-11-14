@@ -2,8 +2,11 @@
 /**
  * Контракт наложения интерактивного бабла на скан (трансформация, инлайн-редактирование, тайпсет, плашка японского оригинала).
  * Реализация: manga_ui/components/image-viewer/bubble-overlay-item_impl.tsx
- * Зависимости реализации: react, lucide-react (RotateCw), @/lib/types (TextBlock),
- *                         @/lib/typeset (layoutBubbleTextLines), @/hooks/use-box-transform
+ * Зависимости реализации: react, @/lib/types (TextBlock), @/hooks/use-box-transform,
+ *                         @/lib/typeset (layoutBubbleTextLines, reflowFromManualLines)
+ * Состав реализации: bubble-constants.ts, use-bubble-screen-layout.ts, bubble-inline-editor.tsx,
+ *                    bubble-resize-handles.tsx, bubble-jap-tooltip.tsx,
+ *                    bubble-typeset-view.tsx, bubble-color-frame-view.tsx
  */
 
 import type React from "react"

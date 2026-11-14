@@ -152,11 +152,8 @@ export function useMangaHotkeys({
         if (onToggleJapCheck) {
           e.preventDefault()
           onToggleJapCheck()
-        } else {
-          e.preventDefault()
-          window.dispatchEvent(new CustomEvent("manga-toggle-jap-check"))
+          return
         }
-        return
       }
 
       // 6. Действия с главой

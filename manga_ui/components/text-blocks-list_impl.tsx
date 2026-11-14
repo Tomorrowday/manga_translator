@@ -3,21 +3,16 @@
 
 "use client"
 
-import { useCallback, useMemo } from "react"
+import { useCallback } from "react"
 import { BookText, Layers } from "lucide-react"
 import type { TextBlock } from "@/lib/types"
 import { TextBlockCard } from "@/components/text-block-card"
 import type { TextBlocksListProps } from "./text-blocks-list"
 
-interface ExtendedTextBlocksListProps extends TextBlocksListProps {
-  showSfx?: boolean
-}
-
 export function TextBlocksList({
   currentPage,
   textBlocks,
   selectedId,
-  showSfx = true,
   defaultFontSize = 14,
   autoOvalBubble = true,
   onSelect,
@@ -26,17 +21,13 @@ export function TextBlocksList({
   onMoveUp,
   onMoveDown,
   onSpotClean,
-}: ExtendedTextBlocksListProps) {
+}: TextBlocksListProps) {
   const handleSpotClean = useCallback(
     (block: TextBlock, method: "auto" | "lama" | "white", deleteAfter?: boolean) => {
       return onSpotClean(block, method, deleteAfter)
     },
     [onSpotClean]
   )
-
-  const visibleBlocks = useMemo(() => {
-    return showSfx ? textBlocks : textBlocks.filter((b) => (b.class_id ?? 0) !== 3)
-  }, [textBlocks, showSfx])
 
   if (!currentPage) {
     return (
@@ -50,15 +41,13 @@ export function TextBlocksList({
     )
   }
 
-  if (visibleBlocks.length === 0) {
+  if (textBlocks.length === 0) {
     return (
       <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center text-slate-600">
         <Layers className="h-8 w-8" />
         <p className="text-sm font-medium text-slate-500">No text blocks yet</p>
         <p className="max-w-[220px] text-xs">
-          {textBlocks.length > 0
-            ? "All text blocks are hidden by the SFX filter."
-            : 'Click "1. Detect & OCR" or drag a rectangle over a speech bubble.'}
+          {'Click "1. Detect & OCR" or drag a rectangle over a speech bubble.'}
         </p>
       </div>
     )
@@ -66,7 +55,7 @@ export function TextBlocksList({
 
   return (
     <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
-      {visibleBlocks.map((block, index) => (
+      {textBlocks.map((block, index) => (
         <TextBlockCard
           key={block.id}
           block={block}
@@ -81,7 +70,7 @@ export function TextBlocksList({
           onMoveUp={() => onMoveUp(block.id)}
           onMoveDown={() => onMoveDown(block.id)}
           canMoveUp={index > 0}
-          canMoveDown={index < visibleBlocks.length - 1}
+          canMoveDown={index < textBlocks.length - 1}
           onSpotClean={(method, deleteAfter) => handleSpotClean(block, method, deleteAfter)}
         />
       ))}

@@ -1,23 +1,13 @@
 // manga_ui/hooks/use-page-blocks_impl.ts
-// Управление блоками страницы со стеком истории Undo / Redo (до 30 шагов) и откатом шага клина
+// CRUD текстовых блоков страницы (сохранение, редактирование, клин, ручное рисование)
+// Стек истории Undo / Redo вынесен в use-blocks-history.ts
 
 import { useState, useRef, useCallback } from "react"
 import type { TextBlock, PageItem, PageStatus, TitleSettings } from "@/lib/types"
 import { insertBlockInMangaOrder } from "@/lib/typeset"
-import { savePageBlocks, runSpotClean, undoLastCleanStep } from "@/lib/api"
+import { savePageBlocks, runSpotClean } from "@/lib/api"
+import { useBlocksHistory } from "./use-blocks-history"
 import type { DrawRect, UsePageBlocksReturn } from "./use-page-blocks"
-
-const MAX_HISTORY_STEPS = 30
-
-interface HistorySnapshot {
-  blocks: TextBlock[]
-  selectedId: string | null
-  hasCleanStep?: boolean
-}
-
-function cloneBlocks(blocks: TextBlock[]): TextBlock[] {
-  return blocks.map((b) => ({ ...b }))
-}
 
 export function usePageBlocks(
   currentPage: PageItem | null,
@@ -29,9 +19,6 @@ export function usePageBlocks(
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  const [canUndo, setCanUndo] = useState(false)
-  const [canRedo, setCanRedo] = useState(false)
-
   const textBlocksRef = useRef<TextBlock[]>([])
   textBlocksRef.current = textBlocks
   const selectedIdRef = useRef<string | null>(null)
@@ -40,99 +27,25 @@ export function usePageBlocks(
   currentPageRef.current = currentPage
 
   const isDirtyRef = useRef(false)
-  const undoStackRef = useRef<HistorySnapshot[]>([])
-  const redoStackRef = useRef<HistorySnapshot[]>([])
 
-  const syncHistoryFlags = useCallback(() => {
-    setCanUndo(undoStackRef.current.length > 0)
-    setCanRedo(redoStackRef.current.length > 0)
-  }, [])
-
-  const resetHistory = useCallback(() => {
-    undoStackRef.current = []
-    redoStackRef.current = []
-    syncHistoryFlags()
-  }, [syncHistoryFlags])
-
-  const pushUndoSnapshot = useCallback(
-    (hasCleanStep = false) => {
-      const snap: HistorySnapshot = {
-        blocks: cloneBlocks(textBlocksRef.current),
-        selectedId: selectedIdRef.current,
-        hasCleanStep,
-      }
-      undoStackRef.current.push(snap)
-      if (undoStackRef.current.length > MAX_HISTORY_STEPS) {
-        undoStackRef.current.shift()
-      }
-      redoStackRef.current = []
-      syncHistoryFlags()
-    },
-    [syncHistoryFlags]
-  )
-
-  const recordCleanAction = useCallback(() => {
-    pushUndoSnapshot(true)
-  }, [pushUndoSnapshot])
-
-  const undo = useCallback(async () => {
-    if (undoStackRef.current.length === 0) return
-    const snapshot = undoStackRef.current.pop()!
-
-    redoStackRef.current.push({
-      blocks: cloneBlocks(textBlocksRef.current),
-      selectedId: selectedIdRef.current,
-      hasCleanStep: false,
-    })
-    if (redoStackRef.current.length > MAX_HISTORY_STEPS) {
-      redoStackRef.current.shift()
-    }
-
-    isDirtyRef.current = true
-    const restored = cloneBlocks(snapshot.blocks)
-    setTextBlocks(restored)
-    textBlocksRef.current = restored
-    setSelectedId(snapshot.selectedId)
-    selectedIdRef.current = snapshot.selectedId
-    syncHistoryFlags()
-
-    if (snapshot.hasCleanStep && currentPageRef.current) {
-      try {
-        const res = await undoLastCleanStep(currentPageRef.current.id)
-        if (res?.success) {
-          onPageStatusUpdate(
-            currentPageRef.current.id,
-            (res.page_status as PageStatus) || "cleaned",
-            res.clean_path ?? ""
-          )
-        }
-      } catch (e) {
-        console.warn("Не удалось откатить шаг клина на бэкенде:", e)
-      }
-    }
-  }, [onPageStatusUpdate, syncHistoryFlags])
-
-  const redo = useCallback(() => {
-    if (redoStackRef.current.length === 0) return
-    const nextSnap = redoStackRef.current.pop()!
-
-    undoStackRef.current.push({
-      blocks: cloneBlocks(textBlocksRef.current),
-      selectedId: selectedIdRef.current,
-      hasCleanStep: false,
-    })
-    if (undoStackRef.current.length > MAX_HISTORY_STEPS) {
-      undoStackRef.current.shift()
-    }
-
-    isDirtyRef.current = true
-    const restored = cloneBlocks(nextSnap.blocks)
-    setTextBlocks(restored)
-    textBlocksRef.current = restored
-    setSelectedId(nextSnap.selectedId)
-    selectedIdRef.current = nextSnap.selectedId
-    syncHistoryFlags()
-  }, [syncHistoryFlags])
+  const {
+    canUndo,
+    canRedo,
+    pushUndoSnapshot,
+    recordCleanAction,
+    undo,
+    redo,
+    resetHistory,
+    discardLastSnapshot,
+  } = useBlocksHistory({
+    textBlocksRef,
+    selectedIdRef,
+    currentPageRef,
+    setTextBlocks,
+    setSelectedId,
+    isDirtyRef,
+    onPageStatusUpdate,
+  })
 
   const saveBlocksExplicit = useCallback(
     async (targetPageId: number, blocksToSave: TextBlock[], refreshSpeakers = true) => {
@@ -323,17 +236,15 @@ export function usePageBlocks(
             })
           }
         } else {
-          undoStackRef.current.pop()
-          syncHistoryFlags()
+          discardLastSnapshot()
           alert("Ошибка точечного клина: " + (res.error || "Неизвестная ошибка"))
         }
       } catch (e) {
-        undoStackRef.current.pop()
-        syncHistoryFlags()
+        discardLastSnapshot()
         alert("Ошибка точечного клина: " + String(e))
       }
     },
-    [onPageStatusUpdate, pushUndoSnapshot, syncHistoryFlags]
+    [onPageStatusUpdate, pushUndoSnapshot, discardLastSnapshot]
   )
 
   const addOrUpdateDrawnBlock = useCallback(

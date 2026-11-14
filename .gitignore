@@ -46,3 +46,11 @@ Thumbs.db
 # Логи
 logs/
 *.log
+
+# repomix
+repomix/
+Ultralytics/
+.kilo/
+Документация/
+pack_skeleton.bat
+Архитектура.md

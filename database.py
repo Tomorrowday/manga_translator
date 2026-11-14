@@ -76,9 +76,11 @@ from contextlib import contextmanager
 import database_impl as _impl
 
 
-def get_db() -> sqlite3.Connection:
-    """Возвращает прямое соединение с SQLite БД со строковым row_factory и включенными FK."""
-    return _impl.get_db()
+@contextmanager
+def get_db() -> Iterator[sqlite3.Connection]:
+    """Контекстный менеджер соединения с SQLite БД со строковым row_factory и включенными FK."""
+    with _impl.get_db() as conn:
+        yield conn
 
 
 @contextmanager

@@ -3,7 +3,6 @@
 
 "use client"
 
-import { useState, useEffect } from "react"
 import {
   Zap,
   Wand2,
@@ -42,28 +41,6 @@ export function TranslationToolbar({
   onToggleJapOverlay,
 }: TranslationToolbarProps) {
   const { hotkeys } = useHotkeysConfig()
-  const [internalJapOverlay, setInternalJapOverlay] = useState(false)
-
-  const isJapActive = showJapOverlay !== undefined ? showJapOverlay : internalJapOverlay
-
-  useEffect(() => {
-    const syncEvent = (e: Event) => {
-      const custom = e as CustomEvent<{ value?: boolean }>
-      if (custom.detail?.value !== undefined) {
-        setInternalJapOverlay(custom.detail.value)
-      }
-    }
-    window.addEventListener("manga-jap-check-changed", syncEvent)
-    return () => window.removeEventListener("manga-jap-check-changed", syncEvent)
-  }, [])
-
-  const handleToggleJapClick = () => {
-    if (onToggleJapOverlay) {
-      onToggleJapOverlay()
-    } else {
-      window.dispatchEvent(new CustomEvent("manga-toggle-jap-check"))
-    }
-  }
 
   const isAnyActionRunning =
     isFullAuto || isDetecting || isOcrRunning || isBatchTranslating || isCleaning || isRevertingClean
@@ -192,11 +169,11 @@ export function TranslationToolbar({
         {/* JP CHECK TOGGLE (под Rikaikun / Yomitan) */}
         <button
           type="button"
-          onClick={handleToggleJapClick}
+          onClick={onToggleJapOverlay}
           disabled={!hasCurrentPage}
           className={[
             "flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors border disabled:opacity-50",
-            isJapActive
+            showJapOverlay
               ? "bg-amber-500/25 border-amber-500/70 text-amber-200 shadow-sm"
               : "bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200",
           ].join(" ")}

@@ -16,17 +16,17 @@ class AddChapterRequest(BaseModel):
 class UpdateTitleSettingsRequest(BaseModel):
     description: Optional[str] = None
     default_font_size: Optional[int] = None
-    detector_model: Optional[str] = "yolo_manga.pt"
-    clean_model: Optional[str] = "anime-manga-big-lama.pt"
-    detect_conf: Optional[float] = 0.25
-    auto_oval_bubble: Optional[bool] = True
-    default_padding: Optional[str] = "safe"
-    default_hyphenation: Optional[bool] = True
-    font_bubble: Optional[str] = "v_CCFaceFront"
-    font_thought: Optional[str] = "v_CCFaceFront"
-    font_sfx: Optional[str] = "v_Mighty Zeo 2.0"
-    lama_downscale: Optional[bool] = False
-    show_sfx: Optional[bool] = False
+    detector_model: Optional[str] = None
+    clean_model: Optional[str] = None
+    detect_conf: Optional[float] = None
+    auto_oval_bubble: Optional[bool] = None
+    default_padding: Optional[str] = None
+    default_hyphenation: Optional[bool] = None
+    font_bubble: Optional[str] = None
+    font_thought: Optional[str] = None
+    font_sfx: Optional[str] = None
+    lama_downscale: Optional[bool] = None
+    show_sfx: Optional[bool] = None
 
 
 class GlossaryItemCreate(BaseModel):
