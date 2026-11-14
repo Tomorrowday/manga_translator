@@ -56,7 +56,8 @@ def init_db():
                 font_thought TEXT DEFAULT 'v_CCFaceFront',
                 font_sfx TEXT DEFAULT 'v_Mighty Zeo 2.0',
                 lama_downscale INTEGER DEFAULT 0,
-                show_sfx INTEGER DEFAULT 0
+                show_sfx INTEGER DEFAULT 0,
+                dict_nlp_mode TEXT DEFAULT 'auto'
             )
         ''')
 
@@ -64,6 +65,7 @@ def init_db():
         for col_def in [
             "lama_downscale INTEGER DEFAULT 0",
             "show_sfx INTEGER DEFAULT 0",
+            "dict_nlp_mode TEXT DEFAULT 'auto'",
         ]:
             try:
                 cursor.execute(f"ALTER TABLE global_settings ADD COLUMN {col_def}")
@@ -77,8 +79,8 @@ def init_db():
                 INSERT INTO global_settings (
                     id, default_font_size, detector_model, clean_model, detect_conf,
                     auto_oval_bubble, default_padding, default_hyphenation,
-                    font_bubble, font_thought, font_sfx, lama_downscale, show_sfx
-                ) VALUES (1, 14, 'yolo_manga.pt', 'anime-manga-big-lama.pt', 0.25, 1, 'safe', 1, 'v_CCFaceFront', 'v_CCFaceFront', 'v_Mighty Zeo 2.0', 0, 0)
+                    font_bubble, font_thought, font_sfx, lama_downscale, show_sfx, dict_nlp_mode
+                ) VALUES (1, 14, 'yolo_manga.pt', 'anime-manga-big-lama.pt', 0.25, 1, 'safe', 1, 'v_CCFaceFront', 'v_CCFaceFront', 'v_Mighty Zeo 2.0', 0, 0, 'auto')
             ''')
 
         # Если в БД ранее был выбран удалённый simple_lama, сбрасываем его на реальный вес

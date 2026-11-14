@@ -15,6 +15,11 @@ def _ensure_global_settings_columns(cur: sqlite3.Cursor):
             cur.execute("ALTER TABLE global_settings ADD COLUMN show_sfx INTEGER DEFAULT 0")
         except Exception as e:
             logger.debug(f"Колонка show_sfx уже существует или ошибка добавления: {e}")
+    if "dict_nlp_mode" not in cols:
+        try:
+            cur.execute("ALTER TABLE global_settings ADD COLUMN dict_nlp_mode TEXT DEFAULT 'auto'")
+        except Exception as e:
+            logger.debug(f"Колонка dict_nlp_mode уже существует или ошибка добавления: {e}")
 
 
 def get_global_settings_endpoint():
@@ -37,12 +42,14 @@ def get_global_settings_endpoint():
         "font_sfx": "v_Mighty Zeo 2.0",
         "lama_downscale": 0,
         "show_sfx": 0,
+        "dict_nlp_mode": "auto",
     }
 
     settings["auto_oval_bubble"] = bool(settings.get("auto_oval_bubble", 1))
     settings["default_hyphenation"] = bool(settings.get("default_hyphenation", 1))
     settings["lama_downscale"] = bool(settings.get("lama_downscale", 0))
     settings["show_sfx"] = bool(row["show_sfx"]) if (row and "show_sfx" in row.keys()) else False
+    settings["dict_nlp_mode"] = (row["dict_nlp_mode"] if (row and "dict_nlp_mode" in row.keys() and row["dict_nlp_mode"]) else "auto")
     settings["available_detectors"] = get_available_detectors()
     settings["available_cleaners"] = get_available_cleaners()
 
@@ -105,6 +112,14 @@ def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
     else:
         show_sfx_val = int(current.get("show_sfx") or 0)
 
+    valid_nlp_modes = {"auto", "sudachi", "electra", "bert_large"}
+    if req.dict_nlp_mode in valid_nlp_modes:
+        nlp_mode_val = req.dict_nlp_mode
+    elif current.get("dict_nlp_mode") in valid_nlp_modes:
+        nlp_mode_val = current["dict_nlp_mode"]
+    else:
+        nlp_mode_val = "auto"
+
     with db_session() as cur:
         _ensure_global_settings_columns(cur)
         cur.execute(
@@ -112,8 +127,8 @@ def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
             INSERT INTO global_settings (
                 id, detector_model, clean_model, detect_conf,
                 auto_oval_bubble, default_padding, default_hyphenation,
-                font_bubble, font_thought, font_sfx, lama_downscale, show_sfx
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                font_bubble, font_thought, font_sfx, lama_downscale, show_sfx, dict_nlp_mode
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 detector_model = excluded.detector_model,
                 clean_model = excluded.clean_model,
@@ -125,9 +140,10 @@ def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
                 font_thought = excluded.font_thought,
                 font_sfx = excluded.font_sfx,
                 lama_downscale = excluded.lama_downscale,
-                show_sfx = excluded.show_sfx
+                show_sfx = excluded.show_sfx,
+                dict_nlp_mode = excluded.dict_nlp_mode
             """,
-            (detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s, downscale, show_sfx_val)
+            (detector, cleaner, conf, auto_oval, padding, hyph, font_b, font_t, font_s, downscale, show_sfx_val, nlp_mode_val)
         )
 
         cur.execute("SELECT show_sfx FROM global_settings WHERE id = 1")
@@ -152,6 +168,7 @@ def update_global_settings_endpoint(req: UpdateTitleSettingsRequest):
             "font_sfx": font_s,
             "lama_downscale": bool(downscale),
             "show_sfx": actual_show_sfx,
+            "dict_nlp_mode": nlp_mode_val,
         }
     }
 

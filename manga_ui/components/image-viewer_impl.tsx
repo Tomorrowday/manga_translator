@@ -24,6 +24,7 @@ export function ImageViewer({
   imageSrc,
   textBlocks,
   selectedId,
+  titleId,
   showTypeset = false,
   showJapOverlay,
   pageNumber,
@@ -223,6 +224,7 @@ export function ImageViewer({
                   key={box.id}
                   box={box}
                   index={index}
+                  titleId={titleId}
                   isSelected={box.id === selectedId}
                   showTypeset={showTypeset}
                   showJapOverlay={showJapOverlay}

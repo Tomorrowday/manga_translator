@@ -16,6 +16,7 @@ import type { EditAction, DrawRect } from "@/hooks/use-box-transform"
 export interface BubbleOverlayItemProps {
   box: TextBlock
   index: number
+  titleId?: number | null
   isSelected: boolean
   showTypeset: boolean
   showJapOverlay?: boolean

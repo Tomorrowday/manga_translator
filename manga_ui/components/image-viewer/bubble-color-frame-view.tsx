@@ -85,7 +85,6 @@ export function BubbleColorFrameView({
         transform: `rotate(${currentRot}deg)`,
         transformOrigin: "center center",
       }}
-      title={`[${theme.title}] — Двойной клик для редактирования текста`}
     >
       {isEllipse && (
         <svg

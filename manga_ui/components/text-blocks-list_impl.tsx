@@ -13,6 +13,8 @@ export function TextBlocksList({
   currentPage,
   textBlocks,
   selectedId,
+  titleId,
+  showJapOverlay = false,
   defaultFontSize = 14,
   autoOvalBubble = true,
   onSelect,
@@ -61,6 +63,8 @@ export function TextBlocksList({
           block={block}
           index={index}
           pageId={currentPage.id}
+          titleId={titleId}
+          showJapOverlay={showJapOverlay}
           defaultFontSize={defaultFontSize}
           autoOvalBubble={autoOvalBubble}
           isSelected={block.id === selectedId}

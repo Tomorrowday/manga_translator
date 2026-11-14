@@ -32,6 +32,11 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "manga_db.sqlite"
 
+# 1.1. База локального японско-русского словаря и папка исходных архивов словарей
+JP_DICT_DB_PATH = DATA_DIR / "jp_dict.sqlite"
+DICT_SOURCES_DIR = DATA_DIR / "dictionaries"
+DICT_SOURCES_DIR.mkdir(parents=True, exist_ok=True)
+
 # 2. Папка для весов нейросетей (.pt, .onnx, чекпоинты)
 WEIGHTS_DIR = BASE_DIR / "weights"
 WEIGHTS_DIR.mkdir(exist_ok=True)

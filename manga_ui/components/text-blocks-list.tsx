@@ -11,6 +11,8 @@ export interface TextBlocksListProps {
   currentPage: PageItem | null
   textBlocks: TextBlock[]
   selectedId: string | null
+  titleId?: number | null
+  showJapOverlay?: boolean
   defaultFontSize?: number
   autoOvalBubble?: boolean
   onSelect: (id: string) => void

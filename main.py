@@ -18,7 +18,7 @@ logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
 import database
 from ml.models import load_ml_models
-from routers import ai, projects, pages, chapters
+from routers import ai, projects, pages, chapters, dictionary
 
 # Регистрация поддержки форматов AVIF и HEIF в Pillow
 pillow_heif.register_heif_opener()
@@ -37,6 +37,22 @@ async def lifespan(_app: FastAPI):
     load_ml_models()
     print("[2/3] Модели MangaOCR и YOLO загружены.")
     print("[3/3] Модуль LaMa Inpainting готов к работе.")
+
+    # Локальный японско-русский словарь: проверяем базу и при необходимости докачиваем её в фоне,
+    # чтобы старт сервера оставался мгновенным.
+    try:
+        import threading
+        from services.dictionary import get_dictionary_status, download_and_build_dictionaries
+
+        dict_stat = get_dictionary_status()
+        if not dict_stat.get("is_full_dictionary_loaded"):
+            print("[Dict] Полная база словаря не найдена — запускаю фоновую загрузку Warodai + JMdict RU...")
+            threading.Thread(target=download_and_build_dictionaries, daemon=True).start()
+        else:
+            print(f"[Dict] Локальный словарь готов ({dict_stat.get('total_entries')} статей).")
+    except Exception as e:
+        print(f"[Dict] Не удалось проверить локальный словарь: {e}")
+
     print("🚀 Сервер успешно запущен: http://127.0.0.1:8000")
     print("=" * 50 + "\n")
     yield
@@ -65,6 +81,7 @@ app.include_router(ai.router)
 app.include_router(projects.router)
 app.include_router(pages.router)
 app.include_router(chapters.router)
+app.include_router(dictionary.router)
 
 
 # В main.py добавить фильтр логов для uvicorn.access:

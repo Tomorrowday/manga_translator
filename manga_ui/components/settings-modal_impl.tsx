@@ -9,6 +9,7 @@ import { createPortal } from "react-dom"
 import { Sliders, ToggleLeft, X, Loader2, Check, Save } from "lucide-react"
 import type { TitleSettings } from "@/lib/types"
 import { getGlobalSettings, updateGlobalSettings } from "@/lib/api/projects"
+import { clearDictionaryAnalyzeCache } from "@/lib/api/dictionary"
 import { checkOllamaConnection } from "@/lib/api/ollama"
 import { SettingsTogglesTab } from "@/components/settings-modal/settings-toggles-tab"
 import { SettingsParametersTab } from "@/components/settings-modal/settings-parameters-tab"
@@ -38,6 +39,9 @@ export function SettingsModal({
 
   // Тоггл: детектировать звуки SFX (класс 3)
   const [showSfx, setShowSfx] = useState<boolean>(false)
+
+  // Режим морфологического анализатора словаря
+  const [dictNlpMode, setDictNlpMode] = useState<"auto" | "sudachi" | "electra" | "bert_large">("auto")
 
   // Параметры моделей и шрифтов
   const [detectorModel, setDetectorModel] = useState<string>("yolo_manga.pt")
@@ -95,6 +99,7 @@ export function SettingsModal({
 
           if (s.lama_downscale !== undefined) setLamaDownscale(Boolean(s.lama_downscale))
           if (s.show_sfx !== undefined) setShowSfx(Boolean(s.show_sfx))
+          if (s.dict_nlp_mode) setDictNlpMode(s.dict_nlp_mode)
 
           if (s.font_bubble) setFontBubble(s.font_bubble)
           if (s.font_thought) setFontThought(s.font_thought)
@@ -122,6 +127,7 @@ export function SettingsModal({
         default_hyphenation: defaultHyphenation,
         lama_downscale: lamaDownscale,
         show_sfx: showSfx,
+        dict_nlp_mode: dictNlpMode,
         font_bubble: fontBubble,
         font_thought: fontThought,
         font_sfx: fontSfx,
@@ -129,6 +135,7 @@ export function SettingsModal({
 
       const res = await updateGlobalSettings(payload)
       if (res.success) {
+        clearDictionaryAnalyzeCache()
         setSavedSuccess(true)
         onSettingsUpdated?.(payload)
         setTimeout(() => setSavedSuccess(false), 2000)
@@ -240,6 +247,8 @@ export function SettingsModal({
               onFontThoughtChange={setFontThought}
               fontSfx={fontSfx}
               onFontSfxChange={setFontSfx}
+              dictNlpMode={dictNlpMode}
+              onDictNlpModeChange={setDictNlpMode}
               ollamaStatus={ollamaStatus}
               ollamaModels={ollamaModels}
               onRefreshOllama={testOllama}

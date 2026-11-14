@@ -16,6 +16,7 @@ import { BubbleColorFrameView } from "./bubble-color-frame-view"
 export const BubbleOverlayItem = memo(function BubbleOverlayItem({
   box,
   index,
+  titleId,
   isSelected,
   showTypeset,
   showJapOverlay = false,
@@ -82,6 +83,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
     <BubbleJapTooltip
       box={box}
       index={index}
+      titleId={titleId}
       isSelected={isSelected}
       showJapOverlay={showJapOverlay}
       isDraft={isDraft}
@@ -92,6 +94,7 @@ export const BubbleOverlayItem = memo(function BubbleOverlayItem({
       currentH={currentH}
       currentRot={currentRot}
       onSelect={onSelect}
+      onUpdate={onUpdate}
     />
   )
 

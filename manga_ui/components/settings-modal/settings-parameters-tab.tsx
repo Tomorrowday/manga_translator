@@ -7,6 +7,10 @@
 import { Scan, Sparkles } from "lucide-react"
 import { MANGA_FONTS } from "@/lib/hotkeys"
 import { OllamaStatusCard, type OllamaStatus } from "@/components/settings-modal/ollama-status-card"
+import {
+  DictionaryStatusCard,
+  type DictNlpMode,
+} from "@/components/settings-modal/dictionary-status-card"
 
 export interface SettingsParametersTabProps {
   availableDetectors: Record<string, string>
@@ -23,6 +27,8 @@ export interface SettingsParametersTabProps {
   onFontThoughtChange: (value: string) => void
   fontSfx: string
   onFontSfxChange: (value: string) => void
+  dictNlpMode: DictNlpMode
+  onDictNlpModeChange: (value: DictNlpMode) => void
   ollamaStatus: OllamaStatus
   ollamaModels: string[]
   onRefreshOllama: () => void
@@ -43,6 +49,8 @@ export function SettingsParametersTab({
   onFontThoughtChange,
   fontSfx,
   onFontSfxChange,
+  dictNlpMode,
+  onDictNlpModeChange,
   ollamaStatus,
   ollamaModels,
   onRefreshOllama,
@@ -182,6 +190,12 @@ export function SettingsParametersTab({
           </div>
         </div>
       </div>
+
+      {/* Локальный словарь Warodai + JMdict RU и режим NLP */}
+      <DictionaryStatusCard
+        dictNlpMode={dictNlpMode}
+        onDictNlpModeChange={onDictNlpModeChange}
+      />
 
       {/* Статус Ollama */}
       <OllamaStatusCard

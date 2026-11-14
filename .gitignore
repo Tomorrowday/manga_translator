@@ -54,3 +54,6 @@ Ultralytics/
 Документация/
 pack_skeleton.bat
 Архитектура.md
+
+# временный кэш-файл компилятора TypeScript
+*.tsbuildinfo

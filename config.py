@@ -13,6 +13,8 @@ import config_impl as _impl
 BASE_DIR: Path = _impl.BASE_DIR
 DATA_DIR: Path = _impl.DATA_DIR
 DB_PATH: Path = _impl.DB_PATH
+JP_DICT_DB_PATH: Path = _impl.JP_DICT_DB_PATH
+DICT_SOURCES_DIR: Path = _impl.DICT_SOURCES_DIR
 WEIGHTS_DIR: Path = _impl.WEIGHTS_DIR
 CACHE_DIR: Path = _impl.CACHE_DIR
 DETECT_MODELS_DIR: Path = _impl.DETECT_MODELS_DIR
