@@ -1,11 +1,18 @@
 // manga_ui/components/image-viewer/bubble-inline-editor.tsx
-// Инлайн-редактор текста прямо на скане: Enter — перенос с пересчётом хвоста, Ctrl+Enter — готово, Esc — отмена
+// Инлайн-редактор текста прямо на скане: Enter — нативный перенос, Ctrl+Enter — готово, Esc — отмена
 
 "use client"
 
 import type React from "react"
 import { useEffect, useRef, useState } from "react"
 import type { TextBlock } from "@/lib/types"
+import {
+  reflowFromManualLines,
+  hasManualLineBreaks,
+  stripForcedSingleLineMarker,
+  FORCED_SINGLE_LINE_MARKER,
+} from "@/lib/typeset"
+import type { ReflowOptions } from "@/lib/typeset"
 import type { BubbleReflowedState } from "./use-bubble-screen-layout"
 
 export interface BubbleInlineEditorProps {
@@ -22,7 +29,11 @@ export interface BubbleInlineEditorProps {
   finalScreenLineHeight: number
   masterBoxPixelH: number
   screenScale: number
-  computeReflowedState: (snapshotLines: string[], rawInput: string) => BubbleReflowedState
+  computeReflowedState: (
+    snapshotLines: string[],
+    rawInput: string,
+    options?: ReflowOptions
+  ) => BubbleReflowedState
   onUpdate?: (id: string, patch: Partial<TextBlock>) => void
   onClose: () => void
 }
@@ -46,11 +57,21 @@ export function BubbleInlineEditor({
   onClose,
 }: BubbleInlineEditorProps) {
   const [localText, setLocalText] = useState(() =>
-    editableLines.length > 0 ? editableLines.join("\n") : box.rusText || ""
+    editableLines.length > 0
+      ? editableLines.join("\n")
+      : stripForcedSingleLineMarker(box.rusText)
   )
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const snapshotLinesOnOpenRef = useRef<string[]>([...editableLines])
   const editableLinesRef = useRef<string[]>(editableLines)
+  const lastEmittedStorageRef = useRef<string | null>(null)
+  const originalStorageRef = useRef<string>(box.rusText || "")
+  const isCancellingRef = useRef(false)
+  const hasCommittedRef = useRef(false)
+  // Был ли блок ручным до правки и менял ли пользователь разбивку строк.
+  const wasManualBeforeEditRef = useRef(hasManualLineBreaks(box.rusText))
+  const hadForcedSingleLineRef = useRef(Boolean(box.rusText?.includes(FORCED_SINGLE_LINE_MARKER)))
+  const userTouchedBreaksRef = useRef(false)
   editableLinesRef.current = editableLines
 
   useEffect(() => {
@@ -63,12 +84,52 @@ export function BubbleInlineEditor({
 
   // Синхронизация при внешнем изменении текста бабла (например, после Undo / Ctrl+Z)
   useEffect(() => {
+    // Не перетираем то, что пользователь только что набрал самим же onChange.
+    if (box.rusText === lastEmittedStorageRef.current) return
     const lines = editableLinesRef.current
-    setLocalText(lines.length > 0 ? lines.join("\n") : box.rusText || "")
+    setLocalText(
+      lines.length > 0 ? lines.join("\n") : stripForcedSingleLineMarker(box.rusText)
+    )
     snapshotLinesOnOpenRef.current = [...lines]
+    wasManualBeforeEditRef.current = hasManualLineBreaks(box.rusText)
+    hadForcedSingleLineRef.current = Boolean(box.rusText?.includes(FORCED_SINGLE_LINE_MARKER))
+    userTouchedBreaksRef.current = false
   }, [box.rusText])
 
+  const reflowOptions = (): ReflowOptions => ({
+    wasManualBeforeEdit: wasManualBeforeEditRef.current,
+    hasUserModifiedLineBreaks: userTouchedBreaksRef.current,
+    hadForcedSingleLine: hadForcedSingleLineRef.current,
+  })
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextText = e.target.value
+    setLocalText(nextText)
+
+    if (nextText.split(/\r?\n/).length !== snapshotLinesOnOpenRef.current.length) {
+      userTouchedBreaksRef.current = true
+    }
+
+    if (!onUpdate) return
+
+    const storageText = reflowFromManualLines(
+      snapshotLinesOnOpenRef.current,
+      nextText,
+      reflowOptions()
+    )
+    lastEmittedStorageRef.current = storageText
+
+    const hasText = storageText.length > 0
+    const patch: Partial<TextBlock> = {
+      rusText: storageText,
+      status: hasText ? "translated" : box.japText ? "ocr-done" : "new",
+    }
+    onUpdate(box.id, patch)
+  }
+
   const commitInlineEdit = () => {
+    if (isCancellingRef.current || hasCommittedRef.current) return
+    hasCommittedRef.current = true
     onClose()
     const trimmed = localText.trim()
 
@@ -76,16 +137,24 @@ export function BubbleInlineEditor({
       return
     }
 
-    const { storageText } = computeReflowedState(snapshotLinesOnOpenRef.current, trimmed)
+    const { storageText } = computeReflowedState(
+      snapshotLinesOnOpenRef.current,
+      trimmed,
+      reflowOptions()
+    )
 
     if (onUpdate) {
       const isSpeech = (box.class_id ?? 0) === 0
+      const needsShape = isSpeech && !box.shape
+      if (storageText === lastEmittedStorageRef.current && !needsShape) {
+        return
+      }
       const hasText = storageText.length > 0
       const patch: Partial<TextBlock> = {
         rusText: storageText,
         status: hasText ? "translated" : box.japText ? "ocr-done" : "new",
       }
-      if (isSpeech && !box.shape) {
+      if (needsShape) {
         patch.shape = hasText ? "ellipse" : "rect"
       }
       onUpdate(box.id, patch)
@@ -101,39 +170,28 @@ export function BubbleInlineEditor({
       return
     }
 
-    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      const ta = textareaRef.current
-      if (ta) {
-        e.preventDefault()
-        const start = ta.selectionStart ?? localText.length
-        const end = ta.selectionEnd ?? localText.length
-        const before = localText.slice(0, start).trimEnd()
-        const after = localText.slice(end).trimStart()
-
-        const nextRaw = `${before}\n${after}`
-        const { storageText, previewLines } = computeReflowedState(snapshotLinesOnOpenRef.current, nextRaw)
-
-        if (onUpdate) {
-          onUpdate(box.id, { rusText: storageText, status: "translated" })
-        }
-
-        const nextVisible = previewLines.join("\n")
-        snapshotLinesOnOpenRef.current = [...previewLines]
-        setLocalText(nextVisible)
-
-        const newCursorPos = Math.min(nextVisible.length, before.length + 1)
-        requestAnimationFrame(() => {
-          if (textareaRef.current) {
-            textareaRef.current.setSelectionRange(newCursorPos, newCursorPos)
-          }
-        })
-        return
-      }
+    if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+      userTouchedBreaksRef.current = true
     }
 
     if (e.key === "Escape") {
       e.preventDefault()
-      setLocalText(editableLines.length > 0 ? editableLines.join("\n") : box.rusText || "")
+      isCancellingRef.current = true
+      setLocalText(
+        editableLines.length > 0
+          ? editableLines.join("\n")
+          : stripForcedSingleLineMarker(box.rusText)
+      )
+      if (onUpdate && box.rusText !== originalStorageRef.current) {
+        onUpdate(box.id, {
+          rusText: originalStorageRef.current,
+          status: originalStorageRef.current.trim()
+            ? "translated"
+            : box.japText
+              ? "ocr-done"
+              : "new",
+        })
+      }
       onClose()
       return
     }
@@ -167,7 +225,7 @@ export function BubbleInlineEditor({
         <textarea
           ref={textareaRef}
           value={localText}
-          onChange={(e) => setLocalText(e.target.value)}
+          onChange={handleTextareaChange}
           onKeyDown={handleTextareaKeyDown}
           onBlur={commitInlineEdit}
           wrap="off"
@@ -191,7 +249,7 @@ export function BubbleInlineEditor({
         />
       </div>
       <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-slate-950 px-1.5 py-0.5 text-[9px] text-slate-300 border border-slate-700 pointer-events-none shadow">
-        Enter: перенос + пересчёт хвоста | Ctrl+Enter: готово | Esc: отмена
+        Enter: перенос строки | Ctrl+Enter: готово | Esc: отмена
       </div>
     </div>
   )

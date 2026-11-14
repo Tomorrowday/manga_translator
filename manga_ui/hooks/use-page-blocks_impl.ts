@@ -9,6 +9,11 @@ import { savePageBlocks, runSpotClean } from "@/lib/api"
 import { useBlocksHistory } from "./use-blocks-history"
 import type { DrawRect, UsePageBlocksReturn } from "./use-page-blocks"
 
+// Поля, изменение которых считается «текстовым вводом» и склеивается в один
+// шаг Undo, пока пользователь печатает без паузы.
+const TEXT_PATCH_KEYS = new Set(["rusText", "japText", "speaker", "status"])
+const TEXT_UNDO_COALESCE_MS = 1000
+
 export function usePageBlocks(
   currentPage: PageItem | null,
   globalSettings: TitleSettings,
@@ -27,6 +32,10 @@ export function usePageBlocks(
   currentPageRef.current = currentPage
 
   const isDirtyRef = useRef(false)
+
+  // Последнее текстовое изменение: пока пользователь печатает без паузы
+  // дольше TEXT_UNDO_COALESCE_MS, новые снапшоты Undo не создаются.
+  const lastTextUndoRef = useRef<{ blockId: string; time: number } | null>(null)
 
   const {
     canUndo,
@@ -113,6 +122,7 @@ export function usePageBlocks(
       setTextBlocks(sanitized)
       textBlocksRef.current = sanitized
       isDirtyRef.current = false
+      lastTextUndoRef.current = null
       resetHistory()
     },
     [resetHistory]
@@ -124,12 +134,31 @@ export function usePageBlocks(
     setSelectedId(null)
     selectedIdRef.current = null
     isDirtyRef.current = false
+    lastTextUndoRef.current = null
     resetHistory()
   }, [resetHistory])
 
   const updateBlock = useCallback(
     (id: string, patch: Partial<TextBlock>) => {
-      pushUndoSnapshot(false)
+      const patchKeys = Object.keys(patch)
+      const isTextOnlyPatch =
+        patchKeys.length > 0 && patchKeys.every((key) => TEXT_PATCH_KEYS.has(key))
+
+      const now = Date.now()
+      const last = lastTextUndoRef.current
+      const shouldCoalesce =
+        isTextOnlyPatch &&
+        last?.blockId === id &&
+        now - last.time < TEXT_UNDO_COALESCE_MS
+
+      if (shouldCoalesce) {
+        // Продолжаем ту же «фразу» — новый шаг Undo не нужен.
+        lastTextUndoRef.current = { blockId: id, time: now }
+      } else {
+        pushUndoSnapshot(false)
+        lastTextUndoRef.current = isTextOnlyPatch ? { blockId: id, time: now } : null
+      }
+
       isDirtyRef.current = true
       setTextBlocks((prev) => {
         const next = prev.map((b) => {
@@ -150,6 +179,7 @@ export function usePageBlocks(
   const deleteBlock = useCallback(
     (id: string) => {
       pushUndoSnapshot(false)
+      lastTextUndoRef.current = null
       isDirtyRef.current = true
       setTextBlocks((prev) => {
         const idx = prev.findIndex((b) => b.id === id)
@@ -184,6 +214,7 @@ export function usePageBlocks(
       if (swapWith < 0 || swapWith >= currentList.length) return
 
       pushUndoSnapshot(false)
+      lastTextUndoRef.current = null
       isDirtyRef.current = true
       setTextBlocks((prev) => {
         const i = prev.findIndex((b) => b.id === id)
@@ -205,6 +236,7 @@ export function usePageBlocks(
       if (!currentPageRef.current) return
       try {
         pushUndoSnapshot(true)
+        lastTextUndoRef.current = null
         const res = await runSpotClean(
           currentPageRef.current.id,
           {
@@ -250,6 +282,7 @@ export function usePageBlocks(
   const addOrUpdateDrawnBlock = useCallback(
     async (rect: DrawRect, _img: HTMLImageElement, existingId?: string, rotation?: number) => {
       pushUndoSnapshot(false)
+      lastTextUndoRef.current = null
       isDirtyRef.current = true
       const rot = rotation !== undefined ? rotation : rect.rotation || 0
 
@@ -308,6 +341,17 @@ export function usePageBlocks(
     [globalSettings, pushUndoSnapshot]
   )
 
+  // После Undo/Redo следующий текстовый ввод обязан создать новый снапшот.
+  const handleUndo = useCallback(async () => {
+    lastTextUndoRef.current = null
+    await undo()
+  }, [undo])
+
+  const handleRedo = useCallback(() => {
+    lastTextUndoRef.current = null
+    redo()
+  }, [redo])
+
   return {
     textBlocks,
     setTextBlocks,
@@ -318,8 +362,8 @@ export function usePageBlocks(
     isDirtyRef,
     canUndo,
     canRedo,
-    undo,
-    redo,
+    undo: handleUndo,
+    redo: handleRedo,
     recordCleanAction,
     saveBlocks,
     saveBlocksExplicit,

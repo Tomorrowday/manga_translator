@@ -4,6 +4,7 @@
 import { getEllipseWidthAtY } from "./ellipse-geometry"
 import { joinLinesRemovingSoftHyphens } from "./compound-words"
 import { layoutSegmentOptimal } from "./segment-breaker"
+import { FORCED_SINGLE_LINE_MARKER } from "./manual-reflow"
 
 export function layoutBubbleTextLines(
   ctx: CanvasRenderingContext2D,
@@ -23,10 +24,19 @@ export function layoutBubbleTextLines(
   const widthRatio = padMode === "fit" ? 0.96 : 0.90
   const targetMaxW = boxW * widthRatio
 
-  const rawSegments = text
+  const hasForcedSingleLineMarker = text.includes(FORCED_SINGLE_LINE_MARKER)
+  const displayText = text.split(FORCED_SINGLE_LINE_MARKER).join("")
+
+  // Перенос строки (даже пустой хвост вида "текст\n") или маркер \u2060
+  // означают, что пользователь зафиксировал строки вручную.
+  const hasAnyNewline = /\r?\n/.test(displayText)
+
+  const rawSegments = displayText
     .split(/\r?\n/)
     .map((p) => p.trim())
     .filter(Boolean)
+
+  const isManualLayout = hasAnyNewline || hasForcedSingleLineMarker
 
   const fullMergedText = joinLinesRemovingSoftHyphens(rawSegments)
 
@@ -55,55 +65,50 @@ export function layoutBubbleTextLines(
     let hadHyphenation = false
     let hadForcedCharSplit = false
 
-    if (rawSegments.length <= 1) {
+    if (!isManualLayout) {
       // 1. Полный автоперенос с нуля
       const opt = layoutSegmentOptimal(ctx, fullMergedText, targetMaxW, minHyphens, getAllowedW)
       lines = opt.lines
       hadHyphenation = opt.hadHyphenation
       hadForcedCharSplit = opt.hadForcedCharSplit
     } else {
-      // 2. Ручные переносы строк пользователя
+      // 2. Ручные переносы строк пользователя.
+      // КАТЕГОРИЧЕСКИ нельзя откатываться к fullMergedText и стирать ручные \n.
       const totalUserLines = rawSegments.length
+      const widthLimitFor = (lineIdx: number) =>
+        (isEllipse ? getAllowedW(lineIdx, totalUserLines) : targetMaxW) * 1.03
 
-      // Проверяем, помещаются ли заданные пользователем строки в текущий овал/прямоугольник
-      const userLinesFitWidth = rawSegments.every((seg, idx) => {
-        const lineLimit = (isEllipse ? getAllowedW(idx, totalUserLines) : targetMaxW) * 1.05
-        return ctx.measureText(seg).width <= lineLimit
-      })
+      const userLinesFitWidth = rawSegments.every(
+        (seg, idx) => ctx.measureText(seg).width <= widthLimitFor(idx)
+      )
+      const userLinesFitHeight = totalUserLines * lineHeight <= boxH * 0.95
 
-      if (userLinesFitWidth) {
-        // Все строки пользователя (включая "тебе из") помещаются! Сохраняем их строго в неизменном виде!
+      if (userLinesFitWidth && userLinesFitHeight) {
         lines = rawSegments
-        hadHyphenation = false
-        hadForcedCharSplit = false
-      } else {
-        // Если при текущем размере шрифта какая-то строка не влезла в границу овала,
-        // сохраняем все строки, кроме последней, и авто-доверстываем только незавершённый хвост
-        const lockedTop = rawSegments.slice(0, -1)
-        const flowingTail = rawSegments[rawSegments.length - 1]
+      } else if (curSize === 8) {
+        // Минимальный кегль: разбиваем ТОЛЬКО те строки, которые физически
+        // не помещаются в рамку, остальные строки пользователя не трогаем.
+        lines = []
+        for (let sIdx = 0; sIdx < rawSegments.length; sIdx++) {
+          const seg = rawSegments[sIdx]
+          const limit = widthLimitFor(sIdx)
 
-        const topFitsWidth = lockedTop.every(
-          (seg, idx) => ctx.measureText(seg).width <= (isEllipse ? getAllowedW(idx, totalUserLines) : targetMaxW) * 1.05
-        )
-
-        if (topFitsWidth) {
-          const tailOpt = layoutSegmentOptimal(
-            ctx,
-            flowingTail,
-            targetMaxW,
-            minHyphens,
-            (lineIdx, tailTotal) => getAllowedW(lockedTop.length + lineIdx, lockedTop.length + tailTotal)
-          )
-          lines = [...lockedTop, ...tailOpt.lines]
-          hadHyphenation = tailOpt.hadHyphenation
-          hadForcedCharSplit = tailOpt.hadForcedCharSplit
-        } else {
-          // Если верхние строки физически шире баббла на данном кегле, даём циклу уменьшить шрифт
-          const fullOpt = layoutSegmentOptimal(ctx, fullMergedText, targetMaxW, minHyphens, getAllowedW)
-          lines = fullOpt.lines
-          hadHyphenation = fullOpt.hadHyphenation
-          hadForcedCharSplit = fullOpt.hadForcedCharSplit
+          if (ctx.measureText(seg).width <= limit) {
+            lines.push(seg)
+          } else {
+            const segOpt = layoutSegmentOptimal(ctx, seg, targetMaxW, minHyphens, () => limit)
+            lines.push(...segOpt.lines)
+            hadHyphenation = hadHyphenation || segOpt.hadHyphenation
+            hadForcedCharSplit = hadForcedCharSplit || segOpt.hadForcedCharSplit
+          }
         }
+      } else {
+        // Строки пользователя не помещаются — сохраняем их и уменьшаем кегль.
+        lastLines = rawSegments
+        lastLineHeight = lineHeight
+        const step = curSize > 24 ? 2 : 1
+        curSize = Math.max(8, curSize - step)
+        continue
       }
     }
 

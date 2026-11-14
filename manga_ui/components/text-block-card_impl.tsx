@@ -6,7 +6,6 @@
 
 import { useState, useRef, useEffect, memo } from "react"
 import { WrapText, Languages, Pencil } from "lucide-react"
-import { reflowFromManualLines } from "@/lib/typeset"
 import {
   analyzeBubbleJapText,
   DICT_GLOSSARY_UPDATED_EVENT,
@@ -46,13 +45,14 @@ export const TextBlockCard = memo(function TextBlockCard({
 
   const {
     localRusText,
-    setLocalRusText,
     rusTextareaRef,
     setIsFocusedRus,
-    renderedLines,
     snapshotLinesRef,
     saveStorageTextToBlock,
+    beginRusEditSession,
+    buildRusStorageText,
     handleRusKeyDown,
+    handleRusTextChange,
     handleClearManualBreaks,
     hasManualNewlines,
     rusRows,
@@ -192,17 +192,16 @@ export const TextBlockCard = memo(function TextBlockCard({
             value={localRusText}
             onFocus={() => {
               setIsFocusedRus(true)
-              snapshotLinesRef.current = [...renderedLines]
+              beginRusEditSession()
             }}
             onBlur={() => {
               setIsFocusedRus(false)
               if (localRusText.trim() !== snapshotLinesRef.current.join("\n").trim()) {
-                const storageText = reflowFromManualLines(snapshotLinesRef.current, localRusText.trim())
-                saveStorageTextToBlock(storageText)
+                saveStorageTextToBlock(buildRusStorageText(localRusText.trim()))
               }
             }}
             onChange={(e) => {
-              setLocalRusText(e.target.value)
+              handleRusTextChange(e.target.value)
             }}
             onKeyDown={handleRusKeyDown}
             onClick={(e) => e.stopPropagation()}

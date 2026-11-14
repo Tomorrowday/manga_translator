@@ -12,6 +12,12 @@ export function isCompoundHyphenPair(rawLeft: string, rawRight: string): boolean
 
   const cleanRightOriginal = rawRight.replace(/[.,!?:;…«»"'\)\]\s]+$/g, "")
 
+  const leftParts = left.split("-")
+  const leftRoot = leftParts[0]
+
+  // 0. Многосоставные повторы через короткую вставку (точь-в-точь, еле-еле-еле)
+  if (leftParts.length > 1 && leftRoot === right) return true
+
   // 1. Вторая часть с заглавной буквы (имена, двойные фамилии: Римский-Корсаков, Анна-Мария, Санкт-Петербург)
   if (/^[А-ЯЁA-Z]/.test(cleanRightOriginal)) return true
 
@@ -53,7 +59,12 @@ export function isCompoundHyphenPair(rawLeft: string, rawRight: string): boolean
       "премьер", "мастер", "шоу", "арт", "поп", "рок", "джаз", "спа", "фитнес", "эко",
       "кибер", "медиа", "аудио", "видео", "стерео", "супер", "ультра", "экстра", "гипер",
       "мега", "псевдо", "квази", "пол", "полу", "кое", "кой",
-    ].includes(left)
+    ].includes(left) ||
+    (leftParts.length > 1 && [
+      "интернет", "онлайн", "веб", "мини", "макси", "миди", "микро", "макро", "топ",
+      "бизнес", "пресс", "экс", "вице", "лейб", "обер", "унтер", "штаб", "генерал",
+      "премьер", "мастер", "шоу", "арт", "поп", "рок", "джаз", "спа", "фитнес", "эко",
+    ].includes(leftRoot))
   ) {
     return true
   }

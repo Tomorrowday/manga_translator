@@ -8,7 +8,8 @@
 //                            cleanAndTrimLines, tokenizeMangaPhrase, expandOversizedTokens
 //   line-scoring.ts        — scoreMangaLinesConfiguration
 //   segment-breaker.ts     — layoutSegmentOptimal, greedyFallbackWithHyphens
-//   manual-reflow.ts       — reflowFromManualLines
+//   manual-reflow.ts       — reflowFromManualLines, hasManualLineBreaks,
+//                            stripForcedSingleLineMarker, FORCED_SINGLE_LINE_MARKER
 //   bubble-layout-engine.ts — layoutBubbleTextLines
 
 export * from "./layout/ellipse-geometry"

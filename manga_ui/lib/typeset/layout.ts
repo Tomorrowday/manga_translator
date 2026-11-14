@@ -10,9 +10,14 @@ export interface BubbleLayoutResult {
   lineHeight: number
 }
 
+export type { ReflowOptions } from "./layout_impl"
+
 export {
   getEllipseWidthAtY,
   layoutBubbleTextLines,
   reflowFromManualLines,
   joinLinesRemovingSoftHyphens,
+  hasManualLineBreaks,
+  stripForcedSingleLineMarker,
+  FORCED_SINGLE_LINE_MARKER,
 } from "./layout_impl"
