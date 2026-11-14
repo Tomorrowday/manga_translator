@@ -27,6 +27,7 @@ class UpdateTitleSettingsRequest(BaseModel):
     font_sfx: Optional[str] = None
     lama_downscale: Optional[bool] = None
     show_sfx: Optional[bool] = None
+    dict_nlp_mode: Optional[str] = None
 
 
 class GlossaryItemCreate(BaseModel):

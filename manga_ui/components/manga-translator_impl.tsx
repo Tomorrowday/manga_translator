@@ -221,6 +221,7 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
           imageSrc={activeImageSrc}
           textBlocks={blocks.textBlocks}
           selectedId={blocks.selectedId}
+          titleId={currentPage?.title_id ?? settings.currentTitleId}
           showTypeset={showTypeset}
           showJapOverlay={showJapOverlay}
           pageNumber={currentPage?.page_number}
@@ -277,6 +278,8 @@ export function MangaTranslator(_props: MangaTranslatorProps) {
             currentPage={currentPage}
             textBlocks={blocks.textBlocks}
             selectedId={blocks.selectedId}
+            titleId={currentPage?.title_id ?? settings.currentTitleId}
+            showJapOverlay={showJapOverlay}
             defaultFontSize={settings.titleFontSize}
             autoOvalBubble={settings.globalSettings.auto_oval_bubble ?? true}
             onSelect={blocks.setSelectedId}

@@ -1,6 +1,10 @@
+# routers/projects_handlers/glossary.py
+# Глоссарий тайтла: CRUD в manga_db.sqlite + синхронизация кэша автомата Ахо-Корасик
+
 from fastapi import HTTPException
 from database import db_session, get_db
 from schemas import GlossaryItemCreate
+from services.dictionary import invalidate_glossary_cache
 
 
 def get_glossary(title_id: int):
@@ -26,6 +30,8 @@ def add_glossary_item(title_id: int, req: GlossaryItemCreate):
         )
         item_id = cur.lastrowid
 
+    invalidate_glossary_cache(title_id)
+
     return {
         "success": True,
         "item": {
@@ -41,4 +47,5 @@ def add_glossary_item(title_id: int, req: GlossaryItemCreate):
 def delete_glossary_item(title_id: int, entry_id: int):
     with db_session() as cur:
         cur.execute("DELETE FROM glossary WHERE id = ? AND title_id = ?", (entry_id, title_id))
+    invalidate_glossary_cache(title_id)
     return {"success": True}

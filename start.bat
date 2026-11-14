@@ -70,6 +70,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo [3/3] Проверяю NLP-пакеты локального японско-русского словаря...
+call "venv\Scripts\pip.exe" install --no-cache-dir sudachipy sudachidict_core pyahocorasick ginza ja_ginza_electra ja_ginza_bert_large
+if errorlevel 1 echo [ПРЕДУПРЕЖДЕНИЕ] Не удалось установить GiNZA/SudachiPy. Словарь продолжит работать во встроенном режиме.
+
 :CHECK_FRONTEND
 if exist "manga_ui\node_modules" goto START_SERVERS
 

@@ -17,6 +17,7 @@ export interface ImageViewerProps {
   imageSrc: string | null
   textBlocks: TextBlock[]
   selectedId: string | null
+  titleId?: number | null
   showTypeset?: boolean
   showJapOverlay: boolean
   pageNumber?: number

@@ -17,6 +17,12 @@ from .projects import (
     UpdateTitleSettingsRequest,
     GlossaryItemCreate,
 )
+from .dictionary import (
+    DictAnalyzeRequest,
+    DictLookupRequest,
+    DictGlossaryUpsertRequest,
+    DictBuildRequest,
+)
 
 __all__ = [
     "OcrRequest",
@@ -31,4 +37,8 @@ __all__ = [
     "AddChapterRequest",
     "UpdateTitleSettingsRequest",
     "GlossaryItemCreate",
+    "DictAnalyzeRequest",
+    "DictLookupRequest",
+    "DictGlossaryUpsertRequest",
+    "DictBuildRequest",
 ]

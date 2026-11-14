@@ -34,6 +34,7 @@ export interface TextBlock {
   shape?: BlockShape
   paddingMode?: PaddingMode
   minHyphens?: boolean
+  japOffset?: { x: number; y: number }
 }
 
 export interface PageItem {
@@ -69,6 +70,7 @@ export interface TitleSettings {
   font_sfx?: string
   lama_downscale?: boolean
   show_sfx?: boolean
+  dict_nlp_mode?: "auto" | "sudachi" | "electra" | "bert_large"
   available_detectors?: Record<string, string>
   available_cleaners?: Record<string, string>
 }

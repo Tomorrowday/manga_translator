@@ -3,6 +3,7 @@
  * Контракт карточки текстового блока (бабла) в списке.
  * Реализация: manga_ui/components/text-block-card_impl.tsx
  * Зависимости реализации: react, lucide-react, @/lib/types, @/lib/api (runOcr),
+ *                         @/lib/api/dictionary, @/components/image-viewer/tokenized-bubble-text,
  *                         @/hooks/use-manga-hotkeys, @/components/text-block-card/bubble-style-controls
  */
 
@@ -12,6 +13,8 @@ export interface TextBlockCardProps {
   block: TextBlock
   index: number
   pageId?: number
+  titleId?: number | null
+  showJapOverlay?: boolean
   defaultFontSize?: number
   autoOvalBubble?: boolean
   isSelected: boolean

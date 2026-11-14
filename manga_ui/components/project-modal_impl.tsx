@@ -14,6 +14,7 @@ import {
   deleteGlossaryItem,
   getProjectTree,
   updateTitleSettings,
+  clearDictionaryAnalyzeCache,
 } from "@/lib/api"
 import { GlossaryTab } from "@/components/project-modal/glossary-tab"
 import { SynopsisTab } from "@/components/project-modal/synopsis-tab"
@@ -115,6 +116,7 @@ export function ProjectModal({
         setJapWord("")
         setRusWord("")
         setContext("")
+        clearDictionaryAnalyzeCache()
       }
     } finally {
       setIsAdding(false)
@@ -124,6 +126,7 @@ export function ProjectModal({
   const handleDeleteGlossary = async (id: number) => {
     await deleteGlossaryItem(titleId, id)
     setGlossary((prev) => prev.filter((it) => it.id !== id))
+    clearDictionaryAnalyzeCache()
   }
 
   if (!mounted) return null
