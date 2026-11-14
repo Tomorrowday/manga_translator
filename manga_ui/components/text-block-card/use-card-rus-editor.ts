@@ -9,6 +9,9 @@ import {
   layoutBubbleTextLines,
   reflowFromManualLines,
   joinLinesRemovingSoftHyphens,
+  hasManualLineBreaks,
+  stripForcedSingleLineMarker,
+  FORCED_SINGLE_LINE_MARKER,
 } from "@/lib/typeset"
 
 let cardPreviewCanvas: HTMLCanvasElement | null = null
@@ -29,7 +32,10 @@ export interface UseCardRusEditorReturn {
   setIsFocusedRus: React.Dispatch<React.SetStateAction<boolean>>
   snapshotLinesRef: React.RefObject<string[]>
   saveStorageTextToBlock: (storageText: string) => void
+  beginRusEditSession: () => void
+  buildRusStorageText: (value: string) => string
   handleRusKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  handleRusTextChange: (value: string) => void
   handleClearManualBreaks: (e: React.MouseEvent) => void
   hasManualNewlines: boolean
   rusRows: number
@@ -42,10 +48,14 @@ export function useCardRusEditor({
   onChange,
 }: UseCardRusEditorProps): UseCardRusEditorReturn {
   const [isFocusedRus, setIsFocusedRus] = useState(false)
-  const [localRusText, setLocalRusText] = useState(block.rusText || "")
+  const [localRusText, setLocalRusText] = useState(() => stripForcedSingleLineMarker(block.rusText))
 
   const rusTextareaRef = useRef<HTMLTextAreaElement>(null)
   const snapshotLinesRef = useRef<string[]>([])
+  // Был ли блок ручным до начала правки и менял ли пользователь разбивку строк.
+  const wasManualBeforeEditRef = useRef(false)
+  const hadForcedSingleLineRef = useRef(false)
+  const userTouchedBreaksRef = useRef(false)
   const handledPageImageRef = useRef<HTMLImageElement | null>(null)
   const [pageImageTick, setPageImageTick] = useState(0)
 
@@ -108,7 +118,10 @@ export function useCardRusEditor({
       block.isItalic,
       block.minHyphens !== false
     )
-    return res.lines
+
+    // Маркер однострочности НЕ добавляем: в textarea должен быть только
+    // чистый видимый текст, иначе Backspace удаляет невидимый \u2060.
+    return [...res.lines]
   }, [
     block.rusText,
     block.width,
@@ -126,7 +139,10 @@ export function useCardRusEditor({
 
   useEffect(() => {
     if (!isFocusedRus) {
-      const displayStr = renderedLines.length > 0 ? renderedLines.join("\n") : block.rusText || ""
+      const displayStr =
+        renderedLines.length > 0
+          ? renderedLines.join("\n")
+          : stripForcedSingleLineMarker(block.rusText)
       setLocalRusText(displayStr)
       snapshotLinesRef.current = [...renderedLines]
     }
@@ -153,61 +169,54 @@ export function useCardRusEditor({
     onChange(patch)
   }
 
-  const handleRusKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      const ta = rusTextareaRef.current
-      if (ta && cardPreviewCanvas) {
-        e.preventDefault()
-        const start = ta.selectionStart ?? localRusText.length
-        const end = ta.selectionEnd ?? localRusText.length
-        const before = localRusText.slice(0, start).trimEnd()
-        const after = localRusText.slice(end).trimStart()
+  // Запоминаем состояние на момент фокуса: какие строки были на скане,
+  // был ли блок ручным и был ли он принудительно однострочным.
+  const beginRusEditSession = () => {
+    snapshotLinesRef.current = [...renderedLines]
+    wasManualBeforeEditRef.current = hasManualLineBreaks(block.rusText)
+    hadForcedSingleLineRef.current = Boolean(block.rusText?.includes(FORCED_SINGLE_LINE_MARKER))
+    userTouchedBreaksRef.current = false
+  }
 
-        const nextRaw = `${before}\n${after}`
-        const storageText = reflowFromManualLines(snapshotLinesRef.current, nextRaw)
-
-        const ctx = cardPreviewCanvas.getContext("2d")
-        const imgEl = document.querySelector<HTMLImageElement>("img[alt='Manga page']")
-        const naturalW = imgEl?.naturalWidth || 1100
-        const naturalH = imgEl?.naturalHeight || 1600
-        const baseSize = block.fontSize || defaultFontSize
-        const masterFontSize = Math.round(baseSize * (naturalH / 1200))
-
-        if (ctx) {
-          const res = layoutBubbleTextLines(
-            ctx,
-            storageText,
-            block.width * naturalW,
-            block.height * naturalH,
-            masterFontSize,
-            block.fontFamily || "v_CCFaceFront",
-            block.shape || "rect",
-            block.paddingMode || "safe",
-            block.isBold,
-            block.isItalic,
-            block.minHyphens !== false
-          )
-          const formattedVisible = res.lines.join("\n")
-          snapshotLinesRef.current = [...res.lines]
-          setLocalRusText(formattedVisible)
-          saveStorageTextToBlock(storageText)
-
-          const newCursorPos = Math.min(formattedVisible.length, before.length + 1)
-          requestAnimationFrame(() => {
-            if (rusTextareaRef.current) {
-              rusTextareaRef.current.setSelectionRange(newCursorPos, newCursorPos)
-            }
-          })
-          return
-        }
-      }
+  /**
+   * Собирает storage-текст из значения textarea. Если пользователь только
+   * исправил символ (число строк не изменилось и Enter/Backspace не трогали
+   * переносы), блок остаётся в авто-режиме.
+   */
+  const buildRusStorageText = (value: string) => {
+    const editedLineCount = value.split(/\r?\n/).length
+    if (editedLineCount !== snapshotLinesRef.current.length) {
+      userTouchedBreaksRef.current = true
     }
+
+    return reflowFromManualLines(snapshotLinesRef.current, value, {
+      wasManualBeforeEdit: wasManualBeforeEditRef.current,
+      hasUserModifiedLineBreaks: userTouchedBreaksRef.current,
+      hadForcedSingleLine: hadForcedSingleLineRef.current,
+    })
+  }
+
+  // Enter, Backspace и Delete должны работать нативно, как в обычном блокноте.
+  // Никакого preventDefault и пересчёта текста здесь быть не должно.
+  const handleRusKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    e.stopPropagation()
+    if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+      userTouchedBreaksRef.current = true
+    }
+  }
+
+  // Живое сохранение: пользователь ставит перенос — скан сразу перерисовывается,
+  // но содержимое textarea не перезаписывается результатом авто-вёрстки.
+  const handleRusTextChange = (value: string) => {
+    setLocalRusText(value)
+    saveStorageTextToBlock(buildRusStorageText(value))
   }
 
   const handleClearManualBreaks = (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!block.rusText) return
     const rawLines = block.rusText
+      .replace(/\u2060/g, "")
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter(Boolean)
@@ -216,7 +225,7 @@ export function useCardRusEditor({
     saveStorageTextToBlock(cleaned)
   }
 
-  const hasManualNewlines = Boolean(block.rusText && /\r?\n/.test(block.rusText))
+  const hasManualNewlines = hasManualLineBreaks(block.rusText)
   const rusRows = Math.min(6, Math.max(1, localRusText.split(/\r?\n/).length))
 
   return {
@@ -228,7 +237,10 @@ export function useCardRusEditor({
     setIsFocusedRus,
     snapshotLinesRef,
     saveStorageTextToBlock,
+    beginRusEditSession,
+    buildRusStorageText,
     handleRusKeyDown,
+    handleRusTextChange,
     handleClearManualBreaks,
     hasManualNewlines,
     rusRows,

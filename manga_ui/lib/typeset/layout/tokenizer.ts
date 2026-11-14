@@ -13,6 +13,57 @@ export const NON_BREAKING_PREPOSITIONS = new Set([
 // Частицы и тире, приклеивающиеся к предыдущему слову
 export const ATTACH_TO_PREV_WORDS = new Set(["—", "–", "-", "же", "бы", "б", "ли", "ль"])
 
+const DASH_ONLY_RE = /^[-—–−]+$/
+
+const HYPHENATED_WORD_RE =
+  /^([^а-яА-ЯёЁa-zA-Z0-9]*)([а-яА-ЯёЁa-zA-Z0-9]+(?:-[а-яА-ЯёЁa-zA-Z0-9]+)+)(.*)$/
+
+/**
+ * Делит слово по ВСЕМ внутренним дефисам, сохраняя дефис на левой части.
+ * Короткие однобуквенные вставки приклеиваются к левой части:
+ *   "точь-в-точь" -> ["точь-в-", "точь"]
+ *   "рок-н-ролл"  -> ["рок-н-", "ролл"]
+ *   "кто-нибудь-то" -> ["кто-", "нибудь-", "то"]
+ */
+function splitHyphenatedToken(token: string): string[] | null {
+  if (!token.includes("-") || token.endsWith("-") || token.length < 6) return null
+
+  const match = token.match(HYPHENATED_WORD_RE)
+  if (!match) return null
+
+  const leadPunct = match[1]
+  const core = match[2]
+  const trailPunct = match[3]
+  const parts = core.split("-")
+  if (parts.length < 2) return null
+
+  const segments: string[] = []
+  let acc = `${leadPunct}${parts[0]}`
+
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i]
+
+    // Однобуквенные вставки (-в-, -н-) остаются с левой частью
+    if (part.length < 2) {
+      acc += `-${part}`
+      continue
+    }
+
+    const leftCore = acc.replace(/^[^а-яА-ЯёЁa-zA-Z0-9]*/, "")
+    if (leftCore.replace(/-/g, "").length < 2) {
+      acc += `-${part}`
+      continue
+    }
+
+    segments.push(`${acc}-`)
+    acc = part
+  }
+
+  segments.push(`${acc}${trailPunct}`)
+
+  return segments.length > 1 ? segments : null
+}
+
 export function cleanAndTrimLines(rawLines: string[]): string[] {
   const result: string[] = []
 
@@ -40,7 +91,7 @@ export function cleanAndTrimLines(rawLines: string[]): string[] {
 
 export function tokenizeMangaPhrase(text: string): string[] {
   const rawTokens = text.trim().split(/\s+/).filter(Boolean)
-  if (rawTokens.length <= 1) return rawTokens
+  if (rawTokens.length === 0) return []
 
   // Шаг 1: Приклеиваем только закрывающие тире/частицы ("ли", "же", "бы", "б") к предыдущему слову
   const step1: string[] = []
@@ -55,25 +106,29 @@ export function tokenizeMangaPhrase(text: string): string[] {
     }
   }
 
-  // Шаг 2: Дефисные составные слова («Ямада-сэмпай», «интернет-кафе») делим на самостоятельные части
-  // ["Ямада-", "сэмпай"], чтобы их можно было переносить по дефису без уменьшения кегля
+  // Тире в начале реплики ("— Привет") не должно отрываться от первого слова.
+  // Внутри фразы тире уже приклеено к предыдущему слову и остаётся в конце строки.
+  for (let i = 0; i < step1.length - 1; i++) {
+    if (DASH_ONLY_RE.test(step1[i].trim())) {
+      step1[i + 1] = `${step1[i]} ${step1[i + 1]}`
+      step1.splice(i, 1)
+      i--
+    }
+  }
+
+  // Шаг 2: Дефисные составные слова («Ямада-сэмпай», «интернет-кафе», «точь-в-точь»)
+  // делим на самостоятельные части ["Ямада-", "сэмпай"], чтобы их можно было переносить
+  // по дефису без уменьшения кегля. Разбиение идёт по ВСЕМ внутренним дефисам.
   // ПРИМЕЧАНИЕ: Предлоги («из», «в», «на») НЕ свариваются намертво со следующим словом,
   // что позволяет свободно переносить их по строкам
   const step2: string[] = []
   for (const token of step1) {
-    if (token.includes("-") && !token.endsWith("-") && token.length >= 6) {
-      const dashIdx = token.indexOf("-")
-      const leftPart = token.slice(0, dashIdx + 1)
-      const rightPart = token.slice(dashIdx + 1)
-      const cleanLeftWord = leftPart.split(/\s+/).pop()?.slice(0, -1) || ""
-      const cleanRightWord = rightPart.replace(/[.,!?:;…«»"'\)\]]+$/g, "")
-
-      if (cleanLeftWord.length >= 2 && cleanRightWord.length >= 2) {
-        step2.push(leftPart, rightPart)
-        continue
-      }
+    const hyphenParts = splitHyphenatedToken(token)
+    if (hyphenParts) {
+      step2.push(...hyphenParts)
+    } else {
+      step2.push(token)
     }
-    step2.push(token)
   }
 
   return step2

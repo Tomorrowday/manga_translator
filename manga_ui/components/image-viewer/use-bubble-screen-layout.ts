@@ -4,7 +4,8 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { layoutBubbleTextLines, reflowFromManualLines } from "@/lib/typeset"
+import { layoutBubbleTextLines, reflowFromManualLines, FORCED_SINGLE_LINE_MARKER } from "@/lib/typeset"
+import type { ReflowOptions } from "@/lib/typeset"
 import type { TextBlock } from "@/lib/types"
 
 let previewCanvas: HTMLCanvasElement | null = null
@@ -14,6 +15,63 @@ function getPreviewContext(): CanvasRenderingContext2D | null {
     previewCanvas = document.createElement("canvas")
   }
   return previewCanvas?.getContext("2d") ?? null
+}
+
+/**
+ * Проецирует строки, посчитанные по UPPERCASE-тексту, обратно на исходный
+ * регистр. Идём по символам отрисованной строки и синхронно вычитываем
+ * соответствующие символы из исходного текста. Вставленные движком мягкие
+ * дефисы сохраняются, чтобы ручная правка могла их корректно снять.
+ */
+function projectLinesToOriginalCase(rawText: string, renderedLines: string[]): string[] | null {
+  let pos = 0
+  const out: string[] = []
+
+  const skipWhitespace = () => {
+    while (pos < rawText.length && /\s/.test(rawText[pos])) pos++
+  }
+
+  for (const renderedLine of renderedLines) {
+    let lineOut = ""
+    let pendingSpace = false
+
+    for (let i = 0; i < renderedLine.length; i++) {
+      const ch = renderedLine[i]
+
+      if (/\s/.test(ch)) {
+        if (lineOut.length > 0) pendingSpace = true
+        continue
+      }
+
+      skipWhitespace()
+
+      if (pendingSpace) {
+        lineOut += " "
+        pendingSpace = false
+      }
+
+      if (ch === "-" && rawText[pos] !== "-") {
+        // Мягкий слоговой перенос, которого нет в исходном тексте
+        lineOut += "-"
+        continue
+      }
+
+      if (pos >= rawText.length) return null
+
+      const rawCh = rawText[pos]
+      if (rawCh.toLowerCase() !== ch.toLowerCase()) return null
+
+      lineOut += rawCh
+      pos++
+    }
+
+    out.push(lineOut)
+  }
+
+  skipWhitespace()
+  if (pos < rawText.length) return null
+
+  return out
 }
 
 export interface BubbleReflowedState {
@@ -37,7 +95,11 @@ export interface BubbleScreenLayout {
   currentFont: string
   masterBoxPixelH: number
   screenScale: number
-  computeReflowedState: (snapshotLines: string[], rawInput: string) => BubbleReflowedState
+  computeReflowedState: (
+    snapshotLines: string[],
+    rawInput: string,
+    options?: ReflowOptions
+  ) => BubbleReflowedState
 }
 
 export function useBubbleScreenLayout({
@@ -127,23 +189,37 @@ export function useBubbleScreenLayout({
     )
 
     let editLines = res.lines
-    if (box.isUppercase && rawDisplayText.trim()) {
-      const rawRes = layoutBubbleTextLines(
-        ctx,
-        rawDisplayText,
-        masterBoxPixelW,
-        masterBoxPixelH,
-        masterFontSize,
-        currentFont,
-        box.shape || "rect",
-        padMode,
-        box.isBold,
-        box.isItalic,
-        isMinHyphens
-      )
-      editLines = rawRes.lines
+    const rawForEdit = rawDisplayText.split(FORCED_SINGLE_LINE_MARKER).join("")
+
+    if (box.isUppercase && rawForEdit.trim()) {
+      // Строки посчитаны по реальной ширине UPPERCASE. Проецируем их обратно
+      // на исходный регистр, чтобы переносы в редакторе совпадали со сканом.
+      const projected = projectLinesToOriginalCase(rawForEdit, res.lines)
+      if (projected && projected.length > 0) {
+        editLines = projected
+      } else {
+        // Редкий фоллбэк: если посимвольное сопоставление не удалось,
+        // верстаем исходный регистр отдельно (прежнее поведение).
+        const rawRes = layoutBubbleTextLines(
+          ctx,
+          rawDisplayText,
+          masterBoxPixelW,
+          masterBoxPixelH,
+          masterFontSize,
+          currentFont,
+          box.shape || "rect",
+          padMode,
+          box.isBold,
+          box.isItalic,
+          isMinHyphens
+        )
+        editLines = rawRes.lines
+      }
     }
 
+    // Маркер принудительной однострочности НЕ прокидываем в editableLines:
+    // в textarea должен быть только чистый текст. Факт однострочности
+    // передаётся в reflowFromManualLines через опции редактора.
     return {
       screenLines: res.lines,
       editableLines: editLines,
@@ -170,11 +246,15 @@ export function useBubbleScreenLayout({
   const finalScreenFontSize = Math.max(6, Number((masterActualFontSize * scale).toFixed(2)))
   const finalScreenLineHeight = Math.max(7, Number((masterLineHeight * scale).toFixed(2)))
 
-  const computeReflowedState = (snapshotLines: string[], rawInput: string): BubbleReflowedState => {
+  const computeReflowedState = (
+    snapshotLines: string[],
+    rawInput: string,
+    options?: ReflowOptions
+  ): BubbleReflowedState => {
     const trimmed = rawInput.trim()
     if (!trimmed) return { storageText: "", previewLines: [] }
 
-    const storageText = reflowFromManualLines(snapshotLines, trimmed)
+    const storageText = reflowFromManualLines(snapshotLines, trimmed, options)
     const ctx = getPreviewContext()
     if (!ctx) {
       return { storageText, previewLines: storageText.split("\n") }
